@@ -6,3 +6,6 @@
 /build_vs
 /out/build/win-vs2022-x64
 *.diff
+*.lib
+*.pdb
+*.exe
