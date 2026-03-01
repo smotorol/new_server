@@ -78,6 +78,48 @@ bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pM
 				<< "\n";
 		}
 		return true;
+
+	case proto::S2CMsg::stats:
+		{
+			auto* res = proto::as<proto::S2C_stats>(pMsg, body_len);
+			if (!res) return false;
+			std::cout << "[World] stats sid=" << n
+				<< " char_id=" << res->char_id
+				<< " hp=" << res->hp << "/" << res->max_hp
+				<< " atk=" << res->atk
+				<< " def=" << res->def
+				<< " gold=" << res->gold
+				<< "\n";
+		}
+		return true;
+	case proto::S2CMsg::spawn_monster_ok:
+		{
+			auto* res = proto::as<proto::S2C_spawn_monster_ok>(pMsg, body_len);
+			if (!res) return false;
+			std::cout << "[World] spawn_monster_ok sid=" << n
+				<< " monster_id=" << res->monster_id
+				<< " hp=" << res->hp
+				<< " atk=" << res->atk
+				<< " def=" << res->def
+				<< "\n";
+		}
+		return true;
+	case proto::S2CMsg::attack_result:
+		{
+			auto* res = proto::as<proto::S2C_attack_result>(pMsg, body_len);
+			if (!res) return false;
+			std::cout << "[World] attack_result sid=" << n
+				<< " attacker=" << res->attacker_id
+				<< " target=" << res->target_id
+				<< " dmg=" << res->damage
+				<< " target_hp=" << res->target_hp
+				<< " killed=" << res->killed
+				<< " drop_item=" << res->drop_item_id
+				<< " drop_cnt=" << res->drop_count
+				<< " attacker_gold=" << res->attacker_gold
+				<< "\n";
+		}
+		return true;
 	case proto::S2CMsg::actor_bound:
 		{
 			auto* res = proto::as<proto::S2C_actor_bound>(pMsg, body_len);

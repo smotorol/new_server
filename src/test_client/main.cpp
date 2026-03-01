@@ -68,6 +68,12 @@ int main()
 	std::cout << "Commands:\n"
 		<< "  send <type_u16> <text>\n"
 		<< "  gold <amount_u32>   (send C2S_add_gold)\n"
+		<< "  stats               (C2S_get_stats)\n"
+		<< "  heal [amount_u32]   (0이면 full heal)\n"
+		<< "  spawn_monster [template_id_u32]\n"
+		<< "  atk_monster <monster_id_u64>\n"
+		<< "  atk_player <target_char_id_u64>\n"
+		<< "  myid                (print bound char_id)\n"
 		<< "  bench_multi <conns> <msgs_per_conn> <work_us>\n"
 		<< "  bench_same  <conns> <total_msgs_per_conn> <work_us>   (모든 세션이 첫번째 Actor로 forward)\n"
 		<< "  quit\n";
@@ -133,6 +139,116 @@ int main()
 
 			s->async_send(h, reinterpret_cast<const char*>(&req));
 			std::cout << "[client] sent add_gold=" << amount << "\n";
+			continue;
+		}
+
+		// myid
+		if (line == "myid")
+		{
+			auto h = mgr.handler((std::uint8_t)eLine::sample_server);
+			if (!h) { std::cout << "handler not ready\n"; continue; }
+			std::cout << "[client] my char_id(actor_id)=" << h->actor_id() << "\n";
+			continue;
+		}
+
+		// stats
+		if (line == "stats")
+		{
+			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			if (!client) { std::cout << "client not setup\n"; continue; }
+			auto s = client->session();
+			if (!s) { std::cout << "not connected yet\n"; continue; }
+
+			proto::C2S_get_stats req{};
+			auto h = proto::make_header((std::uint16_t)proto::C2SMsg::get_stats,
+				(std::uint16_t)sizeof(req));
+			s->async_send(h, reinterpret_cast<const char*>(&req));
+			continue;
+		}
+
+		// heal [amount]
+		if (line.rfind("heal", 0) == 0)
+		{
+			std::istringstream iss(line);
+			std::string cmd;
+			std::uint32_t amount = 0;
+			iss >> cmd;
+			if (!(iss >> amount)) amount = 0;
+
+			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			if (!client) { std::cout << "client not setup\n"; continue; }
+			auto s = client->session();
+			if (!s) { std::cout << "not connected yet\n"; continue; }
+
+			proto::C2S_heal_self req{};
+			req.amount = amount;
+			auto h = proto::make_header((std::uint16_t)proto::C2SMsg::heal_self,
+				(std::uint16_t)sizeof(req));
+			s->async_send(h, reinterpret_cast<const char*>(&req));
+			continue;
+		}
+
+		// spawn_monster [template_id]
+		if (line.rfind("spawn_monster", 0) == 0)
+		{
+			std::istringstream iss(line);
+			std::string cmd;
+			std::uint32_t tid = 0;
+			iss >> cmd;
+			if (!(iss >> tid)) tid = 0;
+
+			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			if (!client) { std::cout << "client not setup\n"; continue; }
+			auto s = client->session();
+			if (!s) { std::cout << "not connected yet\n"; continue; }
+
+			proto::C2S_spawn_monster req{};
+			req.template_id = tid;
+			auto h = proto::make_header((std::uint16_t)proto::C2SMsg::spawn_monster,
+				(std::uint16_t)sizeof(req));
+			s->async_send(h, reinterpret_cast<const char*>(&req));
+			continue;
+		}
+
+		// atk_monster <monster_id>
+		if (line.rfind("atk_monster ", 0) == 0)
+		{
+			std::istringstream iss(line);
+			std::string cmd;
+			std::uint64_t mid = 0;
+			iss >> cmd >> mid;
+
+			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			if (!client) { std::cout << "client not setup\n"; continue; }
+			auto s = client->session();
+			if (!s) { std::cout << "not connected yet\n"; continue; }
+
+			proto::C2S_attack_monster req{};
+			req.monster_id = mid;
+			auto h = proto::make_header((std::uint16_t)proto::C2SMsg::attack_monster,
+				(std::uint16_t)sizeof(req));
+			s->async_send(h, reinterpret_cast<const char*>(&req));
+			continue;
+		}
+
+		// atk_player <target_char_id>
+		if (line.rfind("atk_player ", 0) == 0)
+		{
+			std::istringstream iss(line);
+			std::string cmd;
+			std::uint64_t target = 0;
+			iss >> cmd >> target;
+
+			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			if (!client) { std::cout << "client not setup\n"; continue; }
+			auto s = client->session();
+			if (!s) { std::cout << "not connected yet\n"; continue; }
+
+			proto::C2S_attack_player req{};
+			req.target_char_id = target;
+			auto h = proto::make_header((std::uint16_t)proto::C2SMsg::attack_player,
+				(std::uint16_t)sizeof(req));
+			s->async_send(h, reinterpret_cast<const char*>(&req));
 			continue;
 		}
 

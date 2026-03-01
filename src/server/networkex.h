@@ -60,4 +60,31 @@ private:
 
     // ✅ 세션(index) -> 캐릭 blob(메모리 상태)
     std::unordered_map<std::uint32_t, std::string> session_char_blob_;
+
+	// ---- Basic combat test state ----
+	struct CharCombatState {
+		std::uint32_t hp = 100;
+		std::uint32_t max_hp = 100;
+		std::uint32_t atk = 20;
+		std::uint32_t def = 3;
+		std::uint32_t gold = 1000;
+	};
+
+	// sid -> combat state (샘플)
+	std::unordered_map<std::uint32_t, CharCombatState> session_char_combat_;
+
+	// char_id -> sid (접속 중인 캐릭터 역참조; 공격/브로드캐스트용)
+	std::unordered_map<std::uint64_t, std::uint32_t> char_id_to_sid_;
+
+	struct MonsterState {
+		std::uint64_t id = 0;
+		std::uint32_t hp = 50;
+		std::uint32_t atk = 8;
+		std::uint32_t def = 1;
+		std::uint32_t drop_item_id = 1001;
+		std::uint32_t drop_count = 1;
+	};
+	std::uint64_t next_monster_id_ = 1;
+	std::unordered_map<std::uint64_t, MonsterState> monsters_;
+
 };
