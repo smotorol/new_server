@@ -1,0 +1,401 @@
+#include "networkex.h"
+#include <iostream>
+#include <cstring>
+#include <unordered_map>
+#include <chrono>
+#include <thread>
+#include "../common/string_utils.h"
+#include "../proto/packet_util.h"
+#include "../proto/proto.h"
+#include "../net/actor_system.h"
+#include "mainthread.h"
+#include "dqs_payloads.h"
+
+
+// ===== 샘플 캐릭터 상태(바이너리 blob) =====
+#pragma pack(push, 1)
+struct DemoCharState
+{
+	std::uint64_t char_id = 0;
+	std::uint32_t gold = 0;
+	std::uint32_t version = 0;
+};
+#pragma pack(pop)
+static_assert(sizeof(DemoCharState) == 16);
+
+static std::string SerializeDemo(const DemoCharState& s)
+{
+	return std::string(reinterpret_cast<const char*>(&s), sizeof(s));
+}
+static bool TryDeserializeDemo(const std::string& blob, DemoCharState& out)
+{
+	if (blob.size() != sizeof(DemoCharState)) return false;
+	std::memcpy(&out, blob.data(), sizeof(DemoCharState));
+	return true;
+}
+
+std::uint64_t CNetworkEX::GetActorIdBySession(std::uint32_t sid) const
+{
+	std::lock_guard lk(state_mtx_);
+	auto it = session_char_ids_.find(sid);
+	if (it != session_char_ids_.end() && it->second != 0)
+		return it->second;
+	return static_cast<std::uint64_t>(sid);
+}
+
+std::uint64_t CNetworkEX::ResolveActorId(std::uint32_t session_idx) const
+{
+	// World 라인은 (sid -> char_id) 바인딩 이후 char_id Actor로 라우팅
+	return GetActorIdBySession(session_idx);
+}
+
+std::uint64_t CNetworkEX::ResolveActorIdForPacket(std::uint32_t session_idx,
+	const _MSG_HEADER& header, const char* body, std::size_t body_len,
+	std::uint64_t default_actor) const
+{
+	(void)session_idx;
+	const std::uint16_t type = proto::get_type_u16(header);
+	if (type == (std::uint16_t)proto::C2SMsg::actor_forward) {
+		auto* req = proto::as<proto::C2S_actor_forward>(body, body_len);
+		if (req && req->target_actor_id != 0) return req->target_actor_id;
+	}
+	return default_actor;
+}
+bool CNetworkEX::DataAnalysis(std::uint32_t dwProID, std::uint32_t dwClientIndex, _MSG_HEADER* pMsgHeader, char* pMsg)
+{
+	if (!pMsgHeader) return false;
+
+	switch (dwProID)
+	{
+	case eLine_World:
+		{
+			return WorldLineAnalysis(dwProID, dwClientIndex, pMsgHeader, pMsg);
+		}
+		break;
+	case eLine_Login:
+		{
+			return LoginLineAnalysis(dwProID, dwClientIndex, pMsgHeader, pMsg);
+		}
+		break;
+	case eLine_Control:
+		{
+			return ControlLineAnalysis(dwProID, dwClientIndex, pMsgHeader, pMsg);
+		}
+		break;
+	}
+	return false;
+}
+
+void CNetworkEX::AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
+{
+	spdlog::info("CNetworkEX::AcceptClientCheck pro={} index={} serial={}", dwProID, dwIndex, dwSerial);
+
+	// ===== 샘플 플로우는 World 라인에서만 시연 =====
+	if (dwProID != eLine_World) return;
+
+	const std::uint32_t world_code = 0;
+
+	// (샘플) 임시 char_id: 실제 서비스에서는 로그인 이후 확정된 char_id를 바인딩해야 함
+	const std::uint64_t char_id = (std::uint64_t(dwIndex) << 32) | std::uint64_t(dwSerial);
+	{ std::lock_guard<std::mutex> lk(state_mtx_); session_char_ids_[dwIndex] = char_id; }
+
+	// 1) Redis에서 상태 로드 시도
+	DemoCharState st{};
+	st.char_id = char_id;
+	st.gold = 1000;   // 신규 기본값
+	st.version = 1;
+
+	if (auto blob = svr::g_Main.TryLoadCharacterState(world_code, char_id))
+	{
+		DemoCharState loaded{};
+		if (TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
+		{
+			st = loaded;
+			spdlog::info("[Demo] loaded from redis char_id={} gold={} ver={}", st.char_id, st.gold, st.version);
+		}
+		else
+		{
+			spdlog::warn("[Demo] redis blob invalid, recreate char_id={}", char_id);
+		}
+	}
+	else
+	{
+		spdlog::info("[Demo] no redis state, create new char_id={}", char_id);
+	}
+
+	// 2) 샘플 게임 로직: 접속 보상 gold +10
+	st.gold += 10;
+	st.version += 1;
+	const std::string out_blob = SerializeDemo(st);
+	{ std::lock_guard<std::mutex> lk(state_mtx_); session_char_blob_[dwIndex] = out_blob; }
+
+	// 3) Redis 저장 + dirty 마킹 (기존 함수 사용!)
+	svr::g_Main.CacheCharacterState(world_code, char_id, out_blob);
+
+	// ✅ 클라에게 "바인딩된 ActorId(=char_id)" 통지 (테스트/벤치용)
+	{
+		proto::S2C_actor_bound res{};
+		res.actor_id = char_id;
+		auto h = proto::make_header((std::uint16_t)proto::S2CMsg::actor_bound,
+			(std::uint16_t)sizeof(res));
+		Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&res));
+	}
+}
+
+void CNetworkEX::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
+{
+	(void)dwSerial;
+
+	// ===== 샘플: 로그아웃 시 즉시 DB 저장(flush_one_char) =====
+	if (dwProID == eLine_World)
+	{
+		const std::uint32_t world_code = 0;
+		std::uint64_t char_id = 0;
+
+		{
+			std::lock_guard<std::mutex> lk(state_mtx_);
+			auto it = session_char_ids_.find(dwIndex);
+			if (it != session_char_ids_.end()) {
+				char_id = it->second;
+				session_char_ids_.erase(it);
+			}
+			session_char_blob_.erase(dwIndex);
+		}
+
+		if (char_id != 0) {
+			svr::g_Main.RequestFlushCharacter(world_code, char_id);
+		}
+	}
+	else {
+		std::lock_guard<std::mutex> lk(state_mtx_);
+	}
+
+	spdlog::info("CNetworkEX::CloseClientCheck pro={} index={} serial={}", dwProID, dwIndex, dwSerial);
+}
+
+bool CNetworkEX::LoginLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
+{
+	(void)n; (void)pMsgHeader; (void)pMsg;
+	// TODO: 레거시 LoginLineAnalysis 이식
+	return false;
+}
+
+bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
+{
+	const std::uint16_t type = proto::get_type_u16(*pMsgHeader);
+	const std::size_t body_len = pMsgHeader->m_wSize - MSG_HEADER_SIZE;
+
+	switch (type)
+	{
+	case proto::C2SMsg::open_world_notice:
+		{
+			auto* req = proto::as < proto::C2S_open_world_notice>(pMsg, body_len);
+			if (!req) return false;
+
+			std::cout << "[World] recv open_world_notice sid=" << n << "\n";
+
+			//proto::S2C_open_world_success res{};
+			//res.ok = 1;
+			//auto h = proto::make_header((std::uint16_t)proto::S2CMsg::open_world_success,
+			//	(std::uint16_t)sizeof(res));
+
+			//// TcpServer::send(session_id, header, body) 형태라고 가정
+			//// (네 TcpServer 시그니처가 다르면 여기 한 줄만 맞추면 됨)
+			//server_->send(n, h, reinterpret_cast<const char*>(&res));
+
+			// DB 처리 샘플: DQS로 넘겨서 워커 스레드에서 DB 조회 후 응답 전송
+			svr::dqs_payload::OpenWorldNotice payload{};
+			payload.sid = n;
+
+			// ✅ 이 요청을 보낸 "그 세션"의 serial을 같이 넣는다
+			{
+				payload.serial = GetLatestSerial(n);
+			}
+
+			copy_cstr(payload.world_name, req->szWorldName);
+
+			const bool pushed = svr::g_Main.PushDQSData(
+				(std::uint8_t)svr::dqs::ProcessCode::world,
+				(std::uint8_t)svr::dqs::QueryCase::open_world_notice,
+				reinterpret_cast<const char*>(&payload),
+				(int)sizeof(payload));
+
+			if (!pushed) {
+				spdlog::warn("[World] DQS push failed sid={}", n);
+
+				// 샘플: 실패 시 즉시 실패 응답(또는 close 정책 선택)
+				proto::S2C_open_world_success res{};
+				res.ok = 0;
+				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::open_world_success,
+					(std::uint16_t)sizeof(res));
+
+				// ✅ 즉시 응답도 serial 체크 send만 사용 (오발송 방지)
+				const std::uint32_t serial = GetLatestSerial(n);
+				if (serial != 0) {
+					Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+				}
+				else {
+					// serial을 모르면 안전하게 drop(또는 close 정책)
+						  // Close(pro_id_, n, 0);
+				}
+
+			}
+		}
+		return true;
+	case proto::C2SMsg::add_gold:
+		{
+			std::lock_guard<std::mutex> lk(state_mtx_);
+			auto* req = proto::as<proto::C2S_add_gold>(pMsg, body_len);
+			if (!req) return false;
+
+			const std::uint32_t world_code = 0;
+
+			// 1) 세션에 바인딩된 char_id 조회
+			auto it_id = session_char_ids_.find(n);
+			if (it_id == session_char_ids_.end())
+			{
+				spdlog::warn("[Demo] add_gold but no bound char. sid={}", n);
+				return true;
+			}
+			const std::uint64_t char_id = it_id->second;
+
+			// 2) 메모리(세션) 상태 로드
+			DemoCharState st{};
+			auto it_blob = session_char_blob_.find(n);
+			if (it_blob != session_char_blob_.end())
+			{
+				(void)TryDeserializeDemo(it_blob->second, st);
+			}
+			if (st.char_id != char_id)
+			{
+				// 세션 상태가 없으면(또는 깨졌으면) Redis에서 재로드 시도 후 없으면 생성
+				st.char_id = char_id;
+				st.gold = 1000;
+				st.version = 1;
+
+				if (auto blob = svr::g_Main.TryLoadCharacterState(world_code, char_id))
+				{
+					DemoCharState loaded{};
+					if (TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
+						st = loaded;
+				}
+			}
+
+			// 3) 샘플 게임 로직: gold 증가
+			st.gold += req->add;
+			st.version += 1;
+			const std::string out_blob = SerializeDemo(st);
+			session_char_blob_[n] = out_blob;
+
+			// 4) Redis 저장 + dirty (기존 함수 사용!)
+			svr::g_Main.CacheCharacterState(world_code, char_id, out_blob);
+
+			// 5) 응답 전송(serial 체크)
+			proto::S2C_add_gold_ok res{};
+			res.ok = 1;
+			res.gold = st.gold;
+
+			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::add_gold_ok,
+				(std::uint16_t)sizeof(res));
+
+			const std::uint32_t serial = GetLatestSerial(n);
+			if (serial != 0) {
+				Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+			}
+			return true;
+		}
+	case proto::C2SMsg::actor_seq_test:
+		{
+			auto* req = proto::as<proto::C2S_actor_seq_test>(pMsg, body_len);
+			if (!req) return false;
+
+			const std::uint64_t actor_id = GetActorIdBySession(n);
+
+			// ✅ Actor 단일 실행/순서성 검증용 (shard thread local)
+			thread_local std::unordered_map<std::uint64_t, std::uint32_t> last_seq;
+			thread_local std::unordered_map<std::uint64_t, bool> in_progress;
+			thread_local std::uint32_t error_count = 0;
+
+			bool& busy = in_progress[actor_id];
+			if (busy) {
+				++error_count; // 같은 actor가 동시에 실행되면 안 됨
+
+			}
+			busy = true;
+
+			// 단일 연결(TCP)에서는 seq가 1씩 증가해야 정상
+			const std::uint32_t prev = last_seq[actor_id];
+			if (req->seq != prev + 1) {
+				++error_count;
+			}
+			last_seq[actor_id] = req->seq;
+
+			if (req->work_us > 0) {
+				std::this_thread::sleep_for(std::chrono::microseconds(req->work_us));
+			}
+
+			busy = false;
+
+			proto::S2C_actor_seq_ack res{};
+			res.ok = 1;
+			res.seq = req->seq;
+			res.shard = (proto::u32)std::max(0, net::ActorSystem::current_shard_index());
+			res.errors = error_count;
+
+			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::actor_seq_ack,
+				(std::uint16_t)sizeof(res));
+
+			const std::uint32_t serial = GetLatestSerial(n);
+			if (serial != 0) {
+				Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+			}
+			return true;
+		}
+	case proto::C2SMsg::actor_forward:
+		{
+			auto* req = proto::as<proto::C2S_actor_forward>(pMsg, body_len);
+			if (!req) return false;
+
+			const std::uint64_t actor_id = (req->target_actor_id != 0) ? req->target_actor_id : GetActorIdBySession(n);
+
+			thread_local std::unordered_map<std::uint64_t, bool> in_progress;
+			thread_local std::uint32_t error_count = 0;
+
+			bool& busy = in_progress[actor_id];
+			if (busy) { ++error_count; }
+			busy = true;
+
+			if (req->work_us > 0) {
+				std::this_thread::sleep_for(std::chrono::microseconds(req->work_us));
+			}
+
+			busy = false;
+
+			// tag를 seq 필드로 돌려서 디버깅
+			proto::S2C_actor_seq_ack res{};
+			res.ok = 1;
+			res.seq = req->tag;
+			res.shard = (proto::u32)std::max(0, net::ActorSystem::current_shard_index());
+			res.errors = error_count;
+
+			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::actor_seq_ack,
+				(std::uint16_t)sizeof(res));
+
+			const std::uint32_t serial = GetLatestSerial(n);
+			if (serial != 0) {
+				Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+			}
+			return true;
+		}
+	default:
+		std::cout << "[World] unknown type=" << type << "\n";
+		return true;
+	}
+}
+
+bool CNetworkEX::ControlLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
+{
+	(void)n; (void)pMsgHeader; (void)pMsg;
+	// TODO: 레거시 ControlLineAnalysis 이식
+	return false;
+}
