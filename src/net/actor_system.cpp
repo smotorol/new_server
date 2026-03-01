@@ -96,4 +96,79 @@ namespace net {
 		s.cv.notify_one();
 	}
 
+	void ActorSystem::post_actor(ActorId id, ActorFactory factory, ActorFn fn)
+	{
+		if (!fn) return;
+		if (!factory) {
+			// factory 없으면 actor를 만들 수 없다 -> drop
+			return;
+		}
+
+		// start 전이어도 최소 동작(동기 실행)
+		if (shards_.empty()) {
+			auto up = factory(id);
+			if (up) fn(*up);
+			return;
+		}
+
+		Shard* s = shards_[pick_shard_(id)].get();
+		post(id, [s, id, factory = std::move(factory), fn = std::move(fn)]() mutable {
+			auto& slot = s->actors[id];
+			if (!slot) {
+				slot = factory(id);
+				if (!slot) return;
+			}
+			fn(*slot);
+		});
+	}
+
+	IActor* ActorSystem::try_get_local(ActorId id) noexcept
+	{
+		if (shards_.empty()) return nullptr;
+		const int cur = current_shard_index();
+		const int want = (int)pick_shard_(id);
+		if (cur < 0 || cur != want) return nullptr;
+		Shard* s = shards_[(std::size_t)want].get();
+		auto it = s->actors.find(id);
+		return (it == s->actors.end()) ? nullptr : it->second.get();
+	}
+
+	IActor& ActorSystem::get_or_create_local(ActorId id, ActorFactory factory)
+	{
+		if (!factory) {
+			static IActor dummy;
+			return dummy; // 방어(정상 경로 아님)
+		}
+		if (shards_.empty()) {
+			static IActor dummy;
+			return dummy;
+		}
+		const int cur = current_shard_index();
+		const int want = (int)pick_shard_(id);
+		if (cur < 0 || cur != want) {
+			// 호출자가 shard를 잘못 잡았음
+			static IActor dummy;
+			return dummy;
+		}
+		Shard* s = shards_[(std::size_t)want].get();
+		auto& slot = s->actors[id];
+		if (!slot) {
+			slot = factory(id);
+			if (!slot) {
+				static IActor dummy;
+				return dummy;
+			}
+		}
+		return *slot;
+	}
+
+	void ActorSystem::erase_actor(ActorId id)
+	{
+		if (shards_.empty()) return;
+		Shard* s = shards_[pick_shard_(id)].get();
+		post(id, [s, id] {
+			s->actors.erase(id);
+		});
+	}
+
 } // namespace svr

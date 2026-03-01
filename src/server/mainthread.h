@@ -23,6 +23,7 @@
 #include "../db/db_shard_manager.h"
 #include "networkex.h"
 #include "dqs_results.h"
+#include "actors.h"
 
 
 
@@ -64,6 +65,12 @@ namespace svr {
         void PostActor(std::uint64_t actor_id, std::function<void()> fn);
         // 전역(관리) Actor
         void Post(std::function<void()> fn);
+
+		// ✅ (Actor 워커 스레드에서만) Actor 인스턴스 접근
+		// - 케이스1(Actor당 상태 인스턴스) 구현용
+		PlayerActor& GetOrCreatePlayerActor(std::uint64_t char_id);
+		WorldActor& GetOrCreateWorldActor();
+		void EraseActor(std::uint64_t actor_id);
 
         // ✅ DQS 결과는 무조건 메인으로 합류 (결과 객체 패턴)
         void PostDqsResult(svr::dqs_result::Result r);

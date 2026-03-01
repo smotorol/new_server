@@ -11,6 +11,7 @@
 #include "../net/actor_system.h"
 #include "mainthread.h"
 #include "dqs_payloads.h"
+#include "actors.h"
 
 
 // ===== 샘플 캐릭터 상태(바이너리 blob) =====
@@ -62,12 +63,12 @@ std::uint64_t CNetworkEX::ResolveActorIdForPacket(std::uint32_t session_idx,
 	}
 
 	// ---- Basic combat test routing ----
-	// 몬스터 관련은 "월드 Actor(0)"에서만 처리하여 공유 상태(monsters_)를 단일 실행으로 보장
-	if (type == (std::uint16_t)proto::C2SMsg::spawn_monster ||
-		type == (std::uint16_t)proto::C2SMsg::attack_monster)
-	{
+	// 몬스터 생성은 "월드 Actor(0)"에서 처리
+	if (type == (std::uint16_t)proto::C2SMsg::spawn_monster) {
 		return 0; // world actor
 	}
+	// 몬스터 공격은 "공격자 Actor"에서 받아서, 내부에서 월드 Actor로 메시지를 넘기는 방식으로 처리
+	// (공격자 스탯을 안전하게 읽고, 월드 공유 상태는 월드 Actor에서만 수정)
 
 	// PvP는 "맞는 쪽(target_char_id)" Actor로 라우팅해서 타겟 HP를 단일 실행으로 갱신
 	if (type == (std::uint16_t)proto::C2SMsg::attack_player) {
@@ -116,16 +117,6 @@ void CNetworkEX::AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex,
 	{
 		std::lock_guard<std::mutex> lk(state_mtx_);
 		session_char_ids_[dwIndex] = char_id;
-		char_id_to_sid_[char_id] = dwIndex;
-
-		// 기본 전투 스탯(샘플) - 나중에 DB/Redis에 붙이면 됨
-		CharCombatState cs{};
-		cs.hp = 100;
-		cs.max_hp = 100;
-		cs.atk = 20;
-		cs.def = 3;
-		cs.gold = 1000;
-		session_char_combat_[dwIndex] = cs;
 	}
 	// 1) Redis에서 상태 로드 시도
 	DemoCharState st{};
@@ -155,7 +146,19 @@ void CNetworkEX::AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex,
 	st.gold += 10;
 	st.version += 1;
 	const std::string out_blob = SerializeDemo(st);
-	{ std::lock_guard<std::mutex> lk(state_mtx_); session_char_blob_[dwIndex] = out_blob; }
+
+	// ✅ 케이스1(Actor당 인스턴스) : PlayerActor 생성/초기화 + 세션 바인딩
+	// - 이 람다는 char_id Actor shard에서 실행되므로, PlayerActor 상태를 락 없이 안전하게 만질 수 있다.
+	svr::g_Main.PostActor(char_id, [char_id, sid = dwIndex, serial = dwSerial]() {
+		auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+		a.bind_session(sid, serial);
+		// 기본 전투 스탯(샘플)
+		a.combat.hp = 100;
+		a.combat.max_hp = 100;
+		a.combat.atk = 20;
+		a.combat.def = 3;
+		a.combat.gold = 1000;
+	});
 
 	// 3) Redis 저장 + dirty 마킹 (기존 함수 사용!)
 	svr::g_Main.CacheCharacterState(world_code, char_id, out_blob);
@@ -185,14 +188,13 @@ void CNetworkEX::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, 
 			auto it = session_char_ids_.find(dwIndex);
 			if (it != session_char_ids_.end()) {
 				char_id = it->second;
-				char_id_to_sid_.erase(char_id);
 				session_char_ids_.erase(it);
 			}
-			session_char_blob_.erase(dwIndex);
-			session_char_combat_.erase(dwIndex);
 		}
 
 		if (char_id != 0) {
+			// ✅ Actor 인스턴스 제거(로그아웃)
+			svr::g_Main.EraseActor(char_id);
 			svr::g_Main.RequestFlushCharacter(world_code, char_id);
 		}
 	}
@@ -274,31 +276,32 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 		return true;
 	case proto::C2SMsg::add_gold:
 		{
-			std::lock_guard<std::mutex> lk(state_mtx_);
 			auto* req = proto::as<proto::C2S_add_gold>(pMsg, body_len);
 			if (!req) return false;
 
 			const std::uint32_t world_code = 0;
 
 			// 1) 세션에 바인딩된 char_id 조회
-			auto it_id = session_char_ids_.find(n);
-			if (it_id == session_char_ids_.end())
+			std::uint64_t char_id = 0;
 			{
-				spdlog::warn("[Demo] add_gold but no bound char. sid={}", n);
-				return true;
+				std::lock_guard<std::mutex> lk(state_mtx_);
+				auto it_id = session_char_ids_.find(n);
+				if (it_id == session_char_ids_.end())
+				{
+					spdlog::warn("[Demo] add_gold but no bound char. sid={}", n);
+					return true;
+				}
+				char_id = it_id->second;
 			}
-			const std::uint64_t char_id = it_id->second;
 
-			// 2) 메모리(세션) 상태 로드
+			// ✅ 케이스1: PlayerActor 상태(전투 gold)도 같이 올림
+			auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+			a.combat.gold += req->add;
+			const std::uint32_t combat_gold = a.combat.gold;
+
+			// 2) Redis 상태 로드(없으면 생성)
 			DemoCharState st{};
-			auto it_blob = session_char_blob_.find(n);
-			if (it_blob != session_char_blob_.end())
 			{
-				(void)TryDeserializeDemo(it_blob->second, st);
-			}
-			if (st.char_id != char_id)
-			{
-				// 세션 상태가 없으면(또는 깨졌으면) Redis에서 재로드 시도 후 없으면 생성
 				st.char_id = char_id;
 				st.gold = 1000;
 				st.version = 1;
@@ -315,7 +318,6 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			st.gold += req->add;
 			st.version += 1;
 			const std::string out_blob = SerializeDemo(st);
-			session_char_blob_[n] = out_blob;
 
 			// 4) Redis 저장 + dirty (기존 함수 사용!)
 			svr::g_Main.CacheCharacterState(world_code, char_id, out_blob);
@@ -323,7 +325,7 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			// 5) 응답 전송(serial 체크)
 			proto::S2C_add_gold_ok res{};
 			res.ok = 1;
-			res.gold = st.gold;
+			res.gold = combat_gold; // 테스트 편의: 현재 전투 gold 기준
 
 			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::add_gold_ok,
 				(std::uint16_t)sizeof(res));
@@ -334,19 +336,12 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			}
 			return true;
 		}
-	
+
 	case proto::C2SMsg::get_stats:
 		{
-			std::uint64_t char_id = 0;
-			CharCombatState cs{};
-			{
-				std::lock_guard<std::mutex> lk(state_mtx_);
-				auto it_id = session_char_ids_.find(n);
-				if (it_id == session_char_ids_.end()) return true;
-				char_id = it_id->second;
-				auto it_cs = session_char_combat_.find(n);
-				if (it_cs != session_char_combat_.end()) cs = it_cs->second;
-			}
+			const std::uint64_t char_id = GetActorIdBySession(n);
+			auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+			auto cs = a.combat;
 
 			proto::S2C_stats res{};
 			res.char_id = char_id;
@@ -370,22 +365,15 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			auto* req = proto::as<proto::C2S_heal_self>(pMsg, body_len);
 			if (!req) return false;
 
-			std::uint64_t char_id = 0;
-			CharCombatState cs{};
-			{
-				std::lock_guard<std::mutex> lk(state_mtx_);
-				auto it_id = session_char_ids_.find(n);
-				if (it_id == session_char_ids_.end()) return true;
-				char_id = it_id->second;
-
-				auto& st = session_char_combat_[n]; // 없으면 생성
-				if (req->amount == 0) st.hp = st.max_hp;
-				else {
-					const std::uint64_t nhp = (std::uint64_t)st.hp + (std::uint64_t)req->amount;
-					st.hp = (std::uint32_t)std::min<std::uint64_t>(st.max_hp, nhp);
-				}
-				cs = st;
+			const std::uint64_t char_id = GetActorIdBySession(n);
+			auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+			auto& st = a.combat;
+			if (req->amount == 0) st.hp = st.max_hp;
+			else {
+				const std::uint64_t nhp = (std::uint64_t)st.hp + (std::uint64_t)req->amount;
+				st.hp = (std::uint32_t)std::min<std::uint64_t>(st.max_hp, nhp);
 			}
+			auto cs = st;
 
 			proto::S2C_stats res{};
 			res.char_id = char_id;
@@ -409,15 +397,13 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			auto* req = proto::as<proto::C2S_spawn_monster>(pMsg, body_len);
 			if (!req) return false;
 
-			MonsterState m{};
-			{
-				std::lock_guard<std::mutex> lk(state_mtx_);
-				m.id = next_monster_id_++;
-				// template_id에 따라 나중에 테이블로 확장 가능
-				if (req->template_id == 1) { m.hp = 120; m.atk = 15; m.def = 4; m.drop_item_id = 2001; m.drop_count = 1; }
-				else { m.hp = 50; m.atk = 8; m.def = 1; m.drop_item_id = 1001; m.drop_count = 1; }
-				monsters_[m.id] = m;
-			}
+			auto& w = svr::g_Main.GetOrCreateWorldActor();
+			svr::MonsterState m{};
+			m.id = w.next_monster_id++;
+			// template_id에 따라 나중에 테이블로 확장 가능
+			if (req->template_id == 1) { m.hp = 120; m.atk = 15; m.def = 4; m.drop_item_id = 2001; m.drop_count = 1; }
+			else { m.hp = 50; m.atk = 8; m.def = 1; m.drop_item_id = 1001; m.drop_count = 1; }
+			w.monsters[m.id] = m;
 
 			proto::S2C_spawn_monster_ok res{};
 			res.monster_id = m.id;
@@ -439,82 +425,68 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			auto* req = proto::as<proto::C2S_attack_monster>(pMsg, body_len);
 			if (!req) return false;
 
-			std::uint64_t attacker_id = 0;
-			std::uint32_t attacker_gold = 0;
-			std::uint32_t attacker_atk = 0;
+			// ✅ 케이스1: (공격자 Actor)에서 스탯을 읽고 -> (월드 Actor)에서 몬스터 상태를 수정
+			const std::uint64_t attacker_id = GetActorIdBySession(n);
+			auto& attacker = svr::g_Main.GetOrCreatePlayerActor(attacker_id);
+			const std::uint32_t attacker_atk = attacker.combat.atk;
+			const std::uint32_t attacker_gold = attacker.combat.gold;
+			const std::uint32_t sid = n;
+			const std::uint32_t serial = GetLatestSerial(n);
+			const std::uint64_t monster_id = req->monster_id;
 
-			MonsterState mon{};
-			bool found = false;
-			bool killed = false;
-			std::uint32_t dmg = 0;
-			std::uint32_t mon_hp = 0;
-			std::uint32_t drop_item = 0;
-			std::uint32_t drop_cnt = 0;
+			if (serial == 0) return true;
 
-			{
-				std::lock_guard<std::mutex> lk(state_mtx_);
-
-				auto it_id = session_char_ids_.find(n);
-				if (it_id == session_char_ids_.end()) return true;
-				attacker_id = it_id->second;
-
-				auto it_cs = session_char_combat_.find(n);
-				if (it_cs != session_char_combat_.end()) {
-					attacker_atk = it_cs->second.atk;
-					attacker_gold = it_cs->second.gold;
+			// 월드 Actor로 넘김
+			svr::g_Main.PostActor(0, [self = shared_from_this(), dwProID, sid, serial, attacker_id, attacker_atk, attacker_gold, monster_id]() mutable {
+				auto& w = svr::g_Main.GetOrCreateWorldActor();
+				auto it_m = w.monsters.find(monster_id);
+				if (it_m == w.monsters.end()) {
+					return; // 없는 몬스터 -> 무시
 				}
 
-				auto it_m = monsters_.find(req->monster_id);
-				if (it_m == monsters_.end()) {
-					found = false;
+				auto& mon = it_m->second;
+				std::uint32_t dmg = (attacker_atk > mon.def) ? (attacker_atk - mon.def) : 1;
+				bool killed = false;
+				std::uint32_t mon_hp = 0;
+				std::uint32_t drop_item = 0;
+				std::uint32_t drop_cnt = 0;
+				std::uint32_t reward_gold = 0;
+
+				if (dmg >= mon.hp) {
+					killed = true;
+					mon_hp = 0;
+					drop_item = mon.drop_item_id;
+					drop_cnt = mon.drop_count;
+					reward_gold = 50;
+					w.monsters.erase(it_m);
 				}
 				else {
-					found = true;
-					mon = it_m->second;
-					dmg = (attacker_atk > mon.def) ? (attacker_atk - mon.def) : 1;
-					if (dmg >= mon.hp) {
-						killed = true;
-						mon.hp = 0;
-						drop_item = mon.drop_item_id;
-						drop_cnt = mon.drop_count;
-						mon_hp = 0;
-						monsters_.erase(it_m);
-
-						// 샘플 보상: 골드 +50
-						auto& cs = session_char_combat_[n];
-						cs.gold += 50;
-						attacker_gold = cs.gold;
-					}
-					else {
-						mon.hp -= dmg;
-						mon_hp = mon.hp;
-						it_m->second.hp = mon.hp;
-					}
+					mon.hp -= dmg;
+					mon_hp = mon.hp;
 				}
-			}
 
-			if (!found) {
-				// 없는 몬스터 -> 무시
-				return true;
-			}
+				// 공격자 보상은 공격자 Actor에서 처리
+				if (reward_gold > 0) {
+					svr::g_Main.PostActor(attacker_id, [attacker_id, reward_gold]() {
+						auto& a = svr::g_Main.GetOrCreatePlayerActor(attacker_id);
+						a.combat.gold += reward_gold;
+					});
+				}
 
-			proto::S2C_attack_result res{};
-			res.attacker_id = attacker_id;
-			res.target_id = req->monster_id;
-			res.damage = dmg;
-			res.target_hp = mon_hp;
-			res.killed = killed ? 1u : 0u;
-			res.drop_item_id = drop_item;
-			res.drop_count = drop_cnt;
-			res.attacker_gold = attacker_gold;
+				proto::S2C_attack_result res{};
+				res.attacker_id = attacker_id;
+				res.target_id = monster_id;
+				res.damage = dmg;
+				res.target_hp = mon_hp;
+				res.killed = killed ? 1u : 0u;
+				res.drop_item_id = drop_item;
+				res.drop_count = drop_cnt;
+				res.attacker_gold = attacker_gold + reward_gold;
 
-			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::attack_result,
-				(std::uint16_t)sizeof(res));
-
-			const std::uint32_t serial = GetLatestSerial(n);
-			if (serial != 0) {
-				Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
-			}
+				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::attack_result,
+					(std::uint16_t)sizeof(res));
+				self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+			});
 			return true;
 		}
 	case proto::C2SMsg::attack_player:
@@ -524,35 +496,31 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 
 			// 주의: 이 패킷은 ResolveActorIdForPacket에서 target_char_id Actor로 라우팅되지만
 			//      dwClientIndex(n)은 "보낸 쪽 세션" 그대로 들어온다.
+			// ✅ 이 핸들러는 ResolveActorIdForPacket에서 target_char_id Actor로 라우팅된다.
+			//    즉, 현재 스레드는 "타겟 PlayerActor"의 shard다.
 			std::uint64_t attacker_id = 0;
-			std::uint32_t dmg = 10; // 샘플 고정 데미지
-			std::uint32_t target_hp = 0;
-			bool killed = false;
-
-			std::uint32_t target_sid = 0;
-
 			{
 				std::lock_guard<std::mutex> lk(state_mtx_);
 				auto it_a = session_char_ids_.find(n);
 				if (it_a == session_char_ids_.end()) return true;
 				attacker_id = it_a->second;
-
-				auto it_t = char_id_to_sid_.find(req->target_char_id);
-				if (it_t == char_id_to_sid_.end()) return true;
-				target_sid = it_t->second;
-
-				auto& tcs = session_char_combat_[target_sid];
-				const std::uint32_t real_dmg = (dmg > tcs.def) ? (dmg - tcs.def) : 1;
-				dmg = real_dmg;
-				if (real_dmg >= tcs.hp) {
-					tcs.hp = 0;
-					killed = true;
-				}
-				else {
-					tcs.hp -= real_dmg;
-				}
-				target_hp = tcs.hp;
 			}
+
+			auto& target = svr::g_Main.GetOrCreatePlayerActor(req->target_char_id);
+			const std::uint32_t target_sid = target.sid;
+
+			std::uint32_t dmg = 10; // 샘플 고정 데미지
+			const std::uint32_t real_dmg = (dmg > target.combat.def) ? (dmg - target.combat.def) : 1;
+			dmg = real_dmg;
+			bool killed = false;
+			if (real_dmg >= target.combat.hp) {
+				target.combat.hp = 0;
+				killed = true;
+			}
+			else {
+				target.combat.hp -= real_dmg;
+			}
+			const std::uint32_t target_hp = target.combat.hp;
 
 			proto::S2C_attack_result res{};
 			res.attacker_id = attacker_id;
@@ -570,9 +538,11 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 				Send(dwProID, n, a_serial, h, reinterpret_cast<const char*>(&res));
 			}
 			// target에게도
-			const std::uint32_t t_serial = GetLatestSerial(target_sid);
-			if (t_serial != 0) {
-				Send(dwProID, target_sid, t_serial, h, reinterpret_cast<const char*>(&res));
+			if (target_sid != 0) {
+				const std::uint32_t t_serial = GetLatestSerial(target_sid);
+				if (t_serial != 0) {
+					Send(dwProID, target_sid, t_serial, h, reinterpret_cast<const char*>(&res));
+				}
 			}
 
 			return true;
@@ -658,8 +628,8 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			if (serial != 0) {
 				Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
 			}
-			return true;
-		}
+ 			return true;
+ 		}
 	default:
 		std::cout << "[World] unknown type=" << type << "\n";
 		return true;

@@ -128,6 +128,29 @@ namespace svr {
 		actors_.post(actor_id, std::move(fn));
 	}
 
+	static std::unique_ptr<net::IActor> MakeServerActor_(std::uint64_t id)
+	{
+		if (id == 0) return std::make_unique<svr::WorldActor>();
+		return std::make_unique<svr::PlayerActor>(id);
+	}
+
+	svr::PlayerActor& CMainThread::GetOrCreatePlayerActor(std::uint64_t char_id)
+	{
+		auto& base = actors_.get_or_create_local(char_id, &MakeServerActor_);
+		return static_cast<svr::PlayerActor&>(base);
+	}
+
+	svr::WorldActor& CMainThread::GetOrCreateWorldActor()
+	{
+		auto& base = actors_.get_or_create_local(0, &MakeServerActor_);
+		return static_cast<svr::WorldActor&>(base);
+	}
+
+	void CMainThread::EraseActor(std::uint64_t actor_id)
+	{
+		actors_.erase_actor(actor_id);
+	}
+
 	void CMainThread::Post(std::function<void()> fn)
 	{
 		PostActor(0, std::move(fn));
