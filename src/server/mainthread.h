@@ -71,6 +71,7 @@ namespace svr {
 		PlayerActor& GetOrCreatePlayerActor(std::uint64_t char_id);
 		WorldActor& GetOrCreateWorldActor();
 		void EraseActor(std::uint64_t actor_id);
+		ZoneActor& GetOrCreateZoneActor(std::uint32_t zone_id);
 
         // ✅ DQS 결과는 무조건 메인으로 합류 (결과 객체 패턴)
         void PostDqsResult(svr::dqs_result::Result r);

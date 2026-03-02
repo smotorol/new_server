@@ -131,6 +131,7 @@ namespace svr {
 	static std::unique_ptr<net::IActor> MakeServerActor_(std::uint64_t id)
 	{
 		if (id == 0) return std::make_unique<svr::WorldActor>();
+		if (svr::IsZoneActorId(id)) return std::make_unique<svr::ZoneActor>();
 		return std::make_unique<svr::PlayerActor>(id);
 	}
 
@@ -144,6 +145,13 @@ namespace svr {
 	{
 		auto& base = actors_.get_or_create_local(0, &MakeServerActor_);
 		return static_cast<svr::WorldActor&>(base);
+	}
+
+	svr::ZoneActor& CMainThread::GetOrCreateZoneActor(std::uint32_t zone_id)
+	{
+		const std::uint64_t zid = svr::MakeZoneActorId(zone_id);
+		auto& base = actors_.get_or_create_local(zid, &MakeServerActor_);
+		return static_cast<svr::ZoneActor&>(base);
 	}
 
 	void CMainThread::EraseActor(std::uint64_t actor_id)

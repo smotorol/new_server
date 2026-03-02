@@ -76,6 +76,7 @@ int main()
 		<< "  myid                (print bound char_id)\n"
 		<< "  bench_multi <conns> <msgs_per_conn> <work_us>\n"
 		<< "  bench_same  <conns> <total_msgs_per_conn> <work_us>   (모든 세션이 첫번째 Actor로 forward)\n"
+		<< "  bench_walk  <conns> <seconds> <moves_per_sec> <radius> [work_us]\n"
 		<< "  quit\n";
 
 	std::string line;
@@ -187,6 +188,30 @@ int main()
 			s->async_send(h, reinterpret_cast<const char*>(&req));
 			continue;
 		}
+
+		// move [x] [y]
+		if (line.rfind("move", 0) == 0)
+		{
+			std::istringstream iss(line);
+			std::string cmd;
+			int x = 0;
+			int y = 0;
+			iss >> cmd >> x >> y;
+
+			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			if (!client) { std::cout << "client not setup"; continue; }
+			auto s = client->session();
+			if (!s) { std::cout << "not connected yet"; continue; }
+
+			proto::C2S_move req{};
+			req.x = x;
+			req.y = y;
+			auto h = proto::make_header((std::uint16_t)proto::C2SMsg::move,
+				(std::uint16_t)sizeof(req));
+			s->async_send(h, reinterpret_cast<const char*>(&req));
+			continue;
+		}
+
 
 		// spawn_monster [template_id]
 		if (line.rfind("spawn_monster", 0) == 0)
@@ -339,6 +364,131 @@ int main()
 			std::cout << "[bench_same] sent. 서버에서 busy 재진입이 없으면 errors가 0 유지.\n";
 			continue;
 		}
+
+		// bench_walk <conns> <seconds> <moves_per_sec> <radius> [work_us]
+		// - 각 커넥션이 bench_move를 일정 주기로 보내서 이동 + ACK RTT + 브로드캐스트 처리량 측정
+		if (line.rfind("bench_walk ", 0) == 0)
+		{
+			std::istringstream iss(line);
+			std::string cmd;
+			int conns = 0;
+			int seconds = 0;
+			int mps = 0;
+			int radius = 0;
+			int work_us = 0;
+			iss >> cmd >> conns >> seconds >> mps >> radius;
+			if (!(iss >> work_us)) work_us = 0;
+			if (conns <= 0 || seconds <= 0 || mps <= 0 || radius < 0) {
+				std::cout << "usage: bench_walk <conns> <seconds> <moves_per_sec> <radius> [work_us]\n";
+				continue;
+			}
+
+			net::ActorSystem actors;
+			actors.start(1);
+
+			auto bench = spawn_bench_clients(io, actors, "127.0.0.1", 27787, conns);
+			for (auto& c : bench) c.handler->wait_ready();
+
+			// noisy 출력 끄고, 카운터 초기화
+			CNetworkEX::SetBenchQuiet(true);
+			for (auto& c : bench) c.handler->BenchReset();
+
+			// 좌표 배치: 모든 클라가 AOI 안에 들어오도록 작은 박스 안에 촘촘히 배치
+			const int side = std::max(1, (radius * 2 + 1));
+			auto coord_of = [&](int idx) {
+				const int x = (idx % side) - radius;
+				const int y = ((idx / side) % side) - radius;
+				return std::pair<int, int>{ x, y };
+			};
+
+			const int steps = seconds * mps;
+			const auto interval = std::chrono::microseconds(1'000'000 / std::max(1, mps));
+			std::uint32_t seq = 1;
+			std::uint64_t sent = 0;
+
+			std::cout << "[bench_walk] start conns=" << conns
+				<< " seconds=" << seconds
+				<< " moves_per_sec=" << mps
+				<< " radius=" << radius
+				<< " work_us=" << work_us
+				<< " (total_send_target=" << (std::uint64_t)conns * (std::uint64_t)steps << ")\n";
+
+			const auto t0 = std::chrono::steady_clock::now();
+			for (int step = 0; step < steps; ++step)
+			{
+				const int toggle = (step & 1);
+				for (int i = 0; i < conns; ++i)
+				{
+					auto s = bench[(std::size_t)i].client->session();
+					if (!s) continue;
+
+					const auto [bx, by] = coord_of(i);
+					proto::C2S_bench_move req{};
+					req.seq = seq++;
+					req.work_us = (proto::u32)work_us;
+					req.x = bx + toggle;
+					req.y = by;
+					const auto now = std::chrono::steady_clock::now().time_since_epoch();
+					req.client_ts_ns = (proto::u64)std::chrono::duration_cast<std::chrono::nanoseconds>(now).count();
+
+					auto h = proto::make_header((std::uint16_t)proto::C2SMsg::bench_move,
+						(std::uint16_t)sizeof(req));
+					s->async_send(h, reinterpret_cast<const char*>(&req));
+					++sent;
+				}
+				std::this_thread::sleep_for(interval);
+			}
+			const auto t1 = std::chrono::steady_clock::now();
+			const double elapsed = std::chrono::duration<double>(t1 - t0).count();
+
+			// ack 수집 대기(최대 5초)
+			const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+			std::uint64_t ack_total = 0;
+			while (std::chrono::steady_clock::now() < deadline)
+			{
+				ack_total = 0;
+				for (auto& c : bench) ack_total += c.handler->BenchGetSnapshot().recv_ack;
+				if (ack_total >= sent) break;
+				std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			}
+
+			// 집계
+			std::uint64_t move_recv = 0, spawn_recv = 0, despawn_recv = 0;
+			double rtt_sum_ms = 0.0;
+			double rtt_min_ms = 0.0;
+			double rtt_max_ms = 0.0;
+			bool min_init = false;
+			for (auto& c : bench) {
+				auto s = c.handler->BenchGetSnapshot();
+				move_recv += s.recv_move;
+				spawn_recv += s.recv_spawn;
+				despawn_recv += s.recv_despawn;
+				rtt_sum_ms += s.rtt_avg_ms * (double)s.recv_ack;
+				if (s.recv_ack > 0) {
+					if (!min_init || s.rtt_min_ms < rtt_min_ms) rtt_min_ms = s.rtt_min_ms;
+					if (!min_init || s.rtt_max_ms > rtt_max_ms) rtt_max_ms = s.rtt_max_ms;
+					min_init = true;
+				}
+			}
+
+			const double ack_qps = elapsed > 0.0 ? (double)ack_total / elapsed : 0.0;
+			const double send_qps = elapsed > 0.0 ? (double)sent / elapsed : 0.0;
+			const double rtt_avg_ms = ack_total > 0 ? (rtt_sum_ms / (double)ack_total) : 0.0;
+
+			std::cout << "[bench_walk] done\n"
+				<< "  elapsed_sec=" << elapsed << "\n"
+				<< "  sent=" << sent << " (" << send_qps << " pkt/s)\n"
+				<< "  ack=" << ack_total << " (" << ack_qps << " ack/s)\n"
+				<< "  rtt_ms avg=" << rtt_avg_ms << " min=" << rtt_min_ms << " max=" << rtt_max_ms << "\n"
+				<< "  zone_broadcast recv_move=" << move_recv
+				<< " recv_spawn=" << spawn_recv
+				<< " recv_despawn=" << despawn_recv
+				<< "\n";
+
+			CNetworkEX::SetBenchQuiet(false);
+			continue;
+		}
+
 
 		std::cout << "unknown command\n";
 	}

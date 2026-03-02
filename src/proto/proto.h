@@ -16,8 +16,14 @@ namespace proto {
 		attack_monster = 21,
 		attack_player = 30,
 
+		move = 40,
+
+		// internal/test: actor ordering
+
+
 		actor_seq_test = 100,
 		actor_forward = 101,
+		bench_move = 102,
 	};
 
 	enum S2CMsg : u16 {
@@ -29,8 +35,14 @@ namespace proto {
 		spawn_monster_ok = 20,
 		attack_result = 21,
 
+		player_spawn = 40,
+		player_despawn = 41,
+		player_move = 42,
+
+
 		actor_bound = 100,
 		actor_seq_ack = 101,
+		bench_move_ack = 102,
 	};
 
 #pragma pack(push, 1)
@@ -100,6 +112,32 @@ namespace proto {
 		C2S_attack_player() : target_char_id(0) {}
 	};
 
+	// ---- Zone/AOI test ----
+	struct C2S_move {
+		i32 x;
+		i32 y;
+		C2S_move() : x(0), y(0) {}
+	};
+
+	struct S2C_player_spawn {
+		u64 char_id;
+		i32 x;
+		i32 y;
+		S2C_player_spawn() : char_id(0), x(0), y(0) {}
+	};
+
+	struct S2C_player_despawn {
+		u64 char_id;
+		S2C_player_despawn() : char_id(0) {}
+	};
+
+	struct S2C_player_move {
+		u64 char_id;
+		i32 x;
+		i32 y;
+		S2C_player_move() : char_id(0), x(0), y(0) {}
+	};
+
 	// 공통 전투 결과(몬스터/플레이어)
 	struct S2C_attack_result {
 		u64 attacker_id;
@@ -141,6 +179,26 @@ namespace proto {
 		u32 errors;  // 서버 측 감지 에러 누적(디버그)
 		S2C_actor_seq_ack() : ok(1), seq(0), shard(0), errors(0) {}
 	};
+
+	// ---- Load test: move + RTT 측정 ----
+	// - client_ts_ns: 클라 monotonic time(ns)를 그대로 echo해서 RTT 계산
+	struct C2S_bench_move {
+		u32 seq;
+		u32 work_us;        // 서버에서 추가 작업 시뮬레이션(0이면 없음)
+		i32 x;
+		i32 y;
+		u64 client_ts_ns;
+		C2S_bench_move() : seq(0), work_us(0), x(0), y(0), client_ts_ns(0) {}
+	};
+
+	struct S2C_bench_move_ack {
+		u32 ok;
+		u32 seq;
+		u64 client_ts_ns;
+		u32 zone;   // 디버그
+		u32 shard;  // 디버그
+		S2C_bench_move_ack() : ok(1), seq(0), client_ts_ns(0), zone(0), shard(0) {}
+	};
 #pragma pack(pop)
 
 	static_assert(sizeof(C2S_open_world_notice) == (max_world_name_len + 1) * sizeof(char));
@@ -154,6 +212,10 @@ namespace proto {
 	static_assert(sizeof(S2C_spawn_monster_ok) == 20);
 	static_assert(sizeof(C2S_attack_monster) == 8);
 	static_assert(sizeof(C2S_attack_player) == 8);
+	static_assert(sizeof(C2S_move) == 8);
+	static_assert(sizeof(S2C_player_spawn) == 16);
+	static_assert(sizeof(S2C_player_despawn) == 8);
+	static_assert(sizeof(S2C_player_move) == 16);
 	static_assert(sizeof(S2C_attack_result) == 40);
 	static_assert(sizeof(C2S_actor_seq_test) == 8);
 	static_assert(sizeof(C2S_actor_forward) == 16);
