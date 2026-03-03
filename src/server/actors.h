@@ -4,6 +4,10 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
+#include <algorithm>
+#include <memory>
+#include <deque>
+#include <cstring>
 
 #include "../net/actor_system.h"
 
@@ -114,7 +118,130 @@ namespace svr {
 			Vec2i pos{};
 			std::int32_t cx = 0;
 			std::int32_t cy = 0;
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
 		};
+
+		// - 좁은 구역에 유저가 많을 때, 한 번의 Move 처리에서 N명에게 Send()를 연속 호출하면
+		//   세션 send_q가 burst로 커지면서 overflow/close가 발생할 수 있다.
+		// - 그래서 ZoneActor에서 "보낼 것"을 pending_net_에 쌓고, 1회 처리당 budget만큼만 flush한다.
+		// - flush되지 못한 전송은 다음 ZoneActor 작업에서 이어서 처리된다(빈번히 move가 오므로 자연스럽게 drain됨).
+		struct PendingNetSend {
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+			_MSG_HEADER h{};
+			std::shared_ptr<std::vector<char>> body; // nullable
+			std::uint16_t msg_type = 0;
+			std::uint64_t move_char_id = 0; // for coalesce hint
+
+			std::size_t bytes() const noexcept { return (std::size_t)h.m_wSize; }
+		};
+
+		// ✅ per-session pending queue + bytes tracking
+		std::unordered_map<std::uint32_t, std::deque<PendingNetSend>> pending_by_sid_;
+		std::unordered_map<std::uint32_t, std::size_t> pending_bytes_by_sid_;
+
+		// ✅ pending limits (avoid server memory blow-up)
+		static constexpr std::size_t kMaxPendingMsgsPerSid = 5000;
+		static constexpr std::size_t kMaxPendingBytesPerSid = 4 * 1024 * 1024;
+
+		static std::shared_ptr<std::vector<char>> MakeBody_(const void* p, std::size_t n)
+		{
+			if (!p || n == 0) return {};
+			auto v = std::make_shared<std::vector<char>>(n);
+			std::memcpy(v->data(), p, n);
+			return v;
+		}
+
+		template <class T>
+		static std::shared_ptr<std::vector<char>> MakeBody_(const T& pod)
+		{
+			return MakeBody_(&pod, sizeof(T));
+		}
+
+		bool HasPendingNet_() const noexcept
+		{
+			for (auto& kv : pending_by_sid_) {
+				if (!kv.second.empty()) return true;
+			}
+			return false;
+		}
+
+		void EnqueueSend_(std::uint32_t sid, std::uint32_t serial, const _MSG_HEADER& h,
+			std::shared_ptr<std::vector<char>> body,
+			std::uint16_t msg_type,
+			std::uint64_t move_char_id = 0)
+		{
+			PendingNetSend ps{};
+			ps.sid = sid;
+			ps.serial = serial;
+			ps.h = h;
+			ps.body = std::move(body);
+			ps.msg_type = msg_type;
+			ps.move_char_id = move_char_id;
+
+			auto& q = pending_by_sid_[sid];
+			auto& b = pending_bytes_by_sid_[sid];
+
+			// ✅ per-sid pending cap (drop newest on overflow)
+			const std::size_t add_bytes = ps.bytes();
+			if (q.size() + 1 > kMaxPendingMsgsPerSid || (b + add_bytes) > kMaxPendingBytesPerSid) {
+				return;
+			}
+
+			b += add_bytes;
+			q.push_back(std::move(ps));
+		}
+
+		// ✅ Drain pending sends with budgets.
+		// - uses TrySendLossy() to avoid disconnect on overflow
+		// - if a session is saturated, keep its messages in pending (backpressure)
+		void FlushPendingSends_(CNetworkEX& net, std::uint32_t pro_id,
+			std::size_t budget_msgs = 2000,
+			std::size_t budget_bytes = 2 * 1024 * 1024)
+		{
+			std::size_t n = 0;
+			std::size_t bytes = 0;
+
+			// snapshot sids for stable iteration
+			std::vector<std::uint32_t> sids;
+			sids.reserve(pending_by_sid_.size());
+			for (auto& kv : pending_by_sid_) {
+				if (!kv.second.empty()) sids.push_back(kv.first);
+			}
+
+			for (auto sid : sids) {
+				auto itq = pending_by_sid_.find(sid);
+				if (itq == pending_by_sid_.end()) continue;
+				auto& q = itq->second;
+				auto& b = pending_bytes_by_sid_[sid];
+
+				while (n < budget_msgs && bytes < budget_bytes && !q.empty()) {
+					auto ps = std::move(q.front());
+					q.pop_front();
+					b -= ps.bytes();
+
+					const char* body_ptr = (ps.body && !ps.body->empty()) ? ps.body->data() : nullptr;
+
+					// if saturated: push back and move to next sid
+					if (!net.TrySendLossy(pro_id, ps.sid, ps.serial, ps.h, body_ptr)) {
+						q.push_front(std::move(ps));
+						b += q.front().bytes();
+						break;
+					}
+
+					bytes += ps.h.m_wSize;
+					++n;
+				}
+
+				if (q.empty()) {
+					pending_by_sid_.erase(sid);
+					pending_bytes_by_sid_.erase(sid);
+				}
+
+				if (n >= budget_msgs || bytes >= budget_bytes) break;
+			}
+		}
 
 		std::uint64_t next_monster_id = 1;
 		std::uint64_t next_tx_id = 1;
@@ -132,23 +259,34 @@ namespace svr {
 			return (std::int64_t(cx) << 32) ^ (std::uint32_t)cy;
 		}
 
-		std::unordered_set<std::uint64_t> GatherNeighbors(std::int32_t cx, std::int32_t cy) {
-			std::unordered_set<std::uint64_t> out;
+		std::vector<std::uint64_t> GatherNeighborsVec(std::int32_t cx, std::int32_t cy) {
+			std::vector<std::uint64_t> out;
+			std::size_t approx = 0;
 			for (int dy = -1; dy <= 1; ++dy) {
 				for (int dx = -1; dx <= 1; ++dx) {
 					auto it = cells.find(CellKey(cx + dx, cy + dy));
 					if (it == cells.end()) continue;
-					for (auto id : it->second) out.insert(id);
+					approx += it->second.size();
+				}
+			}
+			out.reserve(approx);
+			for (int dy = -1; dy <= 1; ++dy) {
+				for (int dx = -1; dx <= 1; ++dx) {
+					auto it = cells.find(CellKey(cx + dx, cy + dy));
+					if (it == cells.end()) continue;
+					for (auto id : it->second) out.push_back(id);
 				}
 			}
 			return out;
 		}
 
-		void Join(std::uint64_t char_id, Vec2i pos) {
+		void JoinOrUpdate(std::uint64_t char_id, Vec2i pos, std::uint32_t sid, std::uint32_t serial) {
 			auto& pi = players[char_id];
 			pi.pos = pos;
 			pi.cx = ToCell(pos.x);
 			pi.cy = ToCell(pos.y);
+			pi.sid = sid;
+			pi.serial = serial;
 			cells[CellKey(pi.cx, pi.cy)].insert(char_id);
 		}
 
@@ -168,26 +306,29 @@ namespace svr {
 		// old/new visible set을 반환한다.
 		struct MoveDiff {
 			Vec2i new_pos{};
-			std::unordered_set<std::uint64_t> old_vis;
-			std::unordered_set<std::uint64_t> new_vis;
+			std::vector<std::uint64_t> old_vis;
+			std::vector<std::uint64_t> new_vis;;
 		};
 
-		MoveDiff Move(std::uint64_t char_id, Vec2i new_pos) {
+		MoveDiff Move(std::uint64_t char_id, Vec2i new_pos, std::uint32_t sid, std::uint32_t serial) {
 			MoveDiff d{};
 			d.new_pos = new_pos;
 			auto it = players.find(char_id);
 			if (it == players.end()) {
-				Join(char_id, new_pos);
+				JoinOrUpdate(char_id, new_pos, sid, serial);
 				// old_vis empty, new_vis will be based on current
 				auto& pi = players[char_id];
-				d.new_vis = GatherNeighbors(pi.cx, pi.cy);
-				d.new_vis.erase(char_id);
+				d.new_vis = GatherNeighborsVec(pi.cx, pi.cy);
+				d.new_vis.erase(std::remove(d.new_vis.begin(), d.new_vis.end(), char_id), d.new_vis.end());
 				return d;
 			}
 
 			auto& pi = it->second;
-			d.old_vis = GatherNeighbors(pi.cx, pi.cy);
-			d.old_vis.erase(char_id);
+			d.old_vis = GatherNeighborsVec(pi.cx, pi.cy);
+			d.old_vis.erase(std::remove(d.old_vis.begin(), d.old_vis.end(), char_id), d.old_vis.end());
+
+			pi.sid = sid;
+			pi.serial = serial;
 
 			const std::int32_t ncx = ToCell(new_pos.x);
 			const std::int32_t ncy = ToCell(new_pos.y);
@@ -207,8 +348,8 @@ namespace svr {
 			}
 			pi.pos = new_pos;
 
-			d.new_vis = GatherNeighbors(pi.cx, pi.cy);
-			d.new_vis.erase(char_id);
+			d.new_vis = GatherNeighborsVec(pi.cx, pi.cy);
+			d.new_vis.erase(std::remove(d.new_vis.begin(), d.new_vis.end(), char_id), d.new_vis.end());
 			return d;
 		}
 	};

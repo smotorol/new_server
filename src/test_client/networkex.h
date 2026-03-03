@@ -12,7 +12,7 @@
 class CNetworkEX : public dc::NetworkEXBase
 {
 public:
-	explicit CNetworkEX(std::uint32_t pro_id = 0) : dc::NetworkEXBase(pro_id) {}
+	explicit CNetworkEX(std::uint32_t pro_id = 0);
 	~CNetworkEX() override = default;
 
 	// ✅ 서버가 알려준 ActorId(char_id)
@@ -41,6 +41,10 @@ private:
 	mutable std::mutex ready_mtx_;
 	std::condition_variable ready_cv_;
 
+	// ready 이전(ActorId 바인딩 전) 분산용 fallback actor id
+	std::uint64_t fallback_actor_id_ = 0;
+	static std::atomic<std::uint64_t> s_fallback_seq_;
+
 	// bench counters (Actor thread에서 갱신)
 	std::atomic<std::uint64_t> recv_move_{ 0 };
 	std::atomic<std::uint64_t> recv_spawn_{ 0 };
@@ -52,6 +56,10 @@ private:
 
 	static std::atomic<bool> bench_quiet_;
 protected:
+	// ✅ test_client: 연결(클라이언트) 단위로 Actor shard 분산을 위해 ActorId 라우팅 키를 재정의
+	// - ready 전에는 handler 인스턴스별 고유 fallback_actor_id_ 사용
+	// - ready 후(server가 actor_bound 내려준 뒤)에는 actor_id_(char_id) 사용
+	std::uint64_t ResolveActorId(std::uint32_t session_idx) const override;
 	// ====== 아래는 기존 LogServer의 확장 지점(포팅 대상 함수들) ======
 	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t dwClientIndex, _MSG_HEADER* pMsgHeader, char* pMsg) override;
 	void AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial) override;

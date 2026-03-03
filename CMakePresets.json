@@ -7,26 +7,6 @@
   },
   "configurePresets": [
     {
-      "name": "win-vs2022-x64",
-      "displayName": "Windows VS2022 x64 (multi-config)",
-      "generator": "Visual Studio 17 2022",
-      "binaryDir": "${sourceDir}/out/build/${presetName}",
-      "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "x64-windows"
-      }
-    },
-    {
-      "name": "win-vs2022-x64-static",
-      "displayName": "Windows VS2022 x64 Static (optional)",
-      "generator": "Visual Studio 17 2022",
-      "binaryDir": "${sourceDir}/out/build/${presetName}",
-      "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
-        "VCPKG_TARGET_TRIPLET": "x64-windows-static"
-      }
-    },
-    {
       "name": "vs2022-x64-sln",
       "displayName": "VS2022 x64 Solution",
       "generator": "Visual Studio 17 2022",
@@ -34,7 +14,6 @@
       "cacheVariables": {
         "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
         "VCPKG_TARGET_TRIPLET": "x64-windows-static",
-        "CMAKE_MSVC_RUNTIME_LIBRARY": "MultiThreaded$<$<CONFIG:Debug>:Debug>"
       }
     }
   ],
@@ -42,13 +21,13 @@
     {
       "name": "win-debug",
       "displayName": "Build Debug",
-      "configurePreset": "win-vs2022-x64",
+      "configurePreset": "vs2022-x64-sln",
       "configuration": "Debug"
     },
     {
       "name": "win-release",
       "displayName": "Build Release",
-      "configurePreset": "win-vs2022-x64",
+      "configurePreset": "vs2022-x64-sln",
       "configuration": "Release"
     }
   ]

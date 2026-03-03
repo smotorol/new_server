@@ -93,6 +93,31 @@ namespace dc {
 			return false;
 		}
 
+		// ✅ Lossy send: used for high-frequency AOI/move/bench packets.
+		// - If the underlying session send queue is full, it returns false and does NOT disconnect.
+		bool TrySendLossy(std::uint32_t /*dwProID*/, std::uint32_t dwSocketIndex, std::uint32_t dwSerial,
+			const _MSG_HEADER& header, const char* body)
+		{
+			// server mode
+			if (server_) {
+				return server_->try_send_lossy(dwSocketIndex, dwSerial, header, body);
+			}
+
+			// client mode
+			std::lock_guard<std::mutex> lk(session_mtx_);
+			auto it = session_serials_.find(dwSocketIndex);
+			if (it != session_serials_.end() && it->second != dwSerial) return false;
+			if (auto c = client_.lock()) {
+				if (auto s = c->session()) {
+					const std::size_t msg_bytes = (std::size_t)header.m_wSize;
+					if (!s->can_accept_send(msg_bytes)) return false;
+					s->async_send_lossy(header, body);
+					return true;
+				}
+			}
+			return false;
+		}
+
 		// ========== net::INetHandler ==========
 		void on_connected(std::uint32_t idx, std::uint32_t serial) override
 		{
@@ -180,20 +205,35 @@ namespace dc {
 			// ✅ ActorId는 "포스트 전에" 결정
 			const std::uint64_t default_actor = ResolveActorId(idx);
 			const std::uint64_t actor = ResolveActorIdForPacket(idx, *header, body, body_len, default_actor);
-
-			// dispatcher가 있으면 포인터 수명 문제 때문에 복사 후 Post
-			auto buf = std::make_shared<std::vector<std::uint8_t>>();
-			buf->resize(body_len);
-			if (body_len && body) std::memcpy(buf->data(), body, body_len);
 			auto hdr_copy = *header;
-			dispatch_(actor, [self = shared_from_this(), idx, serial, hdr_copy, buf]() mutable {
-				const bool ok = self->HandlePacket_(idx, serial, &hdr_copy,
-				buf->empty() ? nullptr : reinterpret_cast<const char*>(buf->data()));
-			if (!ok) {
-				// ✅ 로직 스레드에서 패킷 거부 시 세션 종료(레거시 의미 유지)
-				self->Close(self->pro_id_, idx, serial, /*bSlowClose=*/false);
-			}
+			constexpr std::size_t kSmall = 256;
+			if (body_len <= kSmall)
+			{
+				std::array<std::uint8_t, kSmall> sbuf{};
+				if (body_len && body) std::memcpy(sbuf.data(), body, body_len);
+				dispatch_(actor, [self = shared_from_this(), idx, serial, hdr_copy, sbuf, body_len]() mutable {
+					const char* b = (body_len == 0) ? nullptr : reinterpret_cast<const char*>(sbuf.data());
+					const bool ok = self->HandlePacket_(idx, serial, &hdr_copy, b);
+					if (!ok) {
+						// ✅ 로직 스레드에서 패킷 거부 시 세션 종료(레거시 의미 유지)
+						self->Close(self->pro_id_, idx, serial, /*bSlowClose=*/false);
+					}
 				});
+			}
+			else
+			{
+				auto buf = std::make_shared<std::vector<std::uint8_t>>();
+				buf->resize(body_len);
+				if (body_len && body) std::memcpy(buf->data(), body, body_len);
+				dispatch_(actor, [self = shared_from_this(), idx, serial, hdr_copy, buf]() mutable {
+					const bool ok = self->HandlePacket_(idx, serial, &hdr_copy,
+					buf->empty() ? nullptr : reinterpret_cast<const char*>(buf->data()));
+				if (!ok) {
+					// ✅ 로직 스레드에서 패킷 거부 시 세션 종료(레거시 의미 유지)
+					self->Close(self->pro_id_, idx, serial, /*bSlowClose=*/false);
+				}
+				});
+			}
 			return true;
 		}
 

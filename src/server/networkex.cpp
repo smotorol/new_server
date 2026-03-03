@@ -4,8 +4,11 @@
 #include <unordered_map>
 #include <unordered_set>
 #include <algorithm>
+#include <iterator>
 #include <chrono>
 #include <thread>
+#include <functional>
+#include <memory>
 #include "../common/string_utils.h"
 #include "../proto/packet_util.h"
 #include "../proto/proto.h"
@@ -154,9 +157,9 @@ void CNetworkEX::AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex,
 		// zone init
 		a.zone_id = 1;
 		a.pos = { 0,0 };
-		svr::g_Main.PostActor(svr::MakeZoneActorId(a.zone_id), [char_id]() {
+		svr::g_Main.PostActor(svr::MakeZoneActorId(a.zone_id), [char_id, sid, serial]() {
 			auto& z = svr::g_Main.GetOrCreateZoneActor(1);
-			z.Join(char_id, { 0,0 });
+			z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
 		});
 	});
 
@@ -230,17 +233,16 @@ void CNetworkEX::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, 
 						return;
 					}
 
-					const auto neigh = z.GatherNeighbors(itp->second.cx, itp->second.cy);
+					const auto neigh = z.GatherNeighborsVec(itp->second.cx, itp->second.cy);
 					z.Leave(char_id);
 
 					// 3) 수신자 Actor에서 세션 체크 후 send
 					for (auto other_id : neigh) {
 						if (other_id == char_id) continue;
-						svr::g_Main.PostActor(other_id, [self, dwProID, other_id, despawn, despawn_h]() mutable {
-							auto& op = svr::g_Main.GetOrCreatePlayerActor(other_id);
-							if (!op.online || op.sid == 0 || op.serial == 0) return;
-							self->Send(dwProID, op.sid, op.serial, despawn_h, reinterpret_cast<const char*>(&despawn));
-						});
+						auto it = z.players.find(other_id);
+						if (it == z.players.end()) continue;
+						if (it->second.sid == 0 || it->second.serial == 0) continue;
+						self->Send(dwProID, it->second.sid, it->second.serial, despawn_h, reinterpret_cast<const char*>(&despawn));
 					}
 				});
 
@@ -464,12 +466,20 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 
 			svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [self, th, dwProID, sid, serial, zone_id, char_id, nx = req->x, ny = req->y]() {
 				auto& z = svr::g_Main.GetOrCreateZoneActor(zone_id);
-				auto diff = z.Move(char_id, { nx, ny });
+				auto diff = z.Move(char_id, { nx, ny }, sid, serial);
 
-				std::unordered_set<std::uint64_t> entered;
-				std::unordered_set<std::uint64_t> exited;
-				for (auto id : diff.new_vis) if (diff.old_vis.find(id) == diff.old_vis.end()) entered.insert(id);
-				for (auto id : diff.old_vis) if (diff.new_vis.find(id) == diff.new_vis.end()) exited.insert(id);
+				std::vector<std::uint64_t> entered;
+				std::vector<std::uint64_t> exited;
+				{
+					auto oldv = diff.old_vis;
+					auto newv = diff.new_vis;
+					std::sort(oldv.begin(), oldv.end());
+					std::sort(newv.begin(), newv.end());
+					entered.reserve(newv.size());
+					exited.reserve(oldv.size());
+					std::set_difference(newv.begin(), newv.end(), oldv.begin(), oldv.end(), std::back_inserter(entered));
+					std::set_difference(oldv.begin(), oldv.end(), newv.begin(), newv.end(), std::back_inserter(exited));
+				}
 
 				// to self: spawn entered / despawn exited
 				for (auto oid : entered) {
@@ -495,27 +505,26 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 				self_spawn.x = nx;
 				self_spawn.y = ny;
 				auto h_spawn = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn, (std::uint16_t)sizeof(self_spawn));
+
+				// ✅ (ZoneActor) enqueue broadcast messages (budgeted flush)
+				auto body_self_spawn = svr::ZoneActor::MakeBody_(self_spawn);
+
 				proto::S2C_player_despawn self_des{};
 				self_des.char_id = char_id;
 				auto h_des = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn, (std::uint16_t)sizeof(self_des));
+				auto body_self_des = svr::ZoneActor::MakeBody_(self_des);
 
 				for (auto rid : entered) {
-					svr::g_Main.PostActor(rid, [self, th, dwProID, h_spawn, self_spawn, rid]() {
-						auto& ra = svr::g_Main.GetOrCreatePlayerActor(rid);
-						if (!ra.has_session()) return;
-						const std::uint32_t rserial = th->GetLatestSerial(ra.sid);
-						if (rserial == 0) return;
-						self->Send(dwProID, ra.sid, rserial, h_spawn, reinterpret_cast<const char*>(&self_spawn));
-					});
+					auto it = z.players.find(rid);
+					if (it == z.players.end()) continue;
+					if (it->second.sid == 0 || it->second.serial == 0) continue;
+					z.EnqueueSend_(it->second.sid, it->second.serial, h_spawn, body_self_spawn, (std::uint16_t)proto::S2CMsg::player_spawn);
 				}
 				for (auto rid : exited) {
-					svr::g_Main.PostActor(rid, [self, th, dwProID, h_des, self_des, rid]() {
-						auto& ra = svr::g_Main.GetOrCreatePlayerActor(rid);
-						if (!ra.has_session()) return;
-						const std::uint32_t rserial = th->GetLatestSerial(ra.sid);
-						if (rserial == 0) return;
-						self->Send(dwProID, ra.sid, rserial, h_des, reinterpret_cast<const char*>(&self_des));
-					});
+					auto it = z.players.find(rid);
+					if (it == z.players.end()) continue;
+					if (it->second.sid == 0 || it->second.serial == 0) continue;
+					z.EnqueueSend_(it->second.sid, it->second.serial, h_des, body_self_des, (std::uint16_t)proto::S2CMsg::player_despawn);
 				}
 
 				// broadcast move to all in new vis
@@ -524,15 +533,31 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 				mmsg.x = nx;
 				mmsg.y = ny;
 				auto h_move = proto::make_header((std::uint16_t)proto::S2CMsg::player_move, (std::uint16_t)sizeof(mmsg));
+				auto body_move = svr::ZoneActor::MakeBody_(mmsg);
+
 				for (auto rid : diff.new_vis) {
-					svr::g_Main.PostActor(rid, [self, th, dwProID, h_move, mmsg, rid]() {
-						auto& ra = svr::g_Main.GetOrCreatePlayerActor(rid);
-						if (!ra.has_session()) return;
-						const std::uint32_t rserial = th->GetLatestSerial(ra.sid);
-						if (rserial == 0) return;
-						self->Send(dwProID, ra.sid, rserial, h_move, reinterpret_cast<const char*>(&mmsg));
-					});
+					auto it = z.players.find(rid);
+					if (it == z.players.end()) continue;
+					if (it->second.sid == 0 || it->second.serial == 0) continue;
+					z.EnqueueSend_(it->second.sid, it->second.serial, h_move, body_move, (std::uint16_t)proto::S2CMsg::player_move, char_id);
 				}
+
+				// ✅ flush budgeted pending sends for this zone job
+				z.FlushPendingSends_(static_cast<CNetworkEX&>(*self), dwProID);
+
+				// ✅ if still pending (slow receivers), keep draining with small follow-up jobs
+				if (z.HasPendingNet_()) {
+					auto flusher = std::make_shared<std::function<void(int)>>();
+					*flusher = [self, dwProID, zone_id, flusher](int depth) {
+						auto& zf = svr::g_Main.GetOrCreateZoneActor(zone_id);
+						zf.FlushPendingSends_(static_cast<CNetworkEX&>(*self), dwProID, 1500, 1 * 1024 * 1024);
+						if (depth < 16 && zf.HasPendingNet_()) {
+							svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [flusher, depth]() { (*flusher)(depth + 1); });
+						}
+					};
+					svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [flusher]() { (*flusher)(0); });
+				}
+
 			});
 			return true;
 		}
@@ -557,13 +582,22 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id),
 				[self, th, dwProID, sid, zone_id, char_id,
 				seq = req->seq, work_us = req->work_us, nx = req->x, ny = req->y, cts = req->client_ts_ns]() {
+				const std::uint32_t serial = th->GetLatestSerial(sid);
 				auto& z = svr::g_Main.GetOrCreateZoneActor(zone_id);
-				auto diff = z.Move(char_id, { nx, ny });
+				auto diff = z.Move(char_id, { nx, ny }, sid, serial);
 
-				std::unordered_set<std::uint64_t> entered;
-				std::unordered_set<std::uint64_t> exited;
-				for (auto id : diff.new_vis) if (diff.old_vis.find(id) == diff.old_vis.end()) entered.insert(id);
-				for (auto id : diff.old_vis) if (diff.new_vis.find(id) == diff.new_vis.end()) exited.insert(id);
+				std::vector<std::uint64_t> entered;
+				std::vector<std::uint64_t> exited;
+				{
+					auto oldv = diff.old_vis;
+					auto newv = diff.new_vis;
+					std::sort(oldv.begin(), oldv.end());
+					std::sort(newv.begin(), newv.end());
+					entered.reserve(newv.size());
+					exited.reserve(oldv.size());
+					std::set_difference(newv.begin(), newv.end(), oldv.begin(), oldv.end(), std::back_inserter(entered));
+					std::set_difference(oldv.begin(), oldv.end(), newv.begin(), newv.end(), std::back_inserter(exited));
+				}
 
 				// to self: spawn entered / despawn exited
 				const std::uint32_t my_serial = th->GetLatestSerial(sid);
@@ -576,13 +610,13 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 						smsg.x = itp->second.pos.x;
 						smsg.y = itp->second.pos.y;
 						auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn, (std::uint16_t)sizeof(smsg));
-						self->Send(dwProID, sid, my_serial, h, reinterpret_cast<const char*>(&smsg));
+						z.EnqueueSend_(sid, serial, h, svr::ZoneActor::MakeBody_(smsg), (std::uint16_t)proto::S2CMsg::player_spawn);
 					}
 					for (auto oid : exited) {
 						proto::S2C_player_despawn dmsg{};
 						dmsg.char_id = oid;
 						auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn, (std::uint16_t)sizeof(dmsg));
-						self->Send(dwProID, sid, my_serial, h, reinterpret_cast<const char*>(&dmsg));
+						z.EnqueueSend_(sid, serial, h, svr::ZoneActor::MakeBody_(dmsg), (std::uint16_t)proto::S2CMsg::player_despawn);
 					}
 				}
 
@@ -592,27 +626,26 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 				self_spawn.x = nx;
 				self_spawn.y = ny;
 				auto h_spawn = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn, (std::uint16_t)sizeof(self_spawn));
+
+				// ✅ (ZoneActor) enqueue broadcast messages (budgeted flush)
+				auto body_self_spawn = svr::ZoneActor::MakeBody_(self_spawn);
+
 				proto::S2C_player_despawn self_des{};
 				self_des.char_id = char_id;
 				auto h_des = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn, (std::uint16_t)sizeof(self_des));
+				auto body_self_des = svr::ZoneActor::MakeBody_(self_des);
 
 				for (auto rid : entered) {
-					svr::g_Main.PostActor(rid, [self, th, dwProID, h_spawn, self_spawn, rid]() {
-						auto& ra = svr::g_Main.GetOrCreatePlayerActor(rid);
-						if (!ra.has_session()) return;
-						const std::uint32_t rserial = th->GetLatestSerial(ra.sid);
-						if (rserial == 0) return;
-						self->Send(dwProID, ra.sid, rserial, h_spawn, reinterpret_cast<const char*>(&self_spawn));
-					});
+					auto it = z.players.find(rid);
+					if (it == z.players.end()) continue;
+					if (it->second.sid == 0 || it->second.serial == 0) continue;
+					z.EnqueueSend_(it->second.sid, it->second.serial, h_spawn, body_self_spawn, (std::uint16_t)proto::S2CMsg::player_spawn);
 				}
 				for (auto rid : exited) {
-					svr::g_Main.PostActor(rid, [self, th, dwProID, h_des, self_des, rid]() {
-						auto& ra = svr::g_Main.GetOrCreatePlayerActor(rid);
-						if (!ra.has_session()) return;
-						const std::uint32_t rserial = th->GetLatestSerial(ra.sid);
-						if (rserial == 0) return;
-						self->Send(dwProID, ra.sid, rserial, h_des, reinterpret_cast<const char*>(&self_des));
-					});
+					auto it = z.players.find(rid);
+					if (it == z.players.end()) continue;
+					if (it->second.sid == 0 || it->second.serial == 0) continue;
+					z.EnqueueSend_(it->second.sid, it->second.serial, h_des, body_self_des, (std::uint16_t)proto::S2CMsg::player_despawn);
 				}
 
 				// broadcast move to all in new vis
@@ -621,14 +654,29 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 				mmsg.x = nx;
 				mmsg.y = ny;
 				auto h_move = proto::make_header((std::uint16_t)proto::S2CMsg::player_move, (std::uint16_t)sizeof(mmsg));
+				auto body_move = svr::ZoneActor::MakeBody_(mmsg);
+
 				for (auto rid : diff.new_vis) {
-					svr::g_Main.PostActor(rid, [self, th, dwProID, h_move, mmsg, rid]() {
-						auto& ra = svr::g_Main.GetOrCreatePlayerActor(rid);
-						if (!ra.has_session()) return;
-						const std::uint32_t rserial = th->GetLatestSerial(ra.sid);
-						if (rserial == 0) return;
-						self->Send(dwProID, ra.sid, rserial, h_move, reinterpret_cast<const char*>(&mmsg));
-					});
+					auto it = z.players.find(rid);
+					if (it == z.players.end()) continue;
+					if (it->second.sid == 0 || it->second.serial == 0) continue;
+					z.EnqueueSend_(it->second.sid, it->second.serial, h_move, body_move, (std::uint16_t)proto::S2CMsg::player_move, char_id);
+				}
+
+				// ✅ flush budgeted pending sends (avoid one job bursting send_q)
+				z.FlushPendingSends_(static_cast<CNetworkEX&>(*self), dwProID);
+
+				// ✅ if still pending (slow receivers), keep draining with small follow-up jobs
+				if (z.HasPendingNet_()) {
+					auto flusher = std::make_shared<std::function<void(int)>>();
+					*flusher = [self, dwProID, zone_id, flusher](int depth) {
+						auto& zf = svr::g_Main.GetOrCreateZoneActor(zone_id);
+						zf.FlushPendingSends_(static_cast<CNetworkEX&>(*self), dwProID, 1500, 1 * 1024 * 1024);
+						if (depth < 16 && zf.HasPendingNet_()) {
+							svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [flusher, depth]() { (*flusher)(depth + 1); });
+						}
+					};
+					svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [flusher]() { (*flusher)(0); });
 				}
 
 				// work simulation (zone actor thread)
@@ -646,7 +694,7 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::bench_move_ack, (std::uint16_t)sizeof(ack));
 				const std::uint32_t my_serial2 = th->GetLatestSerial(sid);
 				if (my_serial2 != 0) {
-					self->Send(dwProID, sid, my_serial2, h, reinterpret_cast<const char*>(&ack));
+					self->TrySendLossy(dwProID, sid, my_serial2, h, reinterpret_cast<const char*>(&ack));
 				}
 			});
 			return true;

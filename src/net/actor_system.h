@@ -86,6 +86,10 @@ namespace net {
 
 	private:
 		std::atomic<bool> running_{ false };
+		// ✅ start/stop/post 동시성 보호
+		// - bench 종료/소멸 시점에 네트워크 스레드가 post()를 호출하면서
+		//   shards_가 clear되는 레이스(UB/프리징)를 막는다.
+		mutable std::mutex shards_mtx_;
 		std::vector<std::unique_ptr<Shard>> shards_;
 
 		std::size_t pick_shard_(ActorId id) const noexcept;

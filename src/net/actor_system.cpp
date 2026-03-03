@@ -45,6 +45,7 @@ namespace net {
 	void ActorSystem::start(std::uint32_t thread_count)
 	{
 		stop();
+		std::lock_guard g(shards_mtx_);
 
 		const std::uint32_t n = std::max<std::uint32_t>(1, thread_count);
 		shards_.clear();
@@ -65,22 +66,32 @@ namespace net {
 
 	void ActorSystem::stop()
 	{
-		if (!running_.exchange(false)) {
-			// 이미 stopped거나 start 안 된 상태
-			shards_.clear();
-			return;
+		std::vector<std::unique_ptr<Shard>> local;
+		{
+			std::lock_guard g(shards_mtx_);
+			if (!running_.exchange(false)) {
+				shards_.clear();
+				return;
+			}
+			local.swap(shards_);
 		}
 
-		for (auto& up : shards_) {
+		for (auto& up : local) {
 			up->cv.notify_all();
 		}
 		// jthread는 소멸 시 자동 join + stop_request
-		shards_.clear();
+		local.clear();
 	}
 
 	void ActorSystem::post(ActorId id, Fn fn)
 	{
 		if (!fn) return;
+
+		// ✅ stop()/소멸과 동시 post 레이스 방지
+		std::lock_guard g(shards_mtx_);
+		if (!running_.load(std::memory_order_relaxed)) {
+			return;
+		}
 
 		// start 전이어도 최소 동작(싱글 스레드처럼)하도록 방어
 		if (shards_.empty()) {

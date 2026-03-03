@@ -11,3 +11,5 @@
 *.exe
 *.patch
 *.zip
+*.dll
+/out/build/x64-debug

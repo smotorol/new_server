@@ -9,7 +9,23 @@
 #include "define.h"
 #include "GlobalClients.h"
 
-std::atomic<bool> CNetworkEX::bench_quiet_{ true };
+std::atomic<bool> CNetworkEX::bench_quiet_{ false };
+std::atomic<std::uint64_t> CNetworkEX::s_fallback_seq_{ 1 };
+
+CNetworkEX::CNetworkEX(std::uint32_t pro_id)
+	: dc::NetworkEXBase(pro_id)
+{
+	// ✅ handler(클라이언트 인스턴스) 단위로 shard 분산을 위한 고유 ActorId
+	// - 0은 특별값이니 피함
+	fallback_actor_id_ = s_fallback_seq_.fetch_add(1, std::memory_order_relaxed) + 1;
+}
+
+std::uint64_t CNetworkEX::ResolveActorId(std::uint32_t /*session_idx*/) const
+{
+	// ready(=actor_bound 수신) 이후에는 서버가 내려준 char_id 기반 actor_id_ 사용
+	const auto bound = actor_id_.load(std::memory_order_relaxed);
+	return (bound != 0) ? bound : fallback_actor_id_;
+}
 
 void CNetworkEX::SetBenchQuiet(bool on) noexcept
 {
@@ -231,12 +247,12 @@ bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pM
 			auto* res = proto::as<proto::S2C_player_spawn>(pMsg, body_len);
 			if (!res) return false;
 			recv_spawn_.fetch_add(1, std::memory_order_relaxed);
-			if (!bench_quiet_.load(std::memory_order_relaxed)) {
+			/*if (!bench_quiet_.load(std::memory_order_relaxed)) {
 				std::cout << "[Zone] player_spawn sid=" << n
 					<< " char_id=" << res->char_id
 					<< " pos=(" << res->x << "," << res->y << ")"
 					<< "\n";
-			}
+			}*/
 		}
 		return true;
 	case proto::S2CMsg::player_despawn:
@@ -244,11 +260,11 @@ bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pM
 			auto* res = proto::as<proto::S2C_player_despawn>(pMsg, body_len);
 			if (!res) return false;
 			recv_despawn_.fetch_add(1, std::memory_order_relaxed);
-			if (!bench_quiet_.load(std::memory_order_relaxed)) {
+			/*if (!bench_quiet_.load(std::memory_order_relaxed)) {
 				std::cout << "[Zone] player_despawn sid=" << n
 					<< " char_id=" << res->char_id
 					<< "\n";
-			}
+			}*/
 		}
 		return true;
 	case proto::S2CMsg::player_move:
@@ -256,12 +272,12 @@ bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pM
 			auto* res = proto::as<proto::S2C_player_move>(pMsg, body_len);
 			if (!res) return false;
 			recv_move_.fetch_add(1, std::memory_order_relaxed);
-			if (!bench_quiet_.load(std::memory_order_relaxed)) {
+			/*if (!bench_quiet_.load(std::memory_order_relaxed)) {
 				std::cout << "[Zone] player_move sid=" << n
 					<< " char_id=" << res->char_id
 					<< " pos=(" << res->x << "," << res->y << ")"
 					<< "\n";
-			}
+			}*/
 		}
 		return true;
 	default:

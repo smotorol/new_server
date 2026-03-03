@@ -61,6 +61,18 @@ namespace net {
             return false;
         }
 
+		// ✅ Lossy send (AOI/bench/move): if the session send queue is saturated, DO NOT close; just report failure.
+		bool try_send_lossy(std::uint32_t index, std::uint32_t serial, const _MSG_HEADER& header, const char* body)
+		{
+			if (auto s = try_get_session_(index, serial)) {
+				const std::size_t msg_bytes = (std::size_t)header.m_wSize;
+				if (!s->can_accept_send(msg_bytes)) return false;
+				s->async_send_lossy(header, body);
+				return true;
+			}
+			return false;
+		}
+
         // (관리/테스트용) serial 없이 송신 (현재 슬롯에 매달린 세션으로 보냄)
 		bool send(std::uint32_t index, const _MSG_HEADER& header, const char* body)
 		{

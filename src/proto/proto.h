@@ -221,5 +221,7 @@ namespace proto {
 	static_assert(sizeof(C2S_actor_forward) == 16);
 	static_assert(sizeof(S2C_actor_bound) == 8);
 	static_assert(sizeof(S2C_actor_seq_ack) == 16);
+	static_assert(sizeof(C2S_bench_move) == 24);
+	static_assert(sizeof(S2C_bench_move_ack) == 24);
 
 } // namespace proto
