@@ -8,8 +8,11 @@
 #include <memory>
 #include <deque>
 #include <cstring>
+#include <chrono>
 
 #include "../net/actor_system.h"
+#include "../proto/proto.h"
+#include "../proto/packet_util.h"
 
 namespace svr {
 
@@ -145,6 +148,31 @@ namespace svr {
 		static constexpr std::size_t kMaxPendingMsgsPerSid = 5000;
 		static constexpr std::size_t kMaxPendingBytesPerSid = 4 * 1024 * 1024;
 
+
+		// ====== (AOI) Tick broadcast for dense area optimization ======
+		// - Move 이벤트를 즉시 브로드캐스트하지 않고, 짧은 틱(예: 10ms) 동안 모아서 한 번에 전송한다.
+		// - 같은 char_id의 move는 마지막 값만 유지(Coalescing).
+		static constexpr std::int32_t kMoveTickMs = 10;
+
+		struct PendingMove {
+			std::uint64_t char_id = 0;
+			Vec2i pos{};
+		};
+		std::unordered_map<std::uint64_t, PendingMove> pending_moves_; // char_id -> last move
+
+		struct PendingBenchAck {
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+			std::uint32_t seq = 0;
+			std::uint64_t client_ts_ns = 0;
+			std::uint32_t zone_id = 0;
+		};
+		std::deque<PendingBenchAck> pending_bench_acks_;
+
+		std::chrono::steady_clock::time_point last_move_tick_tp_{};
+		bool move_tick_inited_ = false;
+
+
 		static std::shared_ptr<std::vector<char>> MakeBody_(const void* p, std::size_t n)
 		{
 			if (!p || n == 0) return {};
@@ -183,10 +211,29 @@ namespace svr {
 			auto& q = pending_by_sid_[sid];
 			auto& b = pending_bytes_by_sid_[sid];
 
-			// ✅ per-sid pending cap (drop newest on overflow)
 			const std::size_t add_bytes = ps.bytes();
+
+			// ✅ per-sid pending cap (drop newest on overflow)
 			if (q.size() + 1 > kMaxPendingMsgsPerSid || (b + add_bytes) > kMaxPendingBytesPerSid) {
 				return;
+			}
+
+			// ✅ Move Coalescing:
+			// - 같은 sid에게 같은 (msg_type, move_char_id) move가 여러 개 쌓이면 최신 1개만 유지.
+			// - burst 상황에서 send_q/pending 폭주를 막는다.
+			if (move_char_id != 0) {
+				const std::size_t scan = std::min<std::size_t>(q.size(), 256);
+				for (std::size_t i = 0; i < scan; ++i) {
+					auto& prev = q[q.size() - 1 - i];
+					if (prev.msg_type == msg_type && prev.move_char_id == move_char_id) {
+						// bytes가 달라질 수 있으니 보정
+						const std::size_t prev_bytes = prev.bytes();
+						if (b >= prev_bytes) b -= prev_bytes;
+						prev = std::move(ps);
+						b += prev.bytes();
+						return;
+					}
+				}
 			}
 
 			b += add_bytes;
@@ -304,6 +351,154 @@ namespace svr {
 
 		// Move는 ZoneActor 밖에서 old/new visible 계산 및 브로드캐스트용으로 사용하기 위해
 		// old/new visible set을 반환한다.
+
+	// ✅ (Fast) cell update only: old/new visible diff 계산을 하지 않는다.
+	// - 벤치/밀집 최적화 경로에서 사용.
+		void MoveFastUpdate(std::uint64_t char_id, Vec2i new_pos, std::uint32_t sid, std::uint32_t serial) {
+			auto it = players.find(char_id);
+			if (it == players.end()) {
+				JoinOrUpdate(char_id, new_pos, sid, serial);
+			}
+			else {
+				auto& pi = it->second;
+				pi.sid = sid;
+				pi.serial = serial;
+
+				const std::int32_t ncx = ToCell(new_pos.x);
+				const std::int32_t ncy = ToCell(new_pos.y);
+
+				if (ncx != pi.cx || ncy != pi.cy) {
+					auto oldk = CellKey(pi.cx, pi.cy);
+					auto itc = cells.find(oldk);
+					if (itc != cells.end()) {
+						itc->second.erase(char_id);
+						if (itc->second.empty()) cells.erase(itc);
+					}
+					cells[CellKey(ncx, ncy)].insert(char_id);
+					pi.cx = ncx;
+					pi.cy = ncy;
+				}
+				pi.pos = new_pos;
+			}
+
+			// last-write-wins move buffer
+			pending_moves_[char_id] = PendingMove{ char_id, new_pos };
+		}
+
+		void EnqueueBenchAck(std::uint32_t sid, std::uint32_t serial, std::uint32_t seq, std::uint64_t client_ts_ns, std::uint32_t zone_id) {
+			PendingBenchAck a{};
+			a.sid = sid;
+			a.serial = serial;
+			a.seq = seq;
+			a.client_ts_ns = client_ts_ns;
+			a.zone_id = zone_id;
+			pending_bench_acks_.push_back(a);
+		}
+
+		// ✅ Tick flush:
+		// - pending_moves_를 각 수신자 sid별로 모아서 player_move_batch로 1회 전송
+		// - FlushPendingSends_는 budget 기반으로 TrySendLossy()
+		bool FlushMoveTickIfDue_(CNetworkEX& net, std::uint32_t pro_id, bool force = false)
+		{
+			using clock = std::chrono::steady_clock;
+			const auto now = clock::now();
+			if (!move_tick_inited_) {
+				last_move_tick_tp_ = now;
+				move_tick_inited_ = true;
+			}
+
+			if (!force) {
+				const auto elapsed_ms = (int)std::chrono::duration_cast<std::chrono::milliseconds>(now - last_move_tick_tp_).count();
+				if (elapsed_ms < kMoveTickMs) return false;
+			}
+
+			if (pending_moves_.empty() && pending_bench_acks_.empty()) {
+				last_move_tick_tp_ = now;
+				return true;
+			}
+
+			// sid -> items
+			std::unordered_map<std::uint32_t, std::vector<proto::S2C_player_move_item>> out;
+			out.reserve(std::max<std::size_t>(8, pending_by_sid_.size()));
+
+
+			std::unordered_map<std::uint32_t, std::uint32_t> sid_serial;
+			sid_serial.reserve(128);
+
+			for (auto& kv : pending_moves_) {
+				const auto mover_id = kv.first;
+				auto itp = players.find(mover_id);
+				if (itp == players.end()) continue;
+				const auto& pi = itp->second;
+
+				// recipients in 9 cells around mover
+				auto rids = GatherNeighborsVec(pi.cx, pi.cy);
+
+				proto::S2C_player_move_item item{};
+				item.char_id = mover_id;
+				item.x = kv.second.pos.x;
+				item.y = kv.second.pos.y;
+
+				for (auto rid : rids) {
+					if (rid == mover_id) continue;
+					auto itr = players.find(rid);
+					if (itr == players.end()) continue;
+					if (itr->second.sid == 0 || itr->second.serial == 0) continue;
+					out[itr->second.sid].push_back(item);
+					sid_serial[itr->second.sid] = itr->second.serial;
+				}
+			}
+
+
+			// build & enqueue batches (one packet per sid)
+			// - out[sid]에 모은 move item들을 player_move_batch로 1회 전송
+			for (auto& kv : out) {
+				const std::uint32_t sid = kv.first;
+				const auto itser = sid_serial.find(sid);
+				if (itser == sid_serial.end()) continue;
+				const std::uint32_t serial = itser->second;
+
+				auto& items = kv.second;
+				const std::uint16_t count = (std::uint16_t)std::min<std::size_t>(items.size(), 4096);
+
+				const std::size_t body_size = sizeof(std::uint16_t) + (std::size_t)count * sizeof(proto::S2C_player_move_item);
+				auto body = std::make_shared<std::vector<char>>(body_size);
+				std::memcpy(body->data(), &count, sizeof(std::uint16_t));
+				if (count > 0) {
+					std::memcpy(body->data() + sizeof(std::uint16_t), items.data(), (std::size_t)count * sizeof(proto::S2C_player_move_item));
+				}
+
+				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_move_batch, (std::uint16_t)body_size);
+				EnqueueSend_(sid, serial, h, std::move(body), (std::uint16_t)proto::S2CMsg::player_move_batch);
+			}
+
+			pending_moves_.clear();
+
+			// ✅ flush batched moves first (budgeted)
+			FlushPendingSends_(net, pro_id, 4000, 4 * 1024 * 1024);
+
+			// ✅ bench acks after broadcast flush
+			while (!pending_bench_acks_.empty()) {
+				auto a = pending_bench_acks_.front();
+				pending_bench_acks_.pop_front();
+
+				proto::S2C_bench_move_ack ack{};
+				ack.ok = 1;
+				ack.seq = a.seq;
+				ack.client_ts_ns = a.client_ts_ns;
+				ack.zone = a.zone_id;
+				ack.shard = (proto::u32)std::max(0, net::ActorSystem::current_shard_index());
+				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::bench_move_ack, (std::uint16_t)sizeof(ack));
+
+				if (a.serial != 0) {
+					net.TrySendLossy(pro_id, a.sid, a.serial, h, reinterpret_cast<const char*>(&ack));
+				}
+			}
+
+			last_move_tick_tp_ = now;
+			return true;
+		}
+
 		struct MoveDiff {
 			Vec2i new_pos{};
 			std::vector<std::uint64_t> old_vis;

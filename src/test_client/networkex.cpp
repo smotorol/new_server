@@ -267,6 +267,17 @@ bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pM
 			}*/
 		}
 		return true;
+	case proto::S2CMsg::player_move_batch:
+		{
+			// body: u16 count + items[count]
+			if (!pMsg || body_len < sizeof(std::uint16_t)) return false;
+			std::uint16_t count = 0;
+			std::memcpy(&count, pMsg, sizeof(std::uint16_t));
+			const std::size_t need = sizeof(std::uint16_t) + (std::size_t)count * sizeof(proto::S2C_player_move_item);
+			if (body_len < need) return false;
+			recv_move_.fetch_add(count, std::memory_order_relaxed);
+			return true;
+		}
 	case proto::S2CMsg::player_move:
 		{
 			auto* res = proto::as<proto::S2C_player_move>(pMsg, body_len);

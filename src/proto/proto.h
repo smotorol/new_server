@@ -38,6 +38,7 @@ namespace proto {
 		player_spawn = 40,
 		player_despawn = 41,
 		player_move = 42,
+		player_move_batch = 43,
 
 
 		actor_bound = 100,
@@ -136,6 +137,20 @@ namespace proto {
 		i32 x;
 		i32 y;
 		S2C_player_move() : char_id(0), x(0), y(0) {}
+	};
+
+	// ✅ Move batch (tick broadcast)
+	// - body layout: u16 count; S2C_player_move_item[count]
+	struct S2C_player_move_item {
+		u64 char_id;
+		i32 x;
+		i32 y;
+		S2C_player_move_item() : char_id(0), x(0), y(0) {}
+	};
+
+	struct S2C_player_move_batch_hdr {
+		u16 count;
+		S2C_player_move_batch_hdr() : count(0) {}
 	};
 
 	// 공통 전투 결과(몬스터/플레이어)
