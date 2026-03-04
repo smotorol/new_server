@@ -131,7 +131,13 @@ namespace svr {
 	static std::unique_ptr<net::IActor> MakeServerActor_(std::uint64_t id)
 	{
 		if (id == 0) return std::make_unique<svr::WorldActor>();
-		if (svr::IsZoneActorId(id)) return std::make_unique<svr::ZoneActor>();
+		if (svr::IsZoneActorId(id)) {
+			auto z = std::make_unique<svr::ZoneActor>();
+			// ✅ eos_royal 스타일: 섹터 컨테이너 초기화(임시 맵 크기/섹터 단위)
+			// TODO: ini 설정으로 빼서 월드/존별로 다르게 줄 수 있음
+			z->InitSectorSystem({2000, 2000}, svr::ZoneActor::kCellSize, 1);
+			return z;
+		}
 		return std::make_unique<svr::PlayerActor>(id);
 	}
 

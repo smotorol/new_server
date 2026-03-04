@@ -117,6 +117,19 @@ namespace svr {
 	public:
 		static constexpr std::int32_t kCellSize = 10; // 샘플: 10 단위
 
+		// eos_royal처럼: 맵 크기/섹터 단위 초기화
+		//  - 예: if (!sector_container_.init_sector({map_w,map_h}, WORLD_SIGHT_UNIT)) { ... }
+		bool InitSectorSystem(Vec2i map_rc_size, std::int32_t world_sight_unit, std::int32_t aoi_radius_cells = 1) {
+			return sector_container_.init_sector(map_rc_size, world_sight_unit, aoi_radius_cells);
+		}
+
+		const SectorContainer& sector() const { return sector_container_; }
+		SectorContainer& sector() { return sector_container_; }
+
+	private:
+		SectorContainer sector_container_{};
+
+	public:
 		struct PlayerInfo {
 			Vec2i pos{};
 			std::int32_t cx = 0;
@@ -124,6 +137,32 @@ namespace svr {
 			std::uint32_t sid = 0;
 			std::uint32_t serial = 0;
 		};
+
+		// ====== (사용성) 레거시처럼 쓰는 "간단 API" ======
+		// - SendToUser(): 특정 세션에게 1:1 전송
+		// - PublishToMyBroadCells(): 나의 현재 셀 기준 3x3(주변 섹터)에게 publish
+		//   (eos_royal의 get_broad_sectors() + deliver_to_all_proxy 느낌)
+		void SendToUser(std::uint32_t sid, std::uint32_t serial, proto::S2CMsg msg,
+			const void* body, std::size_t body_len)
+		{
+			auto h = proto::make_header((std::uint16_t)msg, (std::uint16_t)body_len);
+			EnqueueSend_(sid, serial, h, MakeBody_(body, body_len), (std::uint16_t)msg);
+		}
+
+		template <class T>
+		void SendToUser(std::uint32_t sid, std::uint32_t serial, proto::S2CMsg msg, const T& pod)
+		{
+			SendToUser(sid, serial, msg, &pod, sizeof(T));
+		}
+
+		void PublishToMyBroadCells(std::uint64_t char_id, proto::S2CMsg msg,
+			std::shared_ptr<std::vector<char>> body)
+		{
+			auto it = players.find(char_id);
+			if (it == players.end()) return;
+			auto h = proto::make_header((std::uint16_t)msg, (std::uint16_t)(body ? body->size() : 0));
+			CellChannels{ *this }.PublishToBroadCells(it->second.cx, it->second.cy, h, std::move(body), (std::uint16_t)msg);
+		}
 
 		// - 좁은 구역에 유저가 많을 때, 한 번의 Move 처리에서 N명에게 Send()를 연속 호출하면
 		//   세션 send_q가 burst로 커지면서 overflow/close가 발생할 수 있다.
@@ -297,14 +336,125 @@ namespace svr {
 		std::unordered_map<std::uint64_t, PlayerInfo> players; // char_id -> info
 		std::unordered_map<std::int64_t, std::unordered_set<std::uint64_t>> cells; // cell_key -> set<char_id>
 
-		static std::int32_t ToCell(std::int32_t v) {
+		// ====== (레거시 eos_royal 스타일) 섹터(셀) 컨테이너 ======
+		// - init_sector(map_size, unit): 맵 크기 / 셀 단위 / AOI 반경(셀 단위)을 초기화
+		// - 좌표 -> 셀 변환/클램프, 브로드캐스트(주변 셀) 목록 제공
+		struct SectorContainer final {
+			bool inited = false;
+			Vec2i map_size{};          // world width/height (임시)
+			std::int32_t unit = 10;    // WORLD_SIGHT_UNIT 느낌(셀 한 변 크기)
+			std::int32_t aoi_r = 1;    // 주변 셀 반경(1이면 3x3)
+
+			std::int32_t max_cx = 0;
+			std::int32_t max_cy = 0;
+
+			bool init_sector(Vec2i rc_size, std::int32_t world_sight_unit, std::int32_t aoi_radius_cells = 1) {
+				if (world_sight_unit <= 0) return false;
+				if (rc_size.x <= 0 || rc_size.y <= 0) return false;
+				if (aoi_radius_cells < 0) aoi_radius_cells = 0;
+
+				map_size = rc_size;
+				unit = world_sight_unit;
+				aoi_r = aoi_radius_cells;
+
+				// 셀 인덱스 최대치(0..max)
+				max_cx = (map_size.x - 1) / unit;
+				max_cy = (map_size.y - 1) / unit;
+
+				inited = true;
+				return true;
+			}
+
 			// floor division for negatives
-			if (v >= 0) return v / kCellSize;
-			return -(((-v) + kCellSize - 1) / kCellSize);
-		}
+			std::int32_t ToCell(std::int32_t v) const {
+				if (v >= 0) return v / unit;
+				return -(((-v) + unit - 1) / unit);
+			}
+
+			std::int32_t ClampCx(std::int32_t cx) const {
+				if (!inited) return cx;
+				if (cx < 0) return 0;
+				if (cx > max_cx) return max_cx;
+				return cx;
+			}
+			std::int32_t ClampCy(std::int32_t cy) const {
+				if (!inited) return cy;
+				if (cy < 0) return 0;
+				if (cy > max_cy) return max_cy;
+				return cy;
+			}
+
+			Vec2i ToCellClamped(Vec2i pos) const {
+				Vec2i c{};
+				c.x = ClampCx(sector_container_.ToCellClamped(pos).x);
+				c.y = ClampCy(ToCell(pos.y));
+				return c;
+			}
+
+			// (cx,cy) -> key
+			static std::int64_t CellKey(std::int32_t cx, std::int32_t cy) {
+				return (std::int64_t(cx) << 32) ^ (std::uint32_t)cy;
+			}
+
+			// 3x3 AOI 셀키 목록(가장 흔한 케이스: aoi_r=1)
+			std::array<std::int64_t, 9> BroadCells3x3(std::int32_t cx, std::int32_t cy) const {
+				std::array<std::int64_t, 9> out{};
+				int i = 0;
+				for (int dy = -1; dy <= 1; ++dy) {
+					for (int dx = -1; dx <= 1; ++dx) {
+						const auto ncx = ClampCx(cx + dx);
+						const auto ncy = ClampCy(cy + dy);
+						out[i++] = CellKey(ncx, ncy);
+					}
+				}
+				return out;
+			}
+		};
+
+		// 기본 키 함수(외부 util이 이걸 쓰는 경우가 있어 유지)
 		static std::int64_t CellKey(std::int32_t cx, std::int32_t cy) {
 			return (std::int64_t(cx) << 32) ^ (std::uint32_t)cy;
 		}
+
+		// ====== (eos_royal 스타일) 셀 채널(pub-sub) 브로드캐스트 헬퍼 ======
+		// 레거시처럼 "섹터키만 바꿔서 deliver" 하듯이, 여기서는 "셀(채널)"에 publish 한다.
+		// 호출자는 "누구에게 보낼지"를 신경쓰지 않고, "어느 셀/어느 주변 셀"에 publish 할지만 결정하면 된다.
+		struct CellChannels final {
+			ZoneActor& z;
+
+			// 3x3 AOI(자기 셀 + 주변 8셀)의 셀키 목록
+			std::array<std::int64_t, 9> BroadCells(std::int32_t cx, std::int32_t cy) const {
+				return z.sector_container_.BroadCells3x3(cx, cy);
+			}
+
+			// "셀 채널"에 publish: 해당 셀에 있는 모든 세션에게 동일 body(shared_ptr)를 큐잉
+			void PublishToCell(std::int64_t cell_key, const _MSG_HEADER& h,
+				std::shared_ptr<std::vector<char>> body,
+				std::uint16_t msg_type)
+			{
+				auto it = z.cells.find(cell_key);
+				if (it == z.cells.end()) return;
+				const auto& recv_ids = it->second;
+				for (auto rid : recv_ids) {
+					auto itr = z.players.find(rid);
+					if (itr == z.players.end()) continue;
+					const auto sid = itr->second.sid;
+					const auto serial = itr->second.serial;
+					if (sid == 0 || serial == 0) continue;
+					z.EnqueueSend_(sid, serial, h, body, msg_type);
+				}
+			}
+
+			// "내 셀 기준" 주변 3x3 셀 채널에 publish (eos_royal의 get_broad_sectors() 느낌)
+			void PublishToBroadCells(std::int32_t cx, std::int32_t cy, const _MSG_HEADER& h,
+				std::shared_ptr<std::vector<char>> body,
+				std::uint16_t msg_type)
+			{
+				for (auto ck : BroadCells(cx, cy)) {
+					PublishToCell(ck, h, body, msg_type);
+				}
+			}
+		};
 
 		std::vector<std::uint64_t> GatherNeighborsVec(std::int32_t cx, std::int32_t cy) {
 			std::vector<std::uint64_t> out;
@@ -330,8 +480,9 @@ namespace svr {
 		void JoinOrUpdate(std::uint64_t char_id, Vec2i pos, std::uint32_t sid, std::uint32_t serial) {
 			auto& pi = players[char_id];
 			pi.pos = pos;
-			pi.cx = ToCell(pos.x);
-			pi.cy = ToCell(pos.y);
+			auto nc = sector_container_.ToCellClamped(pos);
+			pi.cx = nc.x;
+			pi.cy = nc.y;
 			pi.sid = sid;
 			pi.serial = serial;
 			cells[CellKey(pi.cx, pi.cy)].insert(char_id);
@@ -364,8 +515,9 @@ namespace svr {
 				pi.sid = sid;
 				pi.serial = serial;
 
-				const std::int32_t ncx = ToCell(new_pos.x);
-				const std::int32_t ncy = ToCell(new_pos.y);
+				auto nc = sector_container_.ToCellClamped(new_pos);
+				const std::int32_t ncx = nc.x;
+				const std::int32_t ncy = nc.y;
 
 				if (ncx != pi.cx || ncy != pi.cy) {
 					auto oldk = CellKey(pi.cx, pi.cy);
@@ -396,7 +548,11 @@ namespace svr {
 		}
 
 		// ✅ Tick flush:
-		// - pending_moves_를 각 수신자 sid별로 모아서 player_move_batch로 1회 전송
+		// - (eos_royal 스타일) "셀 채널(pub-sub)" 브로드캐스트
+		//   * 수신자(sid)별로 모아 패킷을 만드는 대신, "수신자 셀" 단위로 1회 패킷을 만들고
+		//     해당 셀에 존재하는 모든 플레이어(=세션)에게 동일 body(shared_ptr)를 전송한다.
+		//   * 각 셀은 자신의 3x3 이웃 셀(관심영역)에서 발생한 move item들을 한 번에 받는다.
+		//   * 결과적으로 "sid별 payload 빌드" 비용이 사라지고, 직렬화는 "셀당 1회"만 수행된다.
 		// - FlushPendingSends_는 budget 기반으로 TrySendLossy()
 		bool FlushMoveTickIfDue_(CNetworkEX& net, std::uint32_t pro_id, bool force = false)
 		{
@@ -417,59 +573,70 @@ namespace svr {
 				return true;
 			}
 
-			// sid -> items
-			std::unordered_map<std::uint32_t, std::vector<proto::S2C_player_move_item>> out;
-			out.reserve(std::max<std::size_t>(8, pending_by_sid_.size()));
-
-
-			std::unordered_map<std::uint32_t, std::uint32_t> sid_serial;
-			sid_serial.reserve(128);
+			// 1) pending_moves_를 "발생 셀" 기준으로 묶는다.
+			//    - 발생 셀의 move item 벡터는 이후 각 "수신 셀"의 3x3 윈도우를 구성할 때 재사용된다.
+			std::unordered_map<std::int64_t, std::vector<proto::S2C_player_move_item>> src_cell_items;
+			src_cell_items.reserve(std::max<std::size_t>(8, pending_moves_.size()));
 
 			for (auto& kv : pending_moves_) {
 				const auto mover_id = kv.first;
 				auto itp = players.find(mover_id);
 				if (itp == players.end()) continue;
 				const auto& pi = itp->second;
-
-				// recipients in 9 cells around mover
-				auto rids = GatherNeighborsVec(pi.cx, pi.cy);
+				const auto ck = CellKey(pi.cx, pi.cy);
 
 				proto::S2C_player_move_item item{};
 				item.char_id = mover_id;
 				item.x = kv.second.pos.x;
 				item.y = kv.second.pos.y;
 
-				for (auto rid : rids) {
-					if (rid == mover_id) continue;
-					auto itr = players.find(rid);
-					if (itr == players.end()) continue;
-					if (itr->second.sid == 0 || itr->second.serial == 0) continue;
-					out[itr->second.sid].push_back(item);
-					sid_serial[itr->second.sid] = itr->second.serial;
-				}
+				src_cell_items[ck].push_back(item);
 			}
 
+			// 2) "수신 셀" 단위로 3x3 이웃 셀의 src_cell_items를 합쳐서 패킷을 1개 만들고,
+			//    해당 셀에 있는 모든 플레이어(세션)에게 동일 body를 전송한다.
+			//    - eos_royal의 sector_key publish와 동일한 효과 (셀 = 채널)
+			for (auto& kv_cell : cells) {
+				const std::int64_t recv_ck = kv_cell.first;
+				const auto& recv_ids = kv_cell.second;
+				if (recv_ids.empty()) continue;
 
-			// build & enqueue batches (one packet per sid)
-			// - out[sid]에 모은 move item들을 player_move_batch로 1회 전송
-			for (auto& kv : out) {
-				const std::uint32_t sid = kv.first;
-				const auto itser = sid_serial.find(sid);
-				if (itser == sid_serial.end()) continue;
-				const std::uint32_t serial = itser->second;
+				const std::int32_t rcx = (std::int32_t)(recv_ck >> 32);
+				const std::int32_t rcy = (std::int32_t)(std::uint32_t)recv_ck;
 
-				auto& items = kv.second;
-				const std::uint16_t count = (std::uint16_t)std::min<std::size_t>(items.size(), 4096);
+				// gather items from neighbor 3x3 cells
+				std::size_t total = 0;
+				for (int dy = -1; dy <= 1; ++dy) {
+					for (int dx = -1; dx <= 1; ++dx) {
+						auto it = src_cell_items.find(CellKey(rcx + dx, rcy + dy));
+						if (it == src_cell_items.end()) continue;
+						total += it->second.size();
+					}
+				}
+				if (total == 0) continue;
 
+				const std::uint16_t count = (std::uint16_t)std::min<std::size_t>(total, 4096);
 				const std::size_t body_size = sizeof(std::uint16_t) + (std::size_t)count * sizeof(proto::S2C_player_move_item);
 				auto body = std::make_shared<std::vector<char>>(body_size);
 				std::memcpy(body->data(), &count, sizeof(std::uint16_t));
-				if (count > 0) {
-					std::memcpy(body->data() + sizeof(std::uint16_t), items.data(), (std::size_t)count * sizeof(proto::S2C_player_move_item));
+				char* dst = body->data() + sizeof(std::uint16_t);
+				std::size_t written = 0;
+				for (int dy = -1; dy <= 1 && written < count; ++dy) {
+					for (int dx = -1; dx <= 1 && written < count; ++dx) {
+						auto it = src_cell_items.find(CellKey(rcx + dx, rcy + dy));
+						if (it == src_cell_items.end()) continue;
+						auto& vec = it->second;
+						const std::size_t can = std::min<std::size_t>(vec.size(), (std::size_t)count - written);
+						if (can == 0) continue;
+						std::memcpy(dst + written * sizeof(proto::S2C_player_move_item), vec.data(), can * sizeof(proto::S2C_player_move_item));
+						written += can;
+					}
 				}
 
 				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_move_batch, (std::uint16_t)body_size);
-				EnqueueSend_(sid, serial, h, std::move(body), (std::uint16_t)proto::S2CMsg::player_move_batch);
+
+				// publish to this cell channel (shared body)
+				CellChannels{ *this }.PublishToCell(recv_ck, h, body, (std::uint16_t)proto::S2CMsg::player_move_batch);
 			}
 
 			pending_moves_.clear();
@@ -525,8 +692,9 @@ namespace svr {
 			pi.sid = sid;
 			pi.serial = serial;
 
-			const std::int32_t ncx = ToCell(new_pos.x);
-			const std::int32_t ncy = ToCell(new_pos.y);
+			auto nc = sector_container_.ToCellClamped(new_pos);
+			const std::int32_t ncx = nc.x;
+			const std::int32_t ncy = nc.y;
 
 			if (ncx != pi.cx || ncy != pi.cy) {
 				// remove old cell
