@@ -16,6 +16,15 @@
 
 namespace svr {
 
+	// ------------------------------------------------------------
+	// (Metrics) 서버→클라 브로드캐스트 통계
+	// - 클라이언트의 recv_move_pkts/items 와 1:1로 맞추기 위해
+	//   "실제로 각 세션에게 enqueue된" 패킷/아이템 수를 누적한다.
+	// - bench_measure 구간에서 서버 로그로 확인 가능.
+	// ------------------------------------------------------------
+	inline std::atomic<std::uint64_t> g_s2c_move_pkts_sent{ 0 };
+	inline std::atomic<std::uint64_t> g_s2c_move_items_sent{ 0 };
+
 	// ---- ActorId tagging ----
 	//  - PlayerActor : actor_id = char_id (assume char_id < 2^63)
 	//  - WorldActor  : actor_id = 0
@@ -527,6 +536,19 @@ namespace svr {
 				auto it = z.cells.find(cell_key);
 				if (it == z.cells.end()) return;
 				const auto& recv_ids = it->second;
+
+				// ✅ metrics (server-side) : 클라 recv_move_pkts/items 와 맞추기 위해
+				// "실제로 각 세션에게 enqueue"되는 수만큼 누적한다.
+				std::uint16_t move_items = 0;
+				if (msg_type == (std::uint16_t)proto::S2CMsg::player_move_batch) {
+					if (body && body->size() >= sizeof(std::uint16_t)) {
+						std::memcpy(&move_items, body->data(), sizeof(std::uint16_t));
+					}
+				}
+				else if (msg_type == (std::uint16_t)proto::S2CMsg::player_move) {
+					move_items = 1;
+				}
+				// bench_move_ack 등은 제외
 				for (auto rid : recv_ids) {
 					auto itr = z.players.find(rid);
 					if (itr == z.players.end()) continue;
@@ -534,6 +556,11 @@ namespace svr {
 					const auto serial = itr->second.serial;
 					if (sid == 0 || serial == 0) continue;
 					z.EnqueueSend_(sid, serial, h, body, msg_type);
+
+					if (move_items > 0) {
+						g_s2c_move_pkts_sent.fetch_add(1, std::memory_order_relaxed);
+						g_s2c_move_items_sent.fetch_add(move_items, std::memory_order_relaxed);
+					}
 				}
 			}
 

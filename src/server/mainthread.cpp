@@ -288,9 +288,21 @@ namespace svr {
 		}
 
 		// ✅ Actor 모델: 로직은 actors_(멀티 로직 스레드)에서 처리된다.
-		// main thread는 프로세스 생존/종료 제어용으로만 유지한다.
+		// main thread는 프로세스 생존/종료 제어 + 간단한 통계 로그용으로만 유지한다.
+		auto next_stat = std::chrono::steady_clock::now() + std::chrono::seconds(1);
 		while (running_) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
+
+			const auto now = std::chrono::steady_clock::now();
+			if (now >= next_stat) {
+				next_stat = now + std::chrono::seconds(1);
+				// 서버→클라 move 브로드캐스트 통계 ("각 세션 enqueue 기준")
+				const auto pkts = svr::g_s2c_move_pkts_sent.exchange(0, std::memory_order_relaxed);
+				const auto items = svr::g_s2c_move_items_sent.exchange(0, std::memory_order_relaxed);
+				if (pkts > 0 || items > 0) {
+					spdlog::info("[netstats] s2c_move pkts/s={} items/s={}", pkts, items);
+				}
+			}
 		}
 	}
 
