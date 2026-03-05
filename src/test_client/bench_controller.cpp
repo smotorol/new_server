@@ -132,6 +132,16 @@ void BenchController::ResetStats()
 
 	std::lock_guard<std::mutex> lk(mtx_);
 	for (auto& c : conns_) c.handler->BenchReset();
+
+	// ✅ also reset server-side counters so client/server windows match.
+	if (!conns_.empty()) {
+		auto s = conns_.front().client->session();
+		if (s) {
+			proto::C2S_bench_reset req{};
+			auto h = proto::make_header((std::uint16_t)proto::C2SMsg::bench_reset, (std::uint16_t)sizeof(req));
+			s->async_send_lossy(h, reinterpret_cast<const char*>(&req));
+		}
+	}
 }
 
 BenchController::Aggregate BenchController::Snapshot() const
@@ -178,6 +188,20 @@ BenchController::Aggregate BenchController::MeasureFor(int seconds)
 {
 	if (seconds <= 0) seconds = 1;
 	ResetStats();
+
+	// ✅ ask server to run the same measurement window (and reset at start).
+	{
+		std::lock_guard<std::mutex> lk(mtx_);
+		if (!conns_.empty()) {
+			auto s = conns_.front().client->session();
+			if (s) {
+				proto::C2S_bench_measure req{};
+				req.seconds = (proto::u32)seconds;
+				auto h = proto::make_header((std::uint16_t)proto::C2SMsg::bench_measure, (std::uint16_t)sizeof(req));
+				s->async_send_lossy(h, reinterpret_cast<const char*>(&req));
+			}
+		}
+	}
 	const auto t0 = std::chrono::steady_clock::now();
 	std::this_thread::sleep_for(std::chrono::seconds(seconds));
 	const auto t1 = std::chrono::steady_clock::now();

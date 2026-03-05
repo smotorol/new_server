@@ -290,17 +290,37 @@ namespace svr {
 		// ✅ Actor 모델: 로직은 actors_(멀티 로직 스레드)에서 처리된다.
 		// main thread는 프로세스 생존/종료 제어 + 간단한 통계 로그용으로만 유지한다.
 		auto next_stat = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+		std::uint64_t last_move_pkts = 0;
+		std::uint64_t last_move_items = 0;
 		while (running_) {
 			std::this_thread::sleep_for(std::chrono::milliseconds(200));
 
 			const auto now = std::chrono::steady_clock::now();
+
+			// ===== bench control requests (from Actor threads) =====
+			if (bench_req_reset_.exchange(false, std::memory_order_relaxed)) {
+				BenchResetMain_();
+			}
+			const int req_sec = bench_req_measure_seconds_.exchange(0, std::memory_order_relaxed);
+			if (req_sec > 0) {
+				BenchStartMain_(req_sec);
+			}
+			if (bench_active_) {
+				BenchTickMain_();
+			}
+
 			if (now >= next_stat) {
 				next_stat = now + std::chrono::seconds(1);
 				// 서버→클라 move 브로드캐스트 통계 ("각 세션 enqueue 기준")
-				const auto pkts = svr::g_s2c_move_pkts_sent.exchange(0, std::memory_order_relaxed);
-				const auto items = svr::g_s2c_move_items_sent.exchange(0, std::memory_order_relaxed);
-				if (pkts > 0 || items > 0) {
-					spdlog::info("[netstats] s2c_move pkts/s={} items/s={}", pkts, items);
+				// - 누적 카운터를 유지하고, 여기서만 초당 델타를 구한다.
+				const auto cur_pkts = svr::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
+				const auto cur_items = svr::g_s2c_move_items_sent.load(std::memory_order_relaxed);
+				const auto d_pkts = cur_pkts - last_move_pkts;
+				const auto d_items = cur_items - last_move_items;
+				last_move_pkts = cur_pkts;
+				last_move_items = cur_items;
+				if (d_pkts > 0 || d_items > 0) {
+					spdlog::info("[netstats] s2c_move pkts/s={} items/s={}", d_pkts, d_items);
 				}
 			}
 		}
@@ -1065,6 +1085,137 @@ namespace svr {
 			(std::uint8_t)svr::dqs::QueryCase::flush_one_char,
 			reinterpret_cast<const char*>(&payload),
 			(int)sizeof(payload));
+	}
+
+	void CMainThread::RequestBenchReset() noexcept
+	{
+		bench_req_reset_.store(true, std::memory_order_relaxed);
+	}
+
+	void CMainThread::RequestBenchMeasure(int seconds) noexcept
+	{
+		if (seconds <= 0) seconds = 1;
+		bench_req_measure_seconds_.store(seconds, std::memory_order_relaxed);
+		bench_req_reset_.store(true, std::memory_order_relaxed);
+	}
+
+	void CMainThread::BenchResetMain_()
+	{
+		// reset all server-side bench counters (monotonic)
+		svr::BenchResetAllServerCounters();
+		svr::g_s2c_move_pkts_sent.store(0, std::memory_order_relaxed);
+		svr::g_s2c_move_items_sent.store(0, std::memory_order_relaxed);
+
+		// reset window baselines
+		bench_base_c2s_move_rx_ = 0;
+		bench_base_s2c_ack_tx_ = 0;
+		bench_base_s2c_ack_drop_ = 0;
+		bench_base_s2c_move_pkts_ = 0;
+		bench_base_s2c_move_items_ = 0;
+		bench_base_send_drops_ = 0;
+		bench_sum_c2s_move_rx_ = 0;
+		bench_sum_s2c_ack_tx_ = 0;
+		bench_sum_s2c_ack_drop_ = 0;
+		bench_sum_s2c_move_pkts_ = 0;
+		bench_sum_s2c_move_items_ = 0;
+		bench_sum_send_drops_ = 0;
+		bench_max_sendq_msgs_ = 0;
+		bench_max_sendq_bytes_ = 0;
+	}
+
+	void CMainThread::BenchStartMain_(int seconds)
+	{
+		if (seconds <= 0) seconds = 1;
+
+		// start new window
+		bench_active_ = true;
+		bench_target_seconds_ = seconds;
+		bench_elapsed_seconds_ = 0;
+		bench_start_tp_ = std::chrono::steady_clock::now();
+		bench_next_tick_ = bench_start_tp_ + std::chrono::seconds(1);
+
+		// establish baselines (counters are expected to have been reset by BenchResetMain_)
+		bench_base_c2s_move_rx_ = svr::g_c2s_bench_move_rx.load(std::memory_order_relaxed);
+		bench_base_s2c_ack_tx_ = svr::g_s2c_bench_ack_tx.load(std::memory_order_relaxed);
+		bench_base_s2c_ack_drop_ = svr::g_s2c_bench_ack_drop.load(std::memory_order_relaxed);
+		bench_base_s2c_move_pkts_ = svr::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
+		bench_base_s2c_move_items_ = svr::g_s2c_move_items_sent.load(std::memory_order_relaxed);
+		bench_base_send_drops_ = 0;
+		if (world_server_) {
+			bench_base_send_drops_ = world_server_->collect_sendq_stats().drops_total;
+		}
+
+		spdlog::info("[bench_measure][server] start seconds={}", seconds);
+	}
+
+	void CMainThread::BenchTickMain_()
+	{
+		const auto now = std::chrono::steady_clock::now();
+		if (!bench_active_) return;
+		if (now < bench_next_tick_) return;
+		bench_next_tick_ += std::chrono::seconds(1);
+		bench_elapsed_seconds_ += 1;
+
+		const auto cur_c2s = svr::g_c2s_bench_move_rx.load(std::memory_order_relaxed);
+		const auto cur_ack = svr::g_s2c_bench_ack_tx.load(std::memory_order_relaxed);
+		const auto cur_ack_drop = svr::g_s2c_bench_ack_drop.load(std::memory_order_relaxed);
+		const auto cur_move_pkts = svr::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
+		const auto cur_move_items = svr::g_s2c_move_items_sent.load(std::memory_order_relaxed);
+
+		std::uint64_t cur_send_drops = 0;
+		std::size_t qmax_msgs = 0;
+		std::size_t qmax_bytes = 0;
+		if (world_server_) {
+			auto st = world_server_->collect_sendq_stats();
+			cur_send_drops = st.drops_total;
+			qmax_msgs = st.q_msgs_max;
+			qmax_bytes = st.q_bytes_max;
+		}
+
+		const auto d_c2s = cur_c2s - bench_base_c2s_move_rx_;
+		const auto d_ack = cur_ack - bench_base_s2c_ack_tx_;
+		const auto d_ack_drop = cur_ack_drop - bench_base_s2c_ack_drop_;
+		const auto d_move_pkts = cur_move_pkts - bench_base_s2c_move_pkts_;
+		const auto d_move_items = cur_move_items - bench_base_s2c_move_items_;
+		const auto d_send_drops = cur_send_drops - bench_base_send_drops_;
+
+		bench_base_c2s_move_rx_ = cur_c2s;
+		bench_base_s2c_ack_tx_ = cur_ack;
+		bench_base_s2c_ack_drop_ = cur_ack_drop;
+		bench_base_s2c_move_pkts_ = cur_move_pkts;
+		bench_base_s2c_move_items_ = cur_move_items;
+		bench_base_send_drops_ = cur_send_drops;
+
+		bench_sum_c2s_move_rx_ += d_c2s;
+		bench_sum_s2c_ack_tx_ += d_ack;
+		bench_sum_s2c_ack_drop_ += d_ack_drop;
+		bench_sum_s2c_move_pkts_ += d_move_pkts;
+		bench_sum_s2c_move_items_ += d_move_items;
+		bench_sum_send_drops_ += d_send_drops;
+		bench_max_sendq_msgs_ = std::max<std::size_t>(bench_max_sendq_msgs_, qmax_msgs);
+		bench_max_sendq_bytes_ = std::max<std::size_t>(bench_max_sendq_bytes_, qmax_bytes);
+
+		spdlog::info("[bench_sample][server] sec={} c2s_move_rx={} ack_tx={} ack_drop={} s2c_move_pkts={} s2c_move_items={} sendq_drop={} sendq_max_msgs={} sendq_max_bytes={}",
+			bench_elapsed_seconds_, d_c2s, d_ack, d_ack_drop, d_move_pkts, d_move_items, d_send_drops, qmax_msgs, qmax_bytes);
+
+		if (bench_elapsed_seconds_ >= bench_target_seconds_) {
+			bench_active_ = false;
+			const auto t1 = std::chrono::steady_clock::now();
+			const double elapsed_sec = std::chrono::duration<double>(t1 - bench_start_tp_).count();
+			const std::size_t conns = world_server_ ? world_server_->active_session_count() : 0;
+
+			// match client's bench_measure style/field names as much as possible.
+			spdlog::info("[bench_measure][server] done\n  elapsed_sec={}\n  conns={}\n  c2s_bench_move_rx={} ({} pkt/s)\n  s2c_bench_ack_tx={} ({} ack/s) ack_drop={}\n  zone_broadcast s2c_move_pkts={} ({} pkt/s) s2c_move_items={} ({} items/s)\n  sendq drops={} ({} drops/s) sendq_max_msgs={} sendq_max_bytes={}",
+				elapsed_sec,
+				conns,
+				bench_sum_c2s_move_rx_, (elapsed_sec > 0.0 ? (double)bench_sum_c2s_move_rx_ / elapsed_sec : 0.0),
+				bench_sum_s2c_ack_tx_, (elapsed_sec > 0.0 ? (double)bench_sum_s2c_ack_tx_ / elapsed_sec : 0.0),
+				bench_sum_s2c_ack_drop_,
+				bench_sum_s2c_move_pkts_, (elapsed_sec > 0.0 ? (double)bench_sum_s2c_move_pkts_ / elapsed_sec : 0.0),
+				bench_sum_s2c_move_items_, (elapsed_sec > 0.0 ? (double)bench_sum_s2c_move_items_ / elapsed_sec : 0.0),
+				bench_sum_send_drops_, (elapsed_sec > 0.0 ? (double)bench_sum_send_drops_ / elapsed_sec : 0.0),
+				bench_max_sendq_msgs_, bench_max_sendq_bytes_);
+		}
 	}
 
 	void ServerProgramExit(const char* call_site, bool /*save*/) {

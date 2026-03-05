@@ -24,6 +24,8 @@ namespace proto {
 		actor_seq_test = 100,
 		actor_forward = 101,
 		bench_move = 102,
+		bench_reset = 103,
+		bench_measure = 104,
 	};
 
 	enum S2CMsg : u16 {
@@ -210,6 +212,20 @@ namespace proto {
 		C2S_bench_move() : seq(0), work_us(0), x(0), y(0), client_ts_ns(0) {}
 	};
 
+	// ---- Bench control (client -> server)
+	// - bench_reset : server-side bench counters reset
+	// - bench_measure : server-side windowed sampling/logging
+	//   * server should reset counters at start and measure for given seconds.
+	struct C2S_bench_reset {
+		u32 reserved;
+		C2S_bench_reset() : reserved(0) {}
+	};
+
+	struct C2S_bench_measure {
+		u32 seconds; // measure window in seconds
+		C2S_bench_measure() : seconds(0) {}
+	};
+
 	struct S2C_bench_move_ack {
 		u32 ok;
 		u32 seq;
@@ -241,6 +257,8 @@ namespace proto {
 	static_assert(sizeof(S2C_actor_bound) == 8);
 	static_assert(sizeof(S2C_actor_seq_ack) == 16);
 	static_assert(sizeof(C2S_bench_move) == 24);
+	static_assert(sizeof(C2S_bench_reset) == 4);
+	static_assert(sizeof(C2S_bench_measure) == 4);
 	static_assert(sizeof(S2C_bench_move_ack) == 24);
 
 } // namespace proto

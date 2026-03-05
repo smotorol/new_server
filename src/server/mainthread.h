@@ -10,6 +10,7 @@
 #include <memory>
 #include <functional>
 #include <optional>
+#include <chrono>
 
 #include <boost/asio.hpp>
 #include <boost/asio/executor_work_guard.hpp>
@@ -92,6 +93,11 @@ namespace svr {
         // 로그아웃(또는 강제 저장) 시 호출: 해당 캐릭터를 즉시 DB로 flush
         void RequestFlushCharacter(std::uint32_t world_code, std::uint64_t char_id);
 
+		// ===== Bench measurement control (triggered by client commands) =====
+		// - thread-safe: can be called from Actor threads.
+		void RequestBenchReset() noexcept;
+        void RequestBenchMeasure(int seconds) noexcept;
+
     private:
         bool LoadIniFile();   // 스텁
         bool DatabaseInit();  // 스텁
@@ -109,6 +115,11 @@ namespace svr {
 
         // ✅ 메인 스레드에서만 실행되는 DQS 결과 처리
         void HandleDqsResult_(const svr::dqs_result::Result& r);
+
+		// bench helpers (main thread only)
+		void BenchResetMain_();
+		void BenchStartMain_(int seconds);
+		void BenchTickMain_();
     private:
 		// ✅ Actor 런타임(로직 실행기)
 		// - actor_id(key)별 메시지 순서 보장 + shard 병렬 실행
@@ -150,6 +161,34 @@ namespace svr {
 		std::unique_ptr<svr::dbshard::DbShardManager> db_shards_;
 
         std::atomic<bool> running_{ false };
+
+		// ===== bench window state (main thread loop owns) =====
+		std::atomic<bool> bench_req_reset_{ false };
+		std::atomic<int> bench_req_measure_seconds_{ 0 };
+
+		bool bench_active_ = false;
+		int bench_target_seconds_ = 0;
+		int bench_elapsed_seconds_ = 0;
+		std::chrono::steady_clock::time_point bench_start_tp_{};
+		std::chrono::steady_clock::time_point bench_next_tick_{};
+
+		// baselines for delta calc
+		std::uint64_t bench_base_c2s_move_rx_ = 0;
+		std::uint64_t bench_base_s2c_ack_tx_ = 0;
+		std::uint64_t bench_base_s2c_ack_drop_ = 0;
+		std::uint64_t bench_base_s2c_move_pkts_ = 0;
+		std::uint64_t bench_base_s2c_move_items_ = 0;
+		std::uint64_t bench_base_send_drops_ = 0;
+
+		// totals within window
+		std::uint64_t bench_sum_c2s_move_rx_ = 0;
+		std::uint64_t bench_sum_s2c_ack_tx_ = 0;
+		std::uint64_t bench_sum_s2c_ack_drop_ = 0;
+		std::uint64_t bench_sum_s2c_move_pkts_ = 0;
+		std::uint64_t bench_sum_s2c_move_items_ = 0;
+		std::uint64_t bench_sum_send_drops_ = 0;
+		std::size_t bench_max_sendq_msgs_ = 0;
+		std::size_t bench_max_sendq_bytes_ = 0;
 
         std::uint16_t port_world_ = PORT_LOG_WORLD;
         std::uint16_t port_login_ = PORT_LOG_LOGIN;

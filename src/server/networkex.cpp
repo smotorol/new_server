@@ -567,6 +567,9 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 			auto* req = proto::as<proto::C2S_bench_move>(pMsg, body_len);
 			if (!req) return false;
 
+			// server-side bench metric: C2S bench_move receive count
+			svr::g_c2s_bench_move_rx.fetch_add(1, std::memory_order_relaxed);
+
 			const std::uint64_t char_id = GetActorIdBySession(n);
 			auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
 			const std::uint32_t zone_id = a.zone_id;
@@ -602,6 +605,21 @@ bool CNetworkEX::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_
 				// ✅ tick flush (if due)
 				z.FlushMoveTickIfDue_(static_cast<CNetworkEX&>(*self), dwProID, false);
 			});
+			return true;
+		}
+
+	case proto::C2SMsg::bench_reset:
+		{
+			// ✅ client bench_reset와 서버 bench counters 리셋을 동기화
+			svr::g_Main.RequestBenchReset();
+			return true;
+		}
+	case proto::C2SMsg::bench_measure:
+		{
+			auto* req = proto::as<proto::C2S_bench_measure>(pMsg, body_len);
+			if (!req) return false;
+			const int seconds = (int)std::max<proto::u32>(1, req->seconds);
+			svr::g_Main.RequestBenchMeasure(seconds);
 			return true;
 		}
 

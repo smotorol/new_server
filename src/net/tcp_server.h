@@ -11,6 +11,7 @@
 #include <cstdint>
 #include <mutex>
 #include <vector>
+#include <algorithm>
 
 namespace net {
     namespace asio = boost::asio;
@@ -80,6 +81,43 @@ namespace net {
 			if (index >= slots_.size()) return false;
 			if (auto s = slots_[index].lock()) { s->async_send(header, body); return true; }
 			return false;
+		}
+
+		// ===== stats helpers (thread-safe) =====
+		std::size_t active_session_count() const
+		{
+			std::lock_guard<std::mutex> lk(slots_mtx_);
+			std::size_t n = 0;
+			for (auto& w : slots_) {
+				if (!w.expired()) ++n;
+			}
+			return n;
+		}
+
+		struct SendqStats {
+			std::size_t q_msgs_total = 0;
+			std::size_t q_bytes_total = 0;
+			std::size_t q_msgs_max = 0;
+			std::size_t q_bytes_max = 0;
+			std::uint64_t drops_total = 0;
+		};
+
+		SendqStats collect_sendq_stats() const
+		{
+			SendqStats st;
+			std::lock_guard<std::mutex> lk(slots_mtx_);
+			for (auto& w : slots_) {
+				auto s = w.lock();
+				if (!s) continue;
+				const auto qm = s->send_q_msgs();
+				const auto qb = s->send_q_bytes();
+				st.q_msgs_total += qm;
+				st.q_bytes_total += qb;
+				st.q_msgs_max = std::max(st.q_msgs_max, qm);
+				st.q_bytes_max = std::max(st.q_bytes_max, qb);
+				st.drops_total += s->send_drop_count();
+			}
+			return st;
 		}
 
         asio::awaitable<void> run()
@@ -155,7 +193,7 @@ namespace net {
         tcp::acceptor acceptor_;
         HandlerPtr handler_;
 
-        std::mutex slots_mtx_;
+        mutable std::mutex slots_mtx_;
         std::vector<std::weak_ptr<TcpSession>> slots_;
         std::vector<std::uint32_t> slot_serials_;
         std::vector<std::uint32_t> free_list_;

@@ -99,6 +99,7 @@ namespace net {
 		// ✅ Approximate queue stats for cross-thread backpressure checks
 		std::atomic<std::size_t> send_q_msgs_atomic_{ 0 };
 		std::atomic<std::size_t> send_q_bytes_atomic_{ 0 };
+		std::atomic<std::uint64_t> send_drop_count_{ 0 }; // lossy send drops
 
 	public:
 		// ✅ Non-blocking check (approx): is there room to enqueue msg_bytes?
@@ -110,6 +111,11 @@ namespace net {
 			if (qb + msg_bytes > max_send_queue_bytes_) return false;
 			return true;
 		}
+
+		// ===== queue stats (approx) =====
+		std::size_t send_q_msgs() const noexcept { return send_q_msgs_atomic_.load(std::memory_order_relaxed); }
+		std::size_t send_q_bytes() const noexcept { return send_q_bytes_atomic_.load(std::memory_order_relaxed); }
+		std::uint64_t send_drop_count() const noexcept { return send_drop_count_.load(std::memory_order_relaxed); }
 
 		// ✅ Lossy send: if queue is full, DROP instead of closing the socket.
 		void async_send_lossy(const _MSG_HEADER& header, const char* body /*nullable*/)
@@ -165,6 +171,7 @@ namespace net {
 
 			if (send_q_.size() + 1 > max_send_queue_msgs_ || (send_q_bytes_ + msg_bytes) > max_send_queue_bytes_) {
 				// drop newest
+				send_drop_count_.fetch_add(1, std::memory_order_relaxed);
 				return;
 			}
 

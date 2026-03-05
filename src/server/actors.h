@@ -14,6 +14,8 @@
 #include "../proto/proto.h"
 #include "../proto/packet_util.h"
 
+#include "bench_stats.h"
+
 namespace svr {
 
 	// ------------------------------------------------------------
@@ -847,7 +849,12 @@ namespace svr {
 				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::bench_move_ack, (std::uint16_t)sizeof(ack));
 
 				if (a.serial != 0) {
-					net.TrySendLossy(pro_id, a.sid, a.serial, h, reinterpret_cast<const char*>(&ack));
+					if (net.TrySendLossy(pro_id, a.sid, a.serial, h, reinterpret_cast<const char*>(&ack))) {
+						g_s2c_bench_ack_tx.fetch_add(1, std::memory_order_relaxed);
+					}
+					else {
+						g_s2c_bench_ack_drop.fetch_add(1, std::memory_order_relaxed);
+					}
 				}
 			}
 
