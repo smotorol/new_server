@@ -148,10 +148,14 @@ namespace proto {
 		S2C_player_move_item() : char_id(0), x(0), y(0) {}
 	};
 
-	struct S2C_player_move_batch_hdr {
+	// ✅ Flexible array style (legacy MMO pattern)
+	// - 실제 전송 크기: sizeof(S2C_player_move_batch) + (count-1)*sizeof(S2C_player_move_item)
+	// - count==0인 패킷은 전송하지 않는 것을 권장
+	struct S2C_player_move_batch {
 		u16 count;
-		S2C_player_move_batch_hdr() : count(0) {}
-	};
+		S2C_player_move_item items[1]; // flexible array (MSVC/GCC extension)
+		S2C_player_move_batch() : count(0) {}
+ 	};
 
 	// 공통 전투 결과(몬스터/플레이어)
 	struct S2C_attack_result {

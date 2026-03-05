@@ -140,7 +140,8 @@ BenchController::Aggregate BenchController::Snapshot() const
 	a.sent = sent_.load(std::memory_order_relaxed);
 
 	std::lock_guard<std::mutex> lk(mtx_);
-	std::uint64_t move_recv = 0, spawn_recv = 0, despawn_recv = 0;
+	std::uint64_t move_pkts = 0, move_items = 0;
+	std::uint64_t spawn_recv = 0, despawn_recv = 0;
 	std::uint64_t ack_total = 0;
 	double rtt_sum_ms = 0.0;
 	double rtt_min_ms = 0.0;
@@ -149,7 +150,8 @@ BenchController::Aggregate BenchController::Snapshot() const
 
 	for (auto& c : conns_) {
 		auto s = c.handler->BenchGetSnapshot();
-		move_recv += s.recv_move;
+		move_pkts += s.recv_move_pkts;
+		move_items += s.recv_move_items;
 		spawn_recv += s.recv_spawn;
 		despawn_recv += s.recv_despawn;
 		ack_total += s.recv_ack;
@@ -162,7 +164,8 @@ BenchController::Aggregate BenchController::Snapshot() const
 	}
 
 	a.ack = ack_total;
-	a.recv_move = move_recv;
+	a.recv_move_pkts = move_pkts;
+	a.recv_move_items = move_items;
 	a.recv_spawn = spawn_recv;
 	a.recv_despawn = despawn_recv;
 	a.rtt_avg_ms = ack_total > 0 ? (rtt_sum_ms / (double)ack_total) : 0.0;

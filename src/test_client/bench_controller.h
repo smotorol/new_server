@@ -31,7 +31,8 @@ public:
 	struct Aggregate {
 		std::uint64_t sent = 0;
 		std::uint64_t ack = 0;
-		std::uint64_t recv_move = 0;
+		std::uint64_t recv_move_pkts = 0;
+		std::uint64_t recv_move_items = 0;
 		std::uint64_t recv_spawn = 0;
 		std::uint64_t recv_despawn = 0;
 		double rtt_avg_ms = 0.0;

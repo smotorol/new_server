@@ -34,7 +34,8 @@ void CNetworkEX::SetBenchQuiet(bool on) noexcept
 
 void CNetworkEX::BenchReset() noexcept
 {
-	recv_move_.store(0, std::memory_order_relaxed);
+	recv_move_pkts_.store(0, std::memory_order_relaxed);
+	recv_move_items_.store(0, std::memory_order_relaxed);
 	recv_spawn_.store(0, std::memory_order_relaxed);
 	recv_despawn_.store(0, std::memory_order_relaxed);
 	recv_ack_.store(0, std::memory_order_relaxed);
@@ -46,7 +47,8 @@ void CNetworkEX::BenchReset() noexcept
 CNetworkEX::BenchSnapshot CNetworkEX::BenchGetSnapshot() const noexcept
 {
 	BenchSnapshot s;
-	s.recv_move = recv_move_.load(std::memory_order_relaxed);
+	s.recv_move_pkts = recv_move_pkts_.load(std::memory_order_relaxed);
+	s.recv_move_items = recv_move_items_.load(std::memory_order_relaxed);
 	s.recv_spawn = recv_spawn_.load(std::memory_order_relaxed);
 	s.recv_despawn = recv_despawn_.load(std::memory_order_relaxed);
 	s.recv_ack = recv_ack_.load(std::memory_order_relaxed);
@@ -269,20 +271,32 @@ bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pM
 		return true;
 	case proto::S2CMsg::player_move_batch:
 		{
-			// body: u16 count + items[count]
+			// body: proto::S2C_player_move_batch (flexible array)
+			// - u16 count + items[count]
 			if (!pMsg || body_len < sizeof(std::uint16_t)) return false;
 			std::uint16_t count = 0;
 			std::memcpy(&count, pMsg, sizeof(std::uint16_t));
-			const std::size_t need = sizeof(std::uint16_t) + (std::size_t)count * sizeof(proto::S2C_player_move_item);
+			if (count == 0) {
+				// 서버는 보통 count==0을 보내지 않지만, 방어적으로 허용
+				return true;
+			}
+
+			auto* res = proto::as<proto::S2C_player_move_batch>(pMsg, body_len);
+			if (!res) return false;
+			// 실제 필요 바이트: sizeof(batch) + (count-1)*sizeof(item)
+			const std::size_t need = sizeof(proto::S2C_player_move_batch)
+				+ (std::size_t)(count - 1) * sizeof(proto::S2C_player_move_item);
 			if (body_len < need) return false;
-			recv_move_.fetch_add(count, std::memory_order_relaxed);
+			recv_move_pkts_.fetch_add(1, std::memory_order_relaxed);
+			recv_move_items_.fetch_add(count, std::memory_order_relaxed);
 			return true;
 		}
 	case proto::S2CMsg::player_move:
 		{
 			auto* res = proto::as<proto::S2C_player_move>(pMsg, body_len);
 			if (!res) return false;
-			recv_move_.fetch_add(1, std::memory_order_relaxed);
+			recv_move_pkts_.fetch_add(1, std::memory_order_relaxed);
+			recv_move_items_.fetch_add(1, std::memory_order_relaxed);
 			/*if (!bench_quiet_.load(std::memory_order_relaxed)) {
 				std::cout << "[Zone] player_move sid=" << n
 					<< " char_id=" << res->char_id

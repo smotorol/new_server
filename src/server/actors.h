@@ -117,6 +117,173 @@ namespace svr {
 	public:
 		static constexpr std::int32_t kCellSize = 10; // 샘플: 10 단위
 
+		// ====== (레거시 eos_royal 스타일) 섹터(셀) 컨테이너 ======
+		// - init_sector(map_size, unit): 맵 크기 / 셀 단위 / AOI 반경(셀 단위)을 초기화
+		// - 좌표 -> 셀 변환/클램프, 브로드캐스트(주변 셀) 목록 제공
+		struct SectorContainer final {
+			bool inited = false;
+			Vec2i map_size{};          // world width/height (임시)
+			std::int32_t unit = 10;    // WORLD_SIGHT_UNIT 느낌(셀 한 변 크기)
+			std::int32_t aoi_r = 1;    // 주변 셀 반경(1이면 3x3)
+
+			std::int32_t max_cx = 0;
+			std::int32_t max_cy = 0;
+
+			// 방향( dx,dy in [-1..1] ) 별 edge offsets 캐시
+			// idx = (dx+1) + (dy+1)*3
+			std::array<std::vector<Vec2i>, 9> entered_edge_offs{}; // new window에 새로 들어온 edge
+			std::array<std::vector<Vec2i>, 9> left_edge_offs{};    // old window에서 빠진 edge
+
+			static constexpr int DirIndex(int dx, int dy) noexcept {
+				return (dx + 1) + (dy + 1) * 3;
+			}
+
+			bool init_sector(Vec2i rc_size, std::int32_t world_sight_unit, std::int32_t aoi_radius_cells = 1) {
+				if (world_sight_unit <= 0) return false;
+				if (rc_size.x <= 0 || rc_size.y <= 0) return false;
+				if (aoi_radius_cells < 0) aoi_radius_cells = 0;
+
+				map_size = rc_size;
+				unit = world_sight_unit;
+				aoi_r = aoi_radius_cells;
+
+				// 셀 인덱스 최대치(0..max)
+				max_cx = (map_size.x - 1) / unit;
+				max_cy = (map_size.y - 1) / unit;
+
+				inited = true;
+				return true;
+			}
+
+			// floor division for negatives
+			std::int32_t ToCell(std::int32_t v) const {
+				if (v >= 0) return v / unit;
+				return -(((-v) + unit - 1) / unit);
+			}
+
+			std::int32_t ClampCx(std::int32_t cx) const {
+				if (!inited) return cx;
+				if (cx < 0) return 0;
+				if (cx > max_cx) return max_cx;
+				return cx;
+			}
+			std::int32_t ClampCy(std::int32_t cy) const {
+				if (!inited) return cy;
+				if (cy < 0) return 0;
+				if (cy > max_cy) return max_cy;
+				return cy;
+			}
+
+			Vec2i ToCellClamped(Vec2i pos) const {
+				Vec2i c{};
+				c.x = ClampCx(ToCell(pos.x));
+				c.y = ClampCy(ToCell(pos.y));
+				return c;
+			}
+
+			// (cx,cy) -> key
+			static std::int64_t CellKey(std::int32_t cx, std::int32_t cy) {
+				return (std::int64_t(cx) << 32) ^ (std::uint32_t)cy;
+			}
+
+			// 주변 셀 목록(반경=aoi_r). (기본은 3x3)
+			std::vector<std::int64_t> BroadCells(std::int32_t cx, std::int32_t cy) const {
+				std::vector<std::int64_t> out;
+				const int r = std::max(0, aoi_r);
+				out.reserve((std::size_t)(2 * r + 1) * (2 * r + 1));
+				for (int dy = -r; dy <= r; ++dy) {
+					for (int dx = -r; dx <= r; ++dx) {
+						const auto ncx = ClampCx(cx + dx);
+						const auto ncy = ClampCy(cy + dy);
+						out.push_back(CellKey(ncx, ncy));
+					}
+				}
+				return out;
+			}
+
+			// 3x3 AOI 셀키 목록(가장 흔한 케이스: aoi_r=1)
+			std::array<std::int64_t, 9> BroadCells3x3(std::int32_t cx, std::int32_t cy) const {
+				std::array<std::int64_t, 9> out{};
+				int i = 0;
+				for (int dy = -1; dy <= 1; ++dy) {
+					for (int dx = -1; dx <= 1; ++dx) {
+						const auto ncx = ClampCx(cx + dx);
+						const auto ncy = ClampCy(cy + dy);
+						out[i++] = CellKey(ncx, ncy);
+					}
+				}
+				return out;
+			}
+
+			// 레거시 ResetSector 패턴: 셀 이동(1칸) 시, entered/left edge 셀 목록 제공
+			// - dx,dy는 -1/0/1만 지원(그 외는 full diff 경로로 처리 권장)
+			const std::vector<Vec2i>& EnteredEdgeOffsets(int dx, int dy) const {
+				return entered_edge_offs[DirIndex(dx, dy)];
+			}
+			const std::vector<Vec2i>& LeftEdgeOffsets(int dx, int dy) const {
+				return left_edge_offs[DirIndex(dx, dy)];
+			}
+
+		private:
+			void BuildEdgeCaches_() {
+				for (auto& v : entered_edge_offs) v.clear();
+				for (auto& v : left_edge_offs) v.clear();
+
+				const int r = std::max(0, aoi_r);
+				for (int dy = -1; dy <= 1; ++dy) {
+					for (int dx = -1; dx <= 1; ++dx) {
+						const int idx = DirIndex(dx, dy);
+						if (dx == 0 && dy == 0) continue;
+
+						auto& ent = entered_edge_offs[idx];
+						auto& lef = left_edge_offs[idx];
+
+						// entered: new window에서 새로 들어온 edge
+						if (dx == 1) {
+							for (int oy = -r; oy <= r; ++oy) ent.push_back({ r, oy });
+						}
+						else if (dx == -1) {
+							for (int oy = -r; oy <= r; ++oy) ent.push_back({ -r, oy });
+						}
+						if (dy == 1) {
+							for (int ox = -r; ox <= r; ++ox) ent.push_back({ ox, r });
+						}
+						else if (dy == -1) {
+							for (int ox = -r; ox <= r; ++ox) ent.push_back({ ox, -r });
+						}
+						// 중복 제거(대각 이동에서 코너 중복 가능)
+						std::sort(ent.begin(), ent.end(), [](const Vec2i& a, const Vec2i& b) {
+							if (a.x != b.x) return a.x < b.x;
+							return a.y < b.y;
+						});
+						ent.erase(std::unique(ent.begin(), ent.end(), [](const Vec2i& a, const Vec2i& b) {
+							return a.x == b.x && a.y == b.y;
+						}), ent.end());
+
+						// left: old window에서 빠진 edge(entered의 반대편)
+						if (dx == 1) {
+							for (int oy = -r; oy <= r; ++oy) lef.push_back({ -r, oy });
+						}
+						else if (dx == -1) {
+							for (int oy = -r; oy <= r; ++oy) lef.push_back({ r, oy });
+						}
+						if (dy == 1) {
+							for (int ox = -r; ox <= r; ++ox) lef.push_back({ ox, -r });
+						}
+						else if (dy == -1) {
+							for (int ox = -r; ox <= r; ++ox) lef.push_back({ ox, r });
+						}
+						std::sort(lef.begin(), lef.end(), [](const Vec2i& a, const Vec2i& b) {
+							if (a.x != b.x) return a.x < b.x;
+							return a.y < b.y;
+						});
+						lef.erase(std::unique(lef.begin(), lef.end(), [](const Vec2i& a, const Vec2i& b) {
+							return a.x == b.x && a.y == b.y;
+						}), lef.end());
+					}
+				}
+			}
+		};
 		// eos_royal처럼: 맵 크기/섹터 단위 초기화
 		//  - 예: if (!sector_container_.init_sector({map_w,map_h}, WORLD_SIGHT_UNIT)) { ... }
 		bool InitSectorSystem(Vec2i map_rc_size, std::int32_t world_sight_unit, std::int32_t aoi_radius_cells = 1) {
@@ -336,84 +503,9 @@ namespace svr {
 		std::unordered_map<std::uint64_t, PlayerInfo> players; // char_id -> info
 		std::unordered_map<std::int64_t, std::unordered_set<std::uint64_t>> cells; // cell_key -> set<char_id>
 
-		// ====== (레거시 eos_royal 스타일) 섹터(셀) 컨테이너 ======
-		// - init_sector(map_size, unit): 맵 크기 / 셀 단위 / AOI 반경(셀 단위)을 초기화
-		// - 좌표 -> 셀 변환/클램프, 브로드캐스트(주변 셀) 목록 제공
-		struct SectorContainer final {
-			bool inited = false;
-			Vec2i map_size{};          // world width/height (임시)
-			std::int32_t unit = 10;    // WORLD_SIGHT_UNIT 느낌(셀 한 변 크기)
-			std::int32_t aoi_r = 1;    // 주변 셀 반경(1이면 3x3)
-
-			std::int32_t max_cx = 0;
-			std::int32_t max_cy = 0;
-
-			bool init_sector(Vec2i rc_size, std::int32_t world_sight_unit, std::int32_t aoi_radius_cells = 1) {
-				if (world_sight_unit <= 0) return false;
-				if (rc_size.x <= 0 || rc_size.y <= 0) return false;
-				if (aoi_radius_cells < 0) aoi_radius_cells = 0;
-
-				map_size = rc_size;
-				unit = world_sight_unit;
-				aoi_r = aoi_radius_cells;
-
-				// 셀 인덱스 최대치(0..max)
-				max_cx = (map_size.x - 1) / unit;
-				max_cy = (map_size.y - 1) / unit;
-
-				inited = true;
-				return true;
-			}
-
-			// floor division for negatives
-			std::int32_t ToCell(std::int32_t v) const {
-				if (v >= 0) return v / unit;
-				return -(((-v) + unit - 1) / unit);
-			}
-
-			std::int32_t ClampCx(std::int32_t cx) const {
-				if (!inited) return cx;
-				if (cx < 0) return 0;
-				if (cx > max_cx) return max_cx;
-				return cx;
-			}
-			std::int32_t ClampCy(std::int32_t cy) const {
-				if (!inited) return cy;
-				if (cy < 0) return 0;
-				if (cy > max_cy) return max_cy;
-				return cy;
-			}
-
-			Vec2i ToCellClamped(Vec2i pos) const {
-				Vec2i c{};
-				c.x = ClampCx(sector_container_.ToCellClamped(pos).x);
-				c.y = ClampCy(ToCell(pos.y));
-				return c;
-			}
-
-			// (cx,cy) -> key
-			static std::int64_t CellKey(std::int32_t cx, std::int32_t cy) {
-				return (std::int64_t(cx) << 32) ^ (std::uint32_t)cy;
-			}
-
-			// 3x3 AOI 셀키 목록(가장 흔한 케이스: aoi_r=1)
-			std::array<std::int64_t, 9> BroadCells3x3(std::int32_t cx, std::int32_t cy) const {
-				std::array<std::int64_t, 9> out{};
-				int i = 0;
-				for (int dy = -1; dy <= 1; ++dy) {
-					for (int dx = -1; dx <= 1; ++dx) {
-						const auto ncx = ClampCx(cx + dx);
-						const auto ncy = ClampCy(cy + dy);
-						out[i++] = CellKey(ncx, ncy);
-					}
-				}
-				return out;
-			}
-		};
-
 		// 기본 키 함수(외부 util이 이걸 쓰는 경우가 있어 유지)
 		static std::int64_t CellKey(std::int32_t cx, std::int32_t cy) {
-			return (std::int64_t(cx) << 32) ^ (std::uint32_t)cy;
+			return SectorContainer::CellKey(cx, cy);
 		}
 
 		// ====== (eos_royal 스타일) 셀 채널(pub-sub) 브로드캐스트 헬퍼 ======
@@ -456,6 +548,73 @@ namespace svr {
 			}
 		};
 
+		// ====== (사용성) eos_royal 감성: get_sector()->get_broad_sectors() ======
+		// - 외부 코드가 "내 섹터"를 먼저 얻고, 거기서 broad 목록을 꺼내 쓰는 패턴을 흉내낸다.
+		struct SectorView final {
+			ZoneActor& z;
+			std::int32_t cx = 0;
+			std::int32_t cy = 0;
+
+			std::array<std::int64_t, 9> get_broad_sectors() const {
+				return z.sector_container_.BroadCells3x3(cx, cy);
+			}
+
+			// 셀 1칸 이동 시, 새로 들어온/빠진 edge offsets(레거시 calc_enter_leave_sector 감성)
+			const std::vector<Vec2i>& entered_edge_offsets(int dx, int dy) const {
+				return z.sector_container_.EnteredEdgeOffsets(dx, dy);
+			}
+			const std::vector<Vec2i>& left_edge_offsets(int dx, int dy) const {
+				return z.sector_container_.LeftEdgeOffsets(dx, dy);
+			}
+		};
+
+		SectorView get_sector(std::uint64_t char_id) {
+			auto it = players.find(char_id);
+			if (it == players.end()) return SectorView{ *this, 0, 0 };
+			return SectorView{ *this, it->second.cx, it->second.cy };
+		}
+		SectorView get_sector_by_cell(std::int32_t cx, std::int32_t cy) {
+			return SectorView{ *this, cx, cy };
+		}
+
+		// (추가) entered/left cell_key 목록을 빠르게 구한다.
+		// - 셀 이동이 1칸(dx,dy in [-1..1])이면 edge 캐시를 사용
+		// - 그 외(텔레포트/큰 점프)는 full diff(브로드 전체) 권장
+		std::vector<std::int64_t> CalcEnteredCells(std::int32_t old_cx, std::int32_t old_cy,
+			std::int32_t new_cx, std::int32_t new_cy) const
+		{
+			const int dx = new_cx - old_cx;
+			const int dy = new_cy - old_cy;
+			std::vector<std::int64_t> out;
+			if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
+				for (const auto& off : sector_container_.EnteredEdgeOffsets(dx, dy)) {
+					const auto cx = sector_container_.ClampCx(new_cx + off.x);
+					const auto cy = sector_container_.ClampCy(new_cy + off.y);
+					out.push_back(SectorContainer::CellKey(cx, cy));
+				}
+				return out;
+			}
+			// 큰 점프는 full diff로 처리하는 쪽이 안전(여기서는 간단히 new broad 전체를 entered로 본다)
+			return sector_container_.BroadCells(new_cx, new_cy);
+		}
+
+		std::vector<std::int64_t> CalcLeftCells(std::int32_t old_cx, std::int32_t old_cy,
+			std::int32_t new_cx, std::int32_t new_cy) const
+		{
+			const int dx = new_cx - old_cx;
+			const int dy = new_cy - old_cy;
+			std::vector<std::int64_t> out;
+			if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
+				for (const auto& off : sector_container_.LeftEdgeOffsets(dx, dy)) {
+					const auto cx = sector_container_.ClampCx(old_cx + off.x);
+					const auto cy = sector_container_.ClampCy(old_cy + off.y);
+					out.push_back(SectorContainer::CellKey(cx, cy));
+				}
+				return out;
+			}
+			return sector_container_.BroadCells(old_cx, old_cy);
+		}
+
 		std::vector<std::uint64_t> GatherNeighborsVec(std::int32_t cx, std::int32_t cy) {
 			std::vector<std::uint64_t> out;
 			std::size_t approx = 0;
@@ -480,9 +639,9 @@ namespace svr {
 		void JoinOrUpdate(std::uint64_t char_id, Vec2i pos, std::uint32_t sid, std::uint32_t serial) {
 			auto& pi = players[char_id];
 			pi.pos = pos;
-			auto nc = sector_container_.ToCellClamped(pos);
-			pi.cx = nc.x;
-			pi.cy = nc.y;
+			const auto c = sector_container_.ToCellClamped(pos);
+			pi.cx = c.x;
+			pi.cy = c.y;
 			pi.sid = sid;
 			pi.serial = serial;
 			cells[CellKey(pi.cx, pi.cy)].insert(char_id);
@@ -616,10 +775,13 @@ namespace svr {
 				if (total == 0) continue;
 
 				const std::uint16_t count = (std::uint16_t)std::min<std::size_t>(total, 4096);
-				const std::size_t body_size = sizeof(std::uint16_t) + (std::size_t)count * sizeof(proto::S2C_player_move_item);
+				// ✅ flexible array style: sizeof(batch) + (count-1)*sizeof(item)
+				const std::size_t body_size = sizeof(proto::S2C_player_move_batch)
+					+ (count > 0 ? ((std::size_t)count - 1) * sizeof(proto::S2C_player_move_item) : 0);
 				auto body = std::make_shared<std::vector<char>>(body_size);
-				std::memcpy(body->data(), &count, sizeof(std::uint16_t));
-				char* dst = body->data() + sizeof(std::uint16_t);
+				auto* pkt = reinterpret_cast<proto::S2C_player_move_batch*>(body->data());
+				pkt->count = count;
+				char* dst = reinterpret_cast<char*>(pkt->items);
 				std::size_t written = 0;
 				for (int dy = -1; dy <= 1 && written < count; ++dy) {
 					for (int dx = -1; dx <= 1 && written < count; ++dx) {

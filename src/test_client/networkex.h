@@ -22,7 +22,11 @@ public:
 
 	// ---- bench stats ----
 	struct BenchSnapshot {
-		std::uint64_t recv_move = 0;
+		// move batch 지표 분리
+		// - recv_move_pkts : S2C move 관련 패킷 수(배치 포함)
+		// - recv_move_items: 패킷 바디에 포함된 move 아이템 수(배치면 count 합)
+		std::uint64_t recv_move_pkts = 0;
+		std::uint64_t recv_move_items = 0;
 		std::uint64_t recv_spawn = 0;
 		std::uint64_t recv_despawn = 0;
 		std::uint64_t recv_ack = 0;
@@ -46,7 +50,8 @@ private:
 	static std::atomic<std::uint64_t> s_fallback_seq_;
 
 	// bench counters (Actor thread에서 갱신)
-	std::atomic<std::uint64_t> recv_move_{ 0 };
+	std::atomic<std::uint64_t> recv_move_pkts_{ 0 };
+	std::atomic<std::uint64_t> recv_move_items_{ 0 };
 	std::atomic<std::uint64_t> recv_spawn_{ 0 };
 	std::atomic<std::uint64_t> recv_despawn_{ 0 };
 	std::atomic<std::uint64_t> recv_ack_{ 0 };

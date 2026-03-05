@@ -479,14 +479,16 @@ int main()
 			const double wait_elapsed = std::chrono::duration<double>(t_done - t1).count();
 
 			// 집계
-			std::uint64_t move_recv = 0, spawn_recv = 0, despawn_recv = 0;
+			std::uint64_t move_pkts = 0, move_items = 0;
+			std::uint64_t spawn_recv = 0, despawn_recv = 0;
 			double rtt_sum_ms = 0.0;
 			double rtt_min_ms = 0.0;
 			double rtt_max_ms = 0.0;
 			bool min_init = false;
 			for (auto& c : bench) {
 				auto s = c.handler->BenchGetSnapshot();
-				move_recv += s.recv_move;
+				move_pkts += s.recv_move_pkts;
+				move_items += s.recv_move_items;
 				spawn_recv += s.recv_spawn;
 				despawn_recv += s.recv_despawn;
 				rtt_sum_ms += s.rtt_avg_ms * (double)s.recv_ack;
@@ -506,7 +508,8 @@ int main()
 				<< "  sent=" << sent << " (" << send_qps << " pkt/s)\n"
 				<< "  ack=" << ack_total << " (" << ack_qps << " ack/s)\n"
 				<< "  rtt_ms avg=" << rtt_avg_ms << " min=" << rtt_min_ms << " max=" << rtt_max_ms << "\n"
-				<< "  zone_broadcast recv_move=" << move_recv
+				<< "  zone_broadcast recv_move_pkts=" << move_pkts
+				<< " recv_move_items=" << move_items
 				<< " recv_spawn=" << spawn_recv
 				<< " recv_despawn=" << despawn_recv
 				<< "\n";
@@ -606,7 +609,8 @@ int main()
 				<< "  sent=" << a.sent << " (" << send_qps << " pkt/s)\n"
 				<< "  ack=" << a.ack << " (" << ack_qps << " ack/s)\n"
 				<< "  rtt_ms avg=" << a.rtt_avg_ms << " min=" << a.rtt_min_ms << " max=" << a.rtt_max_ms << "\n"
-				<< "  zone_broadcast recv_move=" << a.recv_move
+				<< "  zone_broadcast recv_move_pkts=" << a.recv_move_pkts
+				<< " recv_move_items=" << a.recv_move_items
 				<< " recv_spawn=" << a.recv_spawn
 				<< " recv_despawn=" << a.recv_despawn
 				<< "\n";

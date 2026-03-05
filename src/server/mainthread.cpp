@@ -128,14 +128,27 @@ namespace svr {
 		actors_.post(actor_id, std::move(fn));
 	}
 
+	// ============================================================
+	// ✅ AOI/섹터 설정(ini)
+	//  - eos_royal의 sector_container_.init_sector(rc_size_, WORLD_SIGHT_UNIT) 감성
+	//  - ZoneActor 생성 시 여기 값을 사용해서 섹터 시스템을 초기화한다.
+	// ============================================================
+	struct AoiIniConfig {
+		svr::Vec2i map_size{ 2000, 2000 };
+		int world_sight_unit = svr::ZoneActor::kCellSize;
+		int aoi_radius_cells = 1; // 1 => 3x3
+	};
+	static AoiIniConfig g_aoi_ini_cfg{};
+
 	static std::unique_ptr<net::IActor> MakeServerActor_(std::uint64_t id)
 	{
 		if (id == 0) return std::make_unique<svr::WorldActor>();
 		if (svr::IsZoneActorId(id)) {
 			auto z = std::make_unique<svr::ZoneActor>();
-			// ✅ eos_royal 스타일: 섹터 컨테이너 초기화(임시 맵 크기/섹터 단위)
-			// TODO: ini 설정으로 빼서 월드/존별로 다르게 줄 수 있음
-			z->InitSectorSystem({2000, 2000}, svr::ZoneActor::kCellSize, 1);
+			// ✅ eos_royal 스타일: 섹터 컨테이너 초기화(ini 기반)
+			z->InitSectorSystem(g_aoi_ini_cfg.map_size,
+				(std::int32_t)g_aoi_ini_cfg.world_sight_unit,
+				(std::int32_t)g_aoi_ini_cfg.aoi_radius_cells);
 			return z;
 		}
 		return std::make_unique<svr::PlayerActor>(id);
@@ -507,6 +520,27 @@ namespace svr {
 			if (!v.empty()) logic_thread_count_ = std::max(1, std::stoi(v));
 		}
 
+		// [AOI] (선택)
+		// - MAP_W/MAP_H : 임시 맵 크기(월드/존마다 다르면 확장 가능)
+		// - WORLD_SIGHT_UNIT : 셀 단위(레거시 WORLD_SIGHT_UNIT)
+		// - AOI_RADIUS_CELLS : 주변 셀 반경(1이면 3x3)
+		{
+			auto v = ini.sections["AOI"]["MAP_W"];
+			if (!v.empty()) g_aoi_ini_cfg.map_size.x = std::max(1, std::stoi(v));
+		}
+		{
+			auto v = ini.sections["AOI"]["MAP_H"];
+			if (!v.empty()) g_aoi_ini_cfg.map_size.y = std::max(1, std::stoi(v));
+		}
+		{
+			auto v = ini.sections["AOI"]["WORLD_SIGHT_UNIT"];
+			if (!v.empty()) g_aoi_ini_cfg.world_sight_unit = std::max(1, std::stoi(v));
+		}
+		{
+			auto v = ini.sections["AOI"]["AOI_RADIUS_CELLS"];
+			if (!v.empty()) g_aoi_ini_cfg.aoi_radius_cells = std::max(0, std::stoi(v));
+		}
+
 		// ============================================================
 		// ✅ normalize / default rules (최종 확정값 계산)
 		// ============================================================
@@ -539,6 +573,12 @@ namespace svr {
 		// 5) db pool per world sanity
 		db_pool_size_per_world_ = clamp_int_min(db_pool_size_per_world_, 1, 2);
 
+		// 6) AOI/섹터 sanity
+		g_aoi_ini_cfg.map_size.x = std::max(1, g_aoi_ini_cfg.map_size.x);
+		g_aoi_ini_cfg.map_size.y = std::max(1, g_aoi_ini_cfg.map_size.y);
+		g_aoi_ini_cfg.world_sight_unit = std::max(1, g_aoi_ini_cfg.world_sight_unit);
+		g_aoi_ini_cfg.aoi_radius_cells = std::max(0, g_aoi_ini_cfg.aoi_radius_cells);
+
 
 		spdlog::info("INI loaded (UTF-8): acc='{}', worldset_num={}, recv_buf={}",
 			db_acc_, worldset_num_, world_to_log_recv_buffer_size_);
@@ -548,6 +588,9 @@ namespace svr {
 			flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
 		spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
 			redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
+		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",
+			g_aoi_ini_cfg.map_size.x, g_aoi_ini_cfg.map_size.y,
+			g_aoi_ini_cfg.world_sight_unit, g_aoi_ini_cfg.aoi_radius_cells);
 
 		for (const auto& w : worlds_) {
 			spdlog::info("World: name='{}' addr='{}' dsn='{}' db='{}' idx={}",
