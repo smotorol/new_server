@@ -9,7 +9,7 @@ namespace db {
 
 		void FreeHandleSafe(SQLSMALLINT handle_type, SQLHANDLE handle) noexcept
 		{
-			if (handle != SQL_NULL_HANDLE) {
+			if (handle != nullptr) {
 				SQLFreeHandle(handle_type, handle);
 			}
 		}

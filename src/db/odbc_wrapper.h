@@ -4,6 +4,14 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
+
+#ifdef _WIN32
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#endif
+
 #include <sql.h>
 #include <sqlext.h>
 
@@ -27,14 +35,14 @@ namespace db {
 
 		void connect(const std::string& connection_string);
 		void disconnect() noexcept;
-		[[nodiscard]] bool connected() const noexcept { return dbc_ != SQL_NULL_HDBC; }
+		[[nodiscard]] bool connected() const noexcept { return dbc_ != nullptr; }
 
 		[[nodiscard]] int execute_scalar_int(std::string_view sql) const;
 		void execute(std::string_view sql) const;
 
 	private:
-		SQLHENV env_ = SQL_NULL_HENV;
-		SQLHDBC dbc_ = SQL_NULL_HDBC;
+		SQLHENV env_ = nullptr;
+		SQLHDBC dbc_ = nullptr;
 
 		static std::string CollectDiagnostics(SQLSMALLINT handle_type, SQLHANDLE handle, std::string_view where);
 		[[noreturn]] static void ThrowDiagnostics(SQLSMALLINT handle_type, SQLHANDLE handle, std::string_view where);
