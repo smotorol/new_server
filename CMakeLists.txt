@@ -1,6 +1,10 @@
 cmake_minimum_required(VERSION 3.24)
 project(dc_server LANGUAGES CXX)
 
+option(BUILD_SERVER "Build server target" ON)
+option(BUILD_TEST_CLIENT "Build test_client target" ON)
+option(BUILD_SAMPLES "Build sample_client/sample_server targets" OFF)
+
 # ===============================
 # Global C++ settings
 # ===============================
@@ -43,26 +47,31 @@ endif()
 # ===============================
 # Dependencies (vcpkg)
 # ===============================
-find_package(Boost REQUIRED COMPONENTS system)
+find_package(Boost CONFIG QUIET COMPONENTS system)
+if(NOT Boost_FOUND)
+  find_package(Boost REQUIRED COMPONENTS system)
+endif()
 find_package(fmt CONFIG REQUIRED)
 find_package(spdlog CONFIG REQUIRED)
-find_package(hiredis CONFIG REQUIRED)
-find_package(redis++ CONFIG REQUIRED)
-find_package(nanodbc CONFIG REQUIRED)
 find_package(nlohmann_json CONFIG REQUIRED)
 
-# redis-plus-plus 타겟명 호환 처리 (dynamic/static/버전 차이 대응)
 set(REDISPP_TARGET "")
-if (TARGET redis++::redis++)
-  set(REDISPP_TARGET redis++::redis++)
-elseif (TARGET redis++::redis++_static)
-  set(REDISPP_TARGET redis++::redis++_static)
-elseif (TARGET redis++)
-  set(REDISPP_TARGET redis++)
-else()
-  message(FATAL_ERROR
-    "redis++ package found but no known imported target exists. "
-    "Hint: vcpkg says for static triplet use redis++::redis++_static.")
+if (BUILD_SERVER)
+  find_package(hiredis CONFIG REQUIRED)
+  find_package(redis++ CONFIG REQUIRED)
+
+  # redis-plus-plus 타겟명 호환 처리 (dynamic/static/버전 차이 대응)
+  if (TARGET redis++::redis++)
+    set(REDISPP_TARGET redis++::redis++)
+  elseif (TARGET redis++::redis++_static)
+    set(REDISPP_TARGET redis++::redis++_static)
+  elseif (TARGET redis++)
+    set(REDISPP_TARGET redis++)
+  else()
+    message(FATAL_ERROR
+      "redis++ package found but no known imported target exists. "
+      "Hint: vcpkg says for static triplet use redis++::redis++_static.")
+  endif()
 endif()
 
 # ------------------------------------------------------------
@@ -143,12 +152,13 @@ target_link_libraries(dc_app PUBLIC common net)
 group_sources(${CMAKE_CURRENT_SOURCE_DIR}/src/app "src\\app" "${APP_SOURCES}")
 enable_utf8(dc_app)
 
-# ---- DB (nanodbc + Windows ODBC) ----
+# ---- DB (direct ODBC wrapper) ----
 add_library(db INTERFACE)
-target_link_libraries(db INTERFACE nanodbc)
-
 if (WIN32)
   target_link_libraries(db INTERFACE odbc32)
+else()
+  find_package(ODBC REQUIRED)
+  target_link_libraries(db INTERFACE ODBC::ODBC)
 endif()
 
 # ---- DB impl (pool, redis, etc.) ----
