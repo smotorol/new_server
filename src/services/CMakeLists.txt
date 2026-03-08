@@ -1,0 +1,5 @@
+add_subdirectory(channel)
+add_subdirectory(login)
+add_subdirectory(world)
+add_subdirectory(control)
+add_subdirectory(community)
