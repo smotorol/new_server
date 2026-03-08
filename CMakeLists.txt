@@ -182,6 +182,11 @@ enable_utf8(db_impl)
 collect_sources(SERVER_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/server)
 
 add_executable(server ${SERVER_SOURCES})
+
+set_target_properties(server PROPERTIES
+    DEBUG_POSTFIX "_d"
+)
+
 target_link_libraries(server PRIVATE
   common net dc_app fmt::fmt spdlog::spdlog
   ${REDISPP_TARGET} hiredis::hiredis
@@ -195,6 +200,11 @@ set_vs_workdir(server)
 collect_sources(TEST_CLIENT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/test_client)
 
 add_executable(test_client ${TEST_CLIENT_SOURCES})
+
+set_target_properties(test_client PROPERTIES
+    DEBUG_POSTFIX "_d"
+)
+
 target_link_libraries(test_client PRIVATE
   common net dc_app
 )
@@ -206,6 +216,11 @@ set_vs_workdir(test_client)
 collect_sources(SAMPLE_SERVER_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/sample_server)
 
 add_executable(sample_server ${SAMPLE_SERVER_SOURCES})
+
+set_target_properties(sample_server PROPERTIES
+    DEBUG_POSTFIX "_d"
+)
+
 target_link_libraries(sample_server PRIVATE
   common net dc_app
 )
@@ -217,6 +232,11 @@ set_vs_workdir(sample_server)
 collect_sources(SAMPLE_CLIENT_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/src/sample_client)
 
 add_executable(sample_client ${SAMPLE_CLIENT_SOURCES})
+
+set_target_properties(sample_client PROPERTIES
+    DEBUG_POSTFIX "_d"
+)
+
 target_link_libraries(sample_client PRIVATE
   common net dc_app
 )
