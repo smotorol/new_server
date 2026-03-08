@@ -100,6 +100,9 @@ namespace net {
 		std::atomic<std::size_t> send_q_msgs_atomic_{ 0 };
 		std::atomic<std::size_t> send_q_bytes_atomic_{ 0 };
 		std::atomic<std::uint64_t> send_drop_count_{ 0 }; // lossy send drops
+		std::atomic<std::uint64_t> send_drop_bytes_{ 0 };
+		std::atomic<std::uint64_t> app_tx_bytes_{ 0 };
+		std::atomic<std::uint64_t> app_rx_bytes_{ 0 };
 
 	public:
 		// ✅ Non-blocking check (approx): is there room to enqueue msg_bytes?
@@ -116,6 +119,9 @@ namespace net {
 		std::size_t send_q_msgs() const noexcept { return send_q_msgs_atomic_.load(std::memory_order_relaxed); }
 		std::size_t send_q_bytes() const noexcept { return send_q_bytes_atomic_.load(std::memory_order_relaxed); }
 		std::uint64_t send_drop_count() const noexcept { return send_drop_count_.load(std::memory_order_relaxed); }
+		std::uint64_t send_drop_bytes() const noexcept { return send_drop_bytes_.load(std::memory_order_relaxed); }
+		std::uint64_t app_tx_bytes() const noexcept { return app_tx_bytes_.load(std::memory_order_relaxed); }
+		std::uint64_t app_rx_bytes() const noexcept { return app_rx_bytes_.load(std::memory_order_relaxed); }
 
 		// ✅ Lossy send: if queue is full, DROP instead of closing the socket.
 		void async_send_lossy(const _MSG_HEADER& header, const char* body /*nullable*/)
@@ -172,6 +178,7 @@ namespace net {
 			if (send_q_.size() + 1 > max_send_queue_msgs_ || (send_q_bytes_ + msg_bytes) > max_send_queue_bytes_) {
 				// drop newest
 				send_drop_count_.fetch_add(1, std::memory_order_relaxed);
+				send_drop_bytes_.fetch_add(static_cast<std::uint64_t>(msg_bytes), std::memory_order_relaxed);
 				return;
 			}
 
@@ -196,12 +203,13 @@ namespace net {
 				while (!send_q_.empty()) {
 					OutMsg& m = send_q_.front();
 					co_await asio::async_write(socket_, asio::buffer(m.bytes), asio::use_awaitable);
+					app_tx_bytes_.fetch_add(static_cast<std::uint64_t>(m.bytes.size()), std::memory_order_relaxed);
 
 					send_q_bytes_ -= m.bytes.size();
 					send_q_.pop_front();
 
-                    send_q_msgs_atomic_.store(send_q_.size(), std::memory_order_relaxed);
-                    send_q_bytes_atomic_.store(send_q_bytes_, std::memory_order_relaxed);
+					send_q_msgs_atomic_.store(send_q_.size(), std::memory_order_relaxed);
+					send_q_bytes_atomic_.store(send_q_bytes_, std::memory_order_relaxed);
 				}
 			}
 			catch (...) {
@@ -236,6 +244,8 @@ namespace net {
 				if (body_len > 0) {
 					co_await asio::async_read(socket_, asio::buffer(body_), asio::use_awaitable);
 				}
+
+				app_rx_bytes_.fetch_add(static_cast<std::uint64_t>(total_size), std::memory_order_relaxed);
 
 				if (handler_) {
 					const char* body_ptr = body_len ? reinterpret_cast<const char*>(body_.data()) : nullptr;

@@ -8,6 +8,10 @@
 
 int main()
 {
+#ifdef _WIN32
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
+#endif
     common::init_logging();
 
     if (!svr::g_Main.InitMainThread()) {

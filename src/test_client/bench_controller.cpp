@@ -1,7 +1,11 @@
 #include "bench_controller.h"
 
 #include <algorithm>
+#include <iomanip>
 #include <iostream>
+#include <sstream>
+
+#include "../common/bench_io.h"
 
 #include "define.h"
 
@@ -153,6 +157,8 @@ BenchController::Aggregate BenchController::Snapshot() const
 	std::uint64_t move_pkts = 0, move_items = 0;
 	std::uint64_t spawn_recv = 0, despawn_recv = 0;
 	std::uint64_t ack_total = 0;
+	std::uint64_t app_tx_bytes = 0, app_rx_bytes = 0;
+	std::uint64_t send_drop_count = 0, send_drop_bytes = 0;
 	double rtt_sum_ms = 0.0;
 	double rtt_min_ms = 0.0;
 	double rtt_max_ms = 0.0;
@@ -166,6 +172,13 @@ BenchController::Aggregate BenchController::Snapshot() const
 		despawn_recv += s.recv_despawn;
 		ack_total += s.recv_ack;
 		rtt_sum_ms += s.rtt_avg_ms * (double)s.recv_ack;
+		auto sess = c.client->session();
+		if (sess) {
+			app_tx_bytes += sess->app_tx_bytes();
+			app_rx_bytes += sess->app_rx_bytes();
+			send_drop_count += sess->send_drop_count();
+			send_drop_bytes += sess->send_drop_bytes();
+		}
 		if (s.recv_ack > 0) {
 			if (!min_init || s.rtt_min_ms < rtt_min_ms) rtt_min_ms = s.rtt_min_ms;
 			if (!min_init || s.rtt_max_ms > rtt_max_ms) rtt_max_ms = s.rtt_max_ms;
@@ -181,8 +194,54 @@ BenchController::Aggregate BenchController::Snapshot() const
 	a.rtt_avg_ms = ack_total > 0 ? (rtt_sum_ms / (double)ack_total) : 0.0;
 	a.rtt_min_ms = rtt_min_ms;
 	a.rtt_max_ms = rtt_max_ms;
+	a.app_tx_bytes = app_tx_bytes;
+	a.app_rx_bytes = app_rx_bytes;
+	a.send_drop_count = send_drop_count;
+	a.send_drop_bytes = send_drop_bytes;
 	return a;
 }
+
+
+namespace {
+	std::string fmt_u64(std::uint64_t v) { return std::to_string(v); }
+	std::string fmt_d(double v) { std::ostringstream oss; oss << std::fixed << std::setprecision(3) << v; return oss.str(); }
+	void save_client_measure_row(int seconds, int conns, bool walk_running, const BenchController::Aggregate& a, double elapsed_sec)
+	{
+		const double sent_per_sec = elapsed_sec > 0.0 ? (double)a.sent / elapsed_sec : 0.0;
+		const double ack_per_sec = elapsed_sec > 0.0 ? (double)a.ack / elapsed_sec : 0.0;
+		const double move_pkts_per_sec = elapsed_sec > 0.0 ? (double)a.recv_move_pkts / elapsed_sec : 0.0;
+		const double move_items_per_sec = elapsed_sec > 0.0 ? (double)a.recv_move_items / elapsed_sec : 0.0;
+		const double tx_bps = elapsed_sec > 0.0 ? (double)a.app_tx_bytes / elapsed_sec : 0.0;
+		const double rx_bps = elapsed_sec > 0.0 ? (double)a.app_rx_bytes / elapsed_sec : 0.0;
+		auto fields = {
+			std::pair<std::string, std::string>{"seconds", std::to_string(seconds)},
+			{"elapsed_sec", fmt_d(elapsed_sec)},
+			{"conns", std::to_string(conns)},
+			{"walk_running", walk_running ? "1" : "0"},
+			{"sent", fmt_u64(a.sent)},
+			{"sent_per_sec", fmt_d(sent_per_sec)},
+			{"ack", fmt_u64(a.ack)},
+			{"ack_per_sec", fmt_d(ack_per_sec)},
+			{"rtt_avg_ms", fmt_d(a.rtt_avg_ms)},
+			{"rtt_min_ms", fmt_d(a.rtt_min_ms)},
+			{"rtt_max_ms", fmt_d(a.rtt_max_ms)},
+			{"recv_move_pkts", fmt_u64(a.recv_move_pkts)},
+			{"recv_move_pkts_per_sec", fmt_d(move_pkts_per_sec)},
+			{"recv_move_items", fmt_u64(a.recv_move_items)},
+			{"recv_move_items_per_sec", fmt_d(move_items_per_sec)},
+			{"recv_spawn", fmt_u64(a.recv_spawn)},
+			{"recv_despawn", fmt_u64(a.recv_despawn)},
+			{"app_tx_bytes", fmt_u64(a.app_tx_bytes)},
+			{"app_tx_bytes_per_sec", fmt_d(tx_bps)},
+			{"app_rx_bytes", fmt_u64(a.app_rx_bytes)},
+			{"app_rx_bytes_per_sec", fmt_d(rx_bps)},
+			{"send_drop_count", fmt_u64(a.send_drop_count)},
+			{"send_drop_bytes", fmt_u64(a.send_drop_bytes)}
+		};
+		benchio::AppendTsvRow("bench_client.tsv", fields);
+		benchio::AppendCsvRow("bench_client.csv", fields);
+	}
+} // namespace
 
 BenchController::Aggregate BenchController::MeasureFor(int seconds)
 {
@@ -205,8 +264,10 @@ BenchController::Aggregate BenchController::MeasureFor(int seconds)
 	const auto t0 = std::chrono::steady_clock::now();
 	std::this_thread::sleep_for(std::chrono::seconds(seconds));
 	const auto t1 = std::chrono::steady_clock::now();
-	(void)t1;
-	return Snapshot();
+	const double elapsed_sec = std::chrono::duration<double>(t1 - t0).count();
+	auto out = Snapshot();
+	save_client_measure_row(seconds, conn_count(), walk_running(), out, elapsed_sec);
+	return out;
 }
 
 void BenchController::walk_loop_(std::stop_token st)

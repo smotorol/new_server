@@ -1,4 +1,8 @@
 #include "mainthread.h"
+#include "../common/bench_io.h"
+
+#include <iomanip>
+#include <sstream>
 
 #include <algorithm>
 #include <filesystem>
@@ -9,16 +13,64 @@
 #include <spdlog/spdlog.h>
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
-#include <nanodbc/nanodbc.h>
 #include <inipp/inipp.h>
 #include "dqs_payloads.h"
 #include "dqs_results.h"
 #include "../proto/proto.h"
 #include "../proto/packet_util.h"
 #include "../db/db_utils.h"
+#include "../db/odbc_wrapper.h"
 #include "../common/common_utils.h"
 
 namespace svr {
+	namespace {
+		std::string fmt_u64(std::uint64_t v) { return std::to_string(v); }
+		std::string fmt_d(double v) { std::ostringstream oss; oss << std::fixed << std::setprecision(3) << v; return oss.str(); }
+		void SaveServerMeasureRow(int seconds, double elapsed_sec, std::size_t conns,
+			std::uint64_t c2s_rx, std::uint64_t ack_tx, std::uint64_t ack_drop,
+			std::uint64_t move_pkts, std::uint64_t move_items,
+			std::uint64_t send_drops, std::uint64_t send_drop_bytes,
+			std::size_t sendq_max_msgs, std::size_t sendq_max_bytes,
+			std::uint64_t app_tx_bytes, std::uint64_t app_rx_bytes,
+			double cpu_percent, std::uint64_t rss_bytes)
+		{
+			const double c2s_ps = elapsed_sec > 0.0 ? (double)c2s_rx / elapsed_sec : 0.0;
+			const double ack_ps = elapsed_sec > 0.0 ? (double)ack_tx / elapsed_sec : 0.0;
+			const double move_pkts_ps = elapsed_sec > 0.0 ? (double)move_pkts / elapsed_sec : 0.0;
+			const double move_items_ps = elapsed_sec > 0.0 ? (double)move_items / elapsed_sec : 0.0;
+			const double send_drops_ps = elapsed_sec > 0.0 ? (double)send_drops / elapsed_sec : 0.0;
+			const double tx_bps = elapsed_sec > 0.0 ? (double)app_tx_bytes / elapsed_sec : 0.0;
+			const double rx_bps = elapsed_sec > 0.0 ? (double)app_rx_bytes / elapsed_sec : 0.0;
+			auto fields = {
+				std::pair<std::string, std::string>{"seconds", std::to_string(seconds)},
+				{"elapsed_sec", fmt_d(elapsed_sec)},
+				{"conns", std::to_string(conns)},
+				{"c2s_bench_move_rx", fmt_u64(c2s_rx)},
+				{"c2s_bench_move_rx_per_sec", fmt_d(c2s_ps)},
+				{"s2c_bench_ack_tx", fmt_u64(ack_tx)},
+				{"s2c_bench_ack_tx_per_sec", fmt_d(ack_ps)},
+				{"s2c_bench_ack_drop", fmt_u64(ack_drop)},
+				{"s2c_move_pkts", fmt_u64(move_pkts)},
+				{"s2c_move_pkts_per_sec", fmt_d(move_pkts_ps)},
+				{"s2c_move_items", fmt_u64(move_items)},
+				{"s2c_move_items_per_sec", fmt_d(move_items_ps)},
+				{"sendq_drops", fmt_u64(send_drops)},
+				{"sendq_drops_per_sec", fmt_d(send_drops_ps)},
+				{"sendq_drop_bytes", fmt_u64(send_drop_bytes)},
+				{"sendq_max_msgs", std::to_string(sendq_max_msgs)},
+				{"sendq_max_bytes", std::to_string(sendq_max_bytes)},
+				{"app_tx_bytes", fmt_u64(app_tx_bytes)},
+				{"app_tx_bytes_per_sec", fmt_d(tx_bps)},
+				{"app_rx_bytes", fmt_u64(app_rx_bytes)},
+				{"app_rx_bytes_per_sec", fmt_d(rx_bps)},
+				{"cpu_percent", fmt_d(cpu_percent)},
+				{"rss_bytes", fmt_u64(rss_bytes)},
+				{"rss_mib", fmt_u64(procmetrics::BytesToMiB(rss_bytes))}
+			};
+			benchio::AppendTsvRow("bench_server.tsv", fields);
+			benchio::AppendCsvRow("bench_server.csv", fields);
+		}
+	} // namespace
 
 	CMainThread g_Main;
 
@@ -677,7 +729,7 @@ namespace svr {
 			try {
 				for (int k = 0; k < db_pool_size_per_world_; ++k)
 				{
-					nanodbc::connection conn;
+					db::OdbcConnection conn;
 					bool connected = false;
 
 					// 1️ DSN 먼저 시도
@@ -712,7 +764,7 @@ namespace svr {
 					"DB connected: world={} dsn={} db={} pool={} (dsn+driver fallback)",
 					i, w.dsn, w.dbname, db_pool_size_per_world_);
 			}
-			catch (const nanodbc::database_error& e) {
+			catch (const db::OdbcError& e) {
 				spdlog::error("DB connect failed (dsn={}): {}", w.dsn, e.what());
 				return false;
 			}
@@ -798,11 +850,7 @@ namespace svr {
 							if (world_code < world_pools_.size() && world_pools_[world_code] && !world_pools_[world_code]->conns.empty())
 							{
 								auto& conn = world_pools_[world_code]->next();
-								nanodbc::result result = nanodbc::execute(conn, "SELECT 1");
-								if (result.next())
-								{
-									ok = result.get<int>(0);
-								}
+								ok = conn.execute_scalar_int("SELECT 1");
 							}
 							else
 							{
@@ -960,7 +1008,7 @@ namespace svr {
 
 			}
 		}
-		catch (const nanodbc::database_error& e)
+		catch (const db::OdbcError& e)
 		{
 			spdlog::error("DQS DB error: {}", e.what());
 			slot.result = svr::dqs::ResultCode::db_error;
@@ -1121,6 +1169,12 @@ namespace svr {
 		bench_sum_send_drops_ = 0;
 		bench_max_sendq_msgs_ = 0;
 		bench_max_sendq_bytes_ = 0;
+		bench_sum_send_drop_bytes_ = 0;
+		bench_sum_app_tx_bytes_ = 0;
+		bench_sum_app_rx_bytes_ = 0;
+		bench_last_cpu_percent_ = 0.0;
+		bench_last_rss_bytes_ = 0;
+		bench_proc_prev_ = {};
 	}
 
 	void CMainThread::BenchStartMain_(int seconds)
@@ -1144,6 +1198,8 @@ namespace svr {
 		if (world_server_) {
 			bench_base_send_drops_ = world_server_->collect_sendq_stats().drops_total;
 		}
+		bench_proc_prev_ = procmetrics::ReadSelfSnapshot();
+		bench_last_rss_bytes_ = bench_proc_prev_.rss_bytes;
 
 		spdlog::info("[bench_measure][server] start seconds={}", seconds);
 	}
@@ -1163,13 +1219,25 @@ namespace svr {
 		const auto cur_move_items = svr::g_s2c_move_items_sent.load(std::memory_order_relaxed);
 
 		std::uint64_t cur_send_drops = 0;
+		std::uint64_t cur_send_drop_bytes = 0;
+		std::uint64_t cur_app_tx_bytes = 0;
+		std::uint64_t cur_app_rx_bytes = 0;
 		std::size_t qmax_msgs = 0;
 		std::size_t qmax_bytes = 0;
 		if (world_server_) {
 			auto st = world_server_->collect_sendq_stats();
 			cur_send_drops = st.drops_total;
+			cur_send_drop_bytes = st.drop_bytes_total;
+			cur_app_tx_bytes = st.app_tx_bytes_total;
+			cur_app_rx_bytes = st.app_rx_bytes_total;
 			qmax_msgs = st.q_msgs_max;
 			qmax_bytes = st.q_bytes_max;
+		}
+		auto proc_now = procmetrics::ReadSelfSnapshot();
+		double cpu_percent = procmetrics::CpuPercentBetween(bench_proc_prev_, proc_now, std::chrono::seconds(1));
+		if (proc_now.valid) {
+			bench_proc_prev_ = proc_now;
+			bench_last_rss_bytes_ = proc_now.rss_bytes;
 		}
 
 		const auto d_c2s = cur_c2s - bench_base_c2s_move_rx_;
@@ -1192,11 +1260,15 @@ namespace svr {
 		bench_sum_s2c_move_pkts_ += d_move_pkts;
 		bench_sum_s2c_move_items_ += d_move_items;
 		bench_sum_send_drops_ += d_send_drops;
+		bench_sum_send_drop_bytes_ = cur_send_drop_bytes;
+		bench_sum_app_tx_bytes_ = cur_app_tx_bytes;
+		bench_sum_app_rx_bytes_ = cur_app_rx_bytes;
+		bench_last_cpu_percent_ = cpu_percent;
 		bench_max_sendq_msgs_ = std::max<std::size_t>(bench_max_sendq_msgs_, qmax_msgs);
 		bench_max_sendq_bytes_ = std::max<std::size_t>(bench_max_sendq_bytes_, qmax_bytes);
 
-		spdlog::info("[bench_sample][server] sec={} c2s_move_rx={} ack_tx={} ack_drop={} s2c_move_pkts={} s2c_move_items={} sendq_drop={} sendq_max_msgs={} sendq_max_bytes={}",
-			bench_elapsed_seconds_, d_c2s, d_ack, d_ack_drop, d_move_pkts, d_move_items, d_send_drops, qmax_msgs, qmax_bytes);
+		spdlog::info("[bench_sample][server] sec={} c2s_move_rx={} ack_tx={} ack_drop={} s2c_move_pkts={} s2c_move_items={} sendq_drop={} sendq_max_msgs={} sendq_max_bytes={} app_tx_bytes={} app_rx_bytes={} cpu_pct={} rss_mb={}",
+			bench_elapsed_seconds_, d_c2s, d_ack, d_ack_drop, d_move_pkts, d_move_items, d_send_drops, qmax_msgs, qmax_bytes, cur_app_tx_bytes, cur_app_rx_bytes, cpu_percent, procmetrics::BytesToMiB(bench_last_rss_bytes_));
 
 		if (bench_elapsed_seconds_ >= bench_target_seconds_) {
 			bench_active_ = false;
@@ -1205,7 +1277,7 @@ namespace svr {
 			const std::size_t conns = world_server_ ? world_server_->active_session_count() : 0;
 
 			// match client's bench_measure style/field names as much as possible.
-			spdlog::info("[bench_measure][server] done\n  elapsed_sec={}\n  conns={}\n  c2s_bench_move_rx={} ({} pkt/s)\n  s2c_bench_ack_tx={} ({} ack/s) ack_drop={}\n  zone_broadcast s2c_move_pkts={} ({} pkt/s) s2c_move_items={} ({} items/s)\n  sendq drops={} ({} drops/s) sendq_max_msgs={} sendq_max_bytes={}",
+			spdlog::info("[bench_measure][server] done\n  elapsed_sec={}\n  conns={}\n  c2s_bench_move_rx={} ({} pkt/s)\n  s2c_bench_ack_tx={} ({} ack/s) ack_drop={}\n  zone_broadcast s2c_move_pkts={} ({} pkt/s) s2c_move_items={} ({} items/s)\n  sendq drops={} ({} drops/s) drop_bytes={} sendq_max_msgs={} sendq_max_bytes={}\n  app_tx_bytes={} app_rx_bytes={}\n  cpu_pct={} rss_mb={}",
 				elapsed_sec,
 				conns,
 				bench_sum_c2s_move_rx_, (elapsed_sec > 0.0 ? (double)bench_sum_c2s_move_rx_ / elapsed_sec : 0.0),
@@ -1213,8 +1285,17 @@ namespace svr {
 				bench_sum_s2c_ack_drop_,
 				bench_sum_s2c_move_pkts_, (elapsed_sec > 0.0 ? (double)bench_sum_s2c_move_pkts_ / elapsed_sec : 0.0),
 				bench_sum_s2c_move_items_, (elapsed_sec > 0.0 ? (double)bench_sum_s2c_move_items_ / elapsed_sec : 0.0),
-				bench_sum_send_drops_, (elapsed_sec > 0.0 ? (double)bench_sum_send_drops_ / elapsed_sec : 0.0),
-				bench_max_sendq_msgs_, bench_max_sendq_bytes_);
+				bench_sum_send_drops_, (elapsed_sec > 0.0 ? (double)bench_sum_send_drops_ / elapsed_sec : 0.0), bench_sum_send_drop_bytes_,
+				bench_max_sendq_msgs_, bench_max_sendq_bytes_,
+				bench_sum_app_tx_bytes_, bench_sum_app_rx_bytes_,
+				bench_last_cpu_percent_, procmetrics::BytesToMiB(bench_last_rss_bytes_));
+			SaveServerMeasureRow(bench_target_seconds_, elapsed_sec, conns,
+				bench_sum_c2s_move_rx_, bench_sum_s2c_ack_tx_, bench_sum_s2c_ack_drop_,
+				bench_sum_s2c_move_pkts_, bench_sum_s2c_move_items_,
+				bench_sum_send_drops_, bench_sum_send_drop_bytes_,
+				bench_max_sendq_msgs_, bench_max_sendq_bytes_,
+				bench_sum_app_tx_bytes_, bench_sum_app_rx_bytes_,
+				bench_last_cpu_percent_, bench_last_rss_bytes_);
 		}
 	}
 

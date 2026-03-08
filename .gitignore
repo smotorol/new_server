@@ -13,3 +13,9 @@
 *.zip
 *.dll
 /out/build/x64-debug
+/Bin
+/build_linux
+/out/Ubuntu-24.04/build
+/vcpkg_installed
+/.env.dev
+/dependence

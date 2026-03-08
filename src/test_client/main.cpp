@@ -58,6 +58,10 @@ static _MSG_HEADER make_header(std::uint16_t type, std::uint16_t total_size)
 
 int main()
 {
+#ifdef _WIN32
+	SetConsoleOutputCP(CP_UTF8);
+	SetConsoleCP(CP_UTF8);
+#endif
 	asio::io_context& io = GlobalIo();
 	LineManager& mgr = GlobalLineClients();
 

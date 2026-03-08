@@ -1,0 +1,110 @@
+version: "3.9"
+
+services:
+  # -----------------------------
+  # Redis MASTER
+  # -----------------------------
+  redis:
+    image: redis:7.4
+    container_name: dc_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+      - ./redis/master.conf:/usr/local/etc/redis/redis.conf:ro
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # -----------------------------
+  # Redis REPLICA #1
+  # -----------------------------
+  redis_replica1:
+    image: redis:7.4
+    container_name: dc_redis_replica1
+    restart: unless-stopped
+    depends_on:
+      - redis
+    # 호스트에서 replica도 접속 테스트하고 싶으면 열어둠 (필요 없으면 ports 블록 삭제 가능)
+    ports:
+      - "6380:6379"
+    volumes:
+      - redis_replica1_data:/data
+      - ./redis/replica1.conf:/usr/local/etc/redis/redis.conf:ro
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # -----------------------------
+  # MSSQL
+  # -----------------------------
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: dc_mssql
+    restart: unless-stopped
+    ports:
+      - "11433:1433"
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "Strong!Pass123"
+      MSSQL_PID: "Developer"
+    volumes:
+      - mssql_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "bash -lc 'cat < /dev/null > /dev/tcp/127.0.0.1/1433'"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+  mssql_init:
+    image: mcr.microsoft.com/mssql-tools
+    container_name: dc_mssql_init
+    depends_on:
+      mssql:
+        condition: service_healthy
+    environment:
+      SA_PASSWORD: "Strong!Pass123"
+      TARGET_DB: "DC_GAME"
+    volumes:
+      - ./init:/init:ro
+    entrypoint: ["/bin/bash", "/init/init.sh"]
+    restart: "no"
+
+  # -----------------------------
+  # MySQL
+  # -----------------------------
+  mysql:
+    image: mysql:8.0
+    container_name: dc_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: "rootpass"
+      MYSQL_DATABASE: "dc"
+      MYSQL_USER: "dc_user"
+      MYSQL_PASSWORD: "dc_pass"
+      TZ: "Asia/Seoul"
+    ports:
+      # ✅ 3306 포트 충돌 방지: 호스트 3307 -> 컨테이너 3306
+      - "3307:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+    # MySQL 8 인증 플러그인 문제(클라이언트 구버전) 있으면 아래 옵션을 켜면 됨
+    # command: ["--default-authentication-plugin=mysql_native_password"]
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+
+volumes:
+  redis_data:
+  redis_replica1_data:
+  mssql_data:
+  mysql_data:

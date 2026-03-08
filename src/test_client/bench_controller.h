@@ -38,6 +38,10 @@ public:
 		double rtt_avg_ms = 0.0;
 		double rtt_min_ms = 0.0;
 		double rtt_max_ms = 0.0;
+		std::uint64_t app_tx_bytes = 0;
+		std::uint64_t app_rx_bytes = 0;
+		std::uint64_t send_drop_count = 0;
+		std::uint64_t send_drop_bytes = 0;
 	};
 
 public:
