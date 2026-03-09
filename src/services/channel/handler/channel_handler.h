@@ -4,9 +4,7 @@
 #include <functional>
 #include <memory>
 #include <vector>
-#include <unordered_map>
 #include <cstring>
-#include <mutex>
 #include <spdlog/spdlog.h>
 
 #include "app/runtime/networkex_base.h"
@@ -51,25 +49,20 @@ protected:
 		std::uint64_t default_actor) const override;
 
 private:
-	bool HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
-	bool HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
-	bool HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t sid);
-	bool HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
-	bool HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
-	bool HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
+	bool HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t n);
+	bool HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+
+	bool HandleWorldMove(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 	bool HandleWorldBenchReset();
 	bool HandleWorldBenchMeasure(const char* body, std::size_t body_len);
-	bool HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
-	bool HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
-	bool HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
-	bool HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
-	bool HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len);
 
-	// ⚠️ ResolveActorId는 IO thread에서 호출될 수 있음(포스트 전에 결정)
-	// -> 아래 상태는 mutex로 보호한다.
-	mutable std::mutex state_mtx_;
+	bool HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 
-	// ✅ 세션(index) -> char_id 바인딩
-	std::unordered_map<std::uint32_t, std::uint64_t> session_char_ids_;
-
+	bool HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 };

@@ -232,11 +232,6 @@ namespace svr {
 		actors_.erase_actor(actor_id);
 	}
 
-	void ChannelRuntime::Post(std::function<void()> fn)
-	{
-		PostActor(0, std::move(fn));
-	}
-
 	std::uint64_t ChannelRuntime::FindCharIdBySession(std::uint32_t sid) const
 	{
 		return session_registry_.FindCharIdBySession(sid);
@@ -250,6 +245,11 @@ namespace svr {
 	std::uint64_t ChannelRuntime::UnbindSessionCharId(std::uint32_t sid)
 	{
 		return session_registry_.UnbindSessionCharId(sid);
+	}
+
+	void ChannelRuntime::Post(std::function<void()> fn)
+	{
+		PostActor(0, std::move(fn));
 	}
 
 	void ChannelRuntime::PostDqsResult(svr::dqs_result::Result r)
@@ -792,43 +792,35 @@ namespace svr {
 
 
 	bool ChannelRuntime::NetworkInit() {
-		try
-		{
-			// ✅ 라인 구분을 위해 handler를 3개로 분리
-			world_handler_ = std::make_shared<ChannelHandler>(eLine_World);
-			login_handler_ = std::make_shared<ChannelHandler>(eLine_Login);
-			control_handler_ = std::make_shared<ChannelHandler>(eLine_Control);
+		// ✅ 라인 구분을 위해 handler를 3개로 분리
+		world_handler_ = std::make_shared<ChannelHandler>(eLine_World);
+		login_handler_ = std::make_shared<ChannelHandler>(eLine_Login);
+		control_handler_ = std::make_shared<ChannelHandler>(eLine_Control);
 
-			world_server_ = std::make_unique<net::TcpServer>(io_, port_world_, world_handler_);
-			login_server_ = std::make_unique<net::TcpServer>(io_, port_login_, login_handler_);
-			control_server_ = std::make_unique<net::TcpServer>(io_, port_control_, control_handler_);
+		world_server_ = std::make_unique<net::TcpServer>(io_, port_world_, world_handler_);
+		login_server_ = std::make_unique<net::TcpServer>(io_, port_login_, login_handler_);
+		control_server_ = std::make_unique<net::TcpServer>(io_, port_control_, control_handler_);
 
-			// 기존 ChannelHandler의 Send/Close를 쓰려면 server attach 필요
-			world_handler_->AttachServer(world_server_.get());
-			login_handler_->AttachServer(login_server_.get());
-			control_handler_->AttachServer(control_server_.get());
+		// 기존 ChannelHandler의 Send/Close를 쓰려면 server attach 필요
+		world_handler_->AttachServer(world_server_.get());
+		login_handler_->AttachServer(login_server_.get());
+		control_handler_->AttachServer(control_server_.get());
 
-			// ✅ 네트워크 콜백은 io 스레드에서 발생 -> 메인 스레드 커맨드 큐로 전달
-			world_handler_->AttachDispatcher([this](std::uint64_t actor_id,
-				std::function<void()> fn) { PostActor(actor_id, std::move(fn)); });
-			login_handler_->AttachDispatcher([this](std::uint64_t actor_id,
-				std::function<void()> fn) { PostActor(actor_id, std::move(fn)); });
-			control_handler_->AttachDispatcher([this](std::uint64_t actor_id,
-				std::function<void()> fn) { PostActor(actor_id, std::move(fn)); });
+		// ✅ 네트워크 콜백은 io 스레드에서 발생 -> 메인 스레드 커맨드 큐로 전달
+		world_handler_->AttachDispatcher([this](std::uint64_t actor_id,
+			std::function<void()> fn) { PostActor(actor_id, std::move(fn)); });
+		login_handler_->AttachDispatcher([this](std::uint64_t actor_id,
+			std::function<void()> fn) { PostActor(actor_id, std::move(fn)); });
+		control_handler_->AttachDispatcher([this](std::uint64_t actor_id,
+			std::function<void()> fn) { PostActor(actor_id, std::move(fn)); });
 
-			boost::asio::co_spawn(io_, world_server_->run(), boost::asio::detached);
-			boost::asio::co_spawn(io_, login_server_->run(), boost::asio::detached);
-			boost::asio::co_spawn(io_, control_server_->run(), boost::asio::detached);
+		boost::asio::co_spawn(io_, world_server_->run(), boost::asio::detached);
+		boost::asio::co_spawn(io_, login_server_->run(), boost::asio::detached);
+		boost::asio::co_spawn(io_, control_server_->run(), boost::asio::detached);
 
-			spdlog::info("NetworkInit: listening world={}, login={}, control={}",
-				port_world_, port_login_, port_control_);
-			return true;
-		}
-		catch (const std::exception& e)
-		{
-			spdlog::error("ChannelRuntime::NetworkInit failed: {}", e.what());
-			return false;
-		}
+		spdlog::info("NetworkInit: listening world={}, login={}, control={}",
+			port_world_, port_login_, port_control_);
+		return true;
 	}
 
 	bool ChannelRuntime::InitDQS()
