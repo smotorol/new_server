@@ -53,3 +53,6 @@ if(BUILD_SAMPLES)
     add_subdirectory(apps/sample_server)
     add_subdirectory(apps/sample_client)
 endif()
+
+message(STATUS "VCPKG_ROOT ENV = $ENV{MY_VCPKG_ROOT}")
+message(STATUS "CMAKE_TOOLCHAIN_FILE = ${CMAKE_TOOLCHAIN_FILE}")

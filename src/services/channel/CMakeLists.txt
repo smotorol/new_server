@@ -22,6 +22,7 @@ target_link_libraries(dc_channel_logic PUBLIC
     dc_app
     dc_proto
     dc_db_core
+    dc_db_odbc
     dc_cache_redis
     dc_server_common
     inipp

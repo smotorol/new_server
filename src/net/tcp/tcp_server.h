@@ -28,11 +28,42 @@ namespace net {
 			, acceptor_(asio::make_strand(io_))
 			, handler_(std::move(handler))
 		{
-			tcp::endpoint ep(tcp::v4(), port);
-			acceptor_.open(ep.protocol());
-			acceptor_.set_option(asio::socket_base::reuse_address(true));
-			acceptor_.bind(ep);
-			acceptor_.listen();
+			boost::system::error_code ec;
+
+			const auto endpoint = boost::asio::ip::tcp::endpoint(
+				boost::asio::ip::tcp::v4(), port);
+
+			acceptor_.open(endpoint.protocol(), ec);
+			if (ec)
+			{
+				throw std::runtime_error(
+					std::format("TcpServer open failed. port={}, ec={}, msg={}",
+						port, ec.value(), ec.message()));
+			}
+
+			acceptor_.set_option(boost::asio::socket_base::reuse_address(true), ec);
+			if (ec)
+			{
+				throw std::runtime_error(
+					std::format("TcpServer set_option(reuse_address) failed. port={}, ec={}, msg={}",
+						port, ec.value(), ec.message()));
+			}
+
+			acceptor_.bind(endpoint, ec);
+			if (ec)
+			{
+				throw std::runtime_error(
+					std::format("TcpServer bind failed. port={}, ec={}, msg={}",
+						port, ec.value(), ec.message()));
+			}
+
+			acceptor_.listen(boost::asio::socket_base::max_listen_connections, ec);
+			if (ec)
+			{
+				throw std::runtime_error(
+					std::format("TcpServer listen failed. port={}, ec={}, msg={}",
+						port, ec.value(), ec.message()));
+			}
 		}
 
 		// sid로 세션 종료(레거시 CloseSocket 대체)

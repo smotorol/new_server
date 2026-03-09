@@ -12,7 +12,10 @@
       "generator": "Visual Studio 17 2022",
       "binaryDir": "${sourceDir}/build_vs",
       "cacheVariables": {
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_TOOLCHAIN_FILE": {
+          "value": "$env{MY_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+          "type": "FILEPATH"
+        },
         "VCPKG_TARGET_TRIPLET": "x64-windows-static"
       }
     },
@@ -26,7 +29,10 @@
         "CMAKE_MAKE_PROGRAM": "/usr/bin/ninja",
         "CMAKE_C_COMPILER": "/usr/bin/gcc",
         "CMAKE_CXX_COMPILER": "/usr/bin/g++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_TOOLCHAIN_FILE": {
+          "value": "$env{MY_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+          "type": "FILEPATH"
+        },
         "VCPKG_TARGET_TRIPLET": "x64-linux"
       }
     },
@@ -40,7 +46,10 @@
         "CMAKE_MAKE_PROGRAM": "/usr/bin/ninja",
         "CMAKE_C_COMPILER": "/usr/bin/gcc",
         "CMAKE_CXX_COMPILER": "/usr/bin/g++",
-        "CMAKE_TOOLCHAIN_FILE": "${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake",
+        "CMAKE_TOOLCHAIN_FILE": {
+          "value": "$env{MY_VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake",
+          "type": "FILEPATH"
+        },
         "VCPKG_TARGET_TRIPLET": "x64-linux"
       }
     }

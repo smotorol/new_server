@@ -1,6 +1,33 @@
 @echo off
 setlocal ENABLEEXTENSIONS ENABLEDELAYEDEXPANSION
 
+echo ========================================
+echo Setting up vcpkg for Windows
+echo ========================================
+
+set "MY_VCPKG_ROOT=C:\dev\vcpkg"
+set "VCPKG_TRIPLET=x64-windows-static"
+
+if not exist "%MY_VCPKG_ROOT%" (
+    echo Installing vcpkg into %MY_VCPKG_ROOT%
+    git clone https://github.com/microsoft/vcpkg "%MY_VCPKG_ROOT%"
+	if errorlevel 1 exit /b 1
+)
+
+if not exist "%MY_VCPKG_ROOT%\vcpkg.exe" (
+    echo Bootstrapping vcpkg
+    call "%MY_VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics
+	if errorlevel 1 exit /b 1
+)
+
+setx MY_VCPKG_ROOT "%MY_VCPKG_ROOT%" >nul
+
+echo MY_VCPKG_ROOT registered as:
+echo %MY_VCPKG_ROOT%
+
+echo Please restart terminal or Visual Studio.
+
+
 set "ROOT_DIR=%~dp0"
 if "%ROOT_DIR:~-1%"=="\" set "ROOT_DIR=%ROOT_DIR:~0,-1%"
 
@@ -60,10 +87,10 @@ exit /b 1
 
 :args_done
 if /I "%BUILD_TYPE%"=="Debug" (
-  if "%PRESET%"=="" set "PRESET=windows-debug"
+  if "%PRESET%"=="" set "PRESET=win-debug"
 )
 if /I "%BUILD_TYPE%"=="Release" (
-  if "%PRESET%"=="" set "PRESET=windows-release"
+  if "%PRESET%"=="" set "PRESET=win-release"
 )
 
 if not exist "%ROOT_DIR%\CMakeLists.txt" (
@@ -82,19 +109,18 @@ if not exist "%ROOT_DIR%\vcpkg.json" (
 where git >nul 2>nul || (echo [ERROR] git not found & exit /b 1)
 where cmake >nul 2>nul || (echo [ERROR] cmake not found & exit /b 1)
 
-call :prepare_repo "%ROOT_DIR%\external\vcpkg" "https://github.com/microsoft/vcpkg" || exit /b 1
 call :prepare_repo "%ROOT_DIR%\external\inipp_repo" "https://github.com/mcmtroffaes/inipp" || exit /b 1
 
 echo [INFO] Bootstrapping vcpkg
-call "%ROOT_DIR%\external\vcpkg\bootstrap-vcpkg.bat" -disableMetrics || exit /b 1
+call "%MY_VCPKG_ROOT%\bootstrap-vcpkg.bat" -disableMetrics || exit /b 1
 
-echo [INFO] Installing vcpkg dependencies for x64-windows
-call "%ROOT_DIR%\external\vcpkg\vcpkg.exe" install --triplet x64-windows --x-manifest-root="%ROOT_DIR%" || exit /b 1
+echo [INFO] Installing vcpkg dependencies for %VCPKG_TRIPLET%
+call "%MY_VCPKG_ROOT%\vcpkg.exe" install --triplet %VCPKG_TRIPLET% --x-manifest-root="%ROOT_DIR%" || exit /b 1
 
 if "%FORCE_CLEAN%"=="1" (
-  if exist "%ROOT_DIR%\build_win" (
-    echo [INFO] Removing build_win cache
-    rmdir /s /q "%ROOT_DIR%\build_win"
+  if exist "%ROOT_DIR%\build_vs" (
+    echo [INFO] Removing build_vs cache
+    rmdir /s /q "%ROOT_DIR%\build_vs"
   )
 )
 
@@ -104,11 +130,11 @@ if "%DO_CONFIGURE%"=="1" (
 )
 
 if "%DO_BUILD%"=="1" (
-  echo [INFO] Building with preset: %PRESET%-build
+  echo [INFO] Building with preset: %PRESET%
   if not "%JOBS%"=="" (
-    cmake --build --preset "%PRESET%-build" --parallel %JOBS% || exit /b 1
+    cmake --build --preset "%PRESET%" --parallel %JOBS% || exit /b 1
   ) else (
-    cmake --build --preset "%PRESET%-build" || exit /b 1
+    cmake --build --preset "%PRESET%" || exit /b 1
   )
 )
 
@@ -144,11 +170,6 @@ if exist "%TARGET%\.git" (
 
 if exist "%ROOT_DIR%\.gitmodules" (
   for /f "tokens=1,2" %%A in ('git config -f "%ROOT_DIR%\.gitmodules" --get-regexp "^submodule\..*\.path$" 2^>nul') do (
-    if /I "%%B"=="external/vcpkg" if /I "%TARGET%"=="%ROOT_DIR%\external\vcpkg" (
-      echo [INFO] Initializing submodule: external\vcpkg
-      git -C "%ROOT_DIR%" submodule update --init --recursive -- external/vcpkg
-      exit /b !ERRORLEVEL!
-    )
     if /I "%%B"=="external/inipp_repo" if /I "%TARGET%"=="%ROOT_DIR%\external\inipp_repo" (
       echo [INFO] Initializing submodule: external\inipp_repo
       git -C "%ROOT_DIR%" submodule update --init --recursive -- external/inipp_repo
@@ -169,7 +190,13 @@ exit /b %ERRORLEVEL%
 :run_wsl_setup
 where wsl >nul 2>nul || (echo [ERROR] wsl not found & exit /b 1)
 
-set "WSL_CMD=cd '%ROOT_DIR:\=/%' && chmod +x ./dev_env.sh && ./dev_env.sh"
+for /f "usebackq delims=" %%I in (`wsl wslpath "%ROOT_DIR%"`) do set "WSL_ROOT_DIR=%%I"
+if "%WSL_ROOT_DIR%"=="" (
+  echo [ERROR] Failed to convert Windows path to WSL path
+  exit /b 1
+)
+
+set "WSL_CMD=cd '%WSL_ROOT_DIR%' && chmod +x ./dev_env.sh && ./dev_env.sh"
 if not "%WSL_DISTRO%"=="" (
   echo [INFO] Running WSL setup on distro: %WSL_DISTRO%
   wsl -d "%WSL_DISTRO%" bash -lc "%WSL_CMD%"

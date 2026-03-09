@@ -7,7 +7,7 @@ ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 BUILD_TYPE="Debug"
 RUN_CONFIGURE=1
 RUN_BUILD=1
-RUN_STACK=1
+RUN_STACK=0
 INSTALL_DOCKER=0
 FORCE_CLEAN=0
 RUN_SERVER=0
@@ -41,7 +41,7 @@ Options:
 Default behavior:
   - Installs Ubuntu build packages
   - Installs Microsoft ODBC Driver 18
-  - Prepares external/vcpkg and external/inipp_repo
+  - Prepares vcpkg and external/inipp_repo
   - Bootstraps vcpkg and installs manifest dependencies
   - Runs dockerredis/init.sh if available
   - Configures and builds Linux preset
@@ -198,26 +198,58 @@ ensure_submodule_or_clone() {
   fi
 }
 
+ensure_vcpkg_root() {
+  local default_root="$HOME/vcpkg"
+
+  if [[ -z "${MY_VCPKG_ROOT:-}" ]]; then
+    export MY_VCPKG_ROOT="$default_root"
+  fi
+
+  if [[ ! -f "$MY_VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" ]]; then
+      log "Installing vcpkg into $MY_VCPKG_ROOT"
+      rm -rf "$MY_VCPKG_ROOT"
+      git clone https://github.com/microsoft/vcpkg "$MY_VCPKG_ROOT"
+  else
+      log "Using existing vcpkg at $MY_VCPKG_ROOT"
+  fi
+
+  if ! grep -q 'export MY_VCPKG_ROOT=' "$HOME/.bashrc" 2>/dev/null; then
+    echo "export MY_VCPKG_ROOT=\"$MY_VCPKG_ROOT\"" >> "$HOME/.bashrc"
+  fi
+  if ! grep -q 'PATH=.*\$MY_VCPKG_ROOT' "$HOME/.bashrc" 2>/dev/null; then
+    echo 'export PATH="$PATH:$MY_VCPKG_ROOT"' >> "$HOME/.bashrc"
+  fi
+
+  if ! grep -q 'export MY_VCPKG_ROOT=' "$HOME/.profile" 2>/dev/null; then
+    echo "export MY_VCPKG_ROOT=\"$MY_VCPKG_ROOT\"" >> "$HOME/.profile"
+  fi
+  if ! grep -q 'PATH=.*\$MY_VCPKG_ROOT' "$HOME/.profile" 2>/dev/null; then
+    echo 'export PATH="$PATH:$MY_VCPKG_ROOT"' >> "$HOME/.profile"
+  fi
+}
+
 prepare_external_repos() {
-  ensure_submodule_or_clone "$ROOT_DIR/external/vcpkg" "https://github.com/microsoft/vcpkg"
   ensure_submodule_or_clone "$ROOT_DIR/external/inipp_repo" "https://github.com/mcmtroffaes/inipp"
 }
 
 bootstrap_vcpkg() {
   log "Bootstrapping vcpkg"
-  bash "$ROOT_DIR/external/vcpkg/bootstrap-vcpkg.sh" -disableMetrics
+  if [[ ! -f "$MY_VCPKG_ROOT/vcpkg" ]]; then
+    bash "$MY_VCPKG_ROOT/bootstrap-vcpkg.sh" -disableMetrics
+  fi
 }
 
 install_vcpkg_packages() {
   log "Installing vcpkg dependencies for x64-linux using manifest"
-  "$ROOT_DIR/external/vcpkg/vcpkg" install --triplet x64-linux --x-manifest-root="$ROOT_DIR"
+  "$MY_VCPKG_ROOT/vcpkg" install --triplet x64-linux --x-manifest-root="$ROOT_DIR"
 }
 
 validate_presets() {
   log "Validating CMake presets"
   cmake --list-presets >/dev/null
-  grep -q '"CMAKE_TOOLCHAIN_FILE": "\${sourceDir}/external/vcpkg/scripts/buildsystems/vcpkg.cmake"' "$ROOT_DIR/CMakePresets.json" \
-    || warn "CMakePresets.json may not be using project-local external/vcpkg toolchain path"
+  
+  grep -Eq 'CMAKE_TOOLCHAIN_FILE.*vcpkg.cmake' "$ROOT_DIR/CMakePresets.json" \
+    || warn "CMakePresets.json may not configure vcpkg toolchain"
   grep -q '"VCPKG_TARGET_TRIPLET": "x64-linux"' "$ROOT_DIR/CMakePresets.json" \
     || warn "CMakePresets.json may not be using x64-linux for Linux preset"
 }
@@ -367,6 +399,7 @@ main() {
   install_base_packages
   install_ms_odbc
   install_docker_if_needed
+  ensure_vcpkg_root
   prepare_external_repos
   bootstrap_vcpkg
   install_vcpkg_packages

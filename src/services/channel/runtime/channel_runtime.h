@@ -25,7 +25,7 @@
 #include "cache/redis/redis_cache.h"
 #include "services/channel/handler/channel_handler.h"
 #include "services/channel/actors/channel_actors.h"
-
+#include "services/channel/runtime/channel_session_registry.h"
 
 
 // World 세팅
@@ -77,6 +77,12 @@ namespace svr {
 		// ✅ DQS 결과는 무조건 메인으로 합류 (결과 객체 패턴)
 		void PostDqsResult(svr::dqs_result::Result r);
 
+		// ✅ 세션(index) <-> char_id 바인딩 저장소
+		// - Handler는 라우팅 판단만 하고, 실제 저장 책임은 Runtime이 가진다.
+		std::uint64_t FindCharIdBySession(std::uint32_t sid) const;
+		void BindSessionCharId(std::uint32_t sid, std::uint64_t char_id);
+		std::uint64_t UnbindSessionCharId(std::uint32_t sid);
+
 		// 원본 CloseWorldServer에 해당(레거시 socketIndex -> 여기서는 sid로 씀)
 		void CloseWorldServer(std::uint32_t world_socket_index);
 
@@ -124,6 +130,9 @@ namespace svr {
 		// ✅ Actor 런타임(로직 실행기)
 		// - actor_id(key)별 메시지 순서 보장 + shard 병렬 실행
 		net::ActorSystem actors_;
+
+		// ✅ 세션(index) <-> char_id 바인딩 저장소
+		ChannelSessionRegistry session_registry_;
 
 		// ✅ Actor(로직) 워커 스레드 수(ini)
 		int logic_thread_count_ = 1;
