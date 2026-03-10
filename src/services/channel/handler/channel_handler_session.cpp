@@ -39,12 +39,9 @@ namespace {
 	}
 } // namespace
 
-void ChannelHandler::AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
+void ChannelHandler::OnWorldAccepted(std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
-	spdlog::info("ChannelHandler::AcceptClientCheck pro={} index={} serial={}", dwProID, dwIndex, dwSerial);
-
-	// ===== 샘플 플로우는 World 라인에서만 시연 =====
-	if (dwProID != eLine_World) return;
+	spdlog::info("ChannelHandler::OnWorldAccepted index={} serial={}", dwIndex, dwSerial);
 
 	const std::uint32_t world_code = 0;
 
@@ -109,21 +106,20 @@ void ChannelHandler::AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIn
 		res.actor_id = char_id;
 		auto h = proto::make_header((std::uint16_t)proto::S2CMsg::actor_bound,
 			(std::uint16_t)sizeof(res));
-		Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&res));
+		Send(eLine_World, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&res));
 	}
 }
 
-void ChannelHandler::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
+void ChannelHandler::OnWorldDisconnected(std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
 	// ✅ 늦게 도착한 disconnect(세션 재사용/재접속) 방지
 	// - 최신 serial이 아니면 이미 다른 세션이 같은 index를 쓰고 있는 것
 	if (GetLatestSerial(dwIndex) != dwSerial) {
-		spdlog::debug("CloseClientCheck ignored (stale). pro={} index={} serial={}", dwProID, dwIndex, dwSerial);
+		spdlog::debug("OnWorldDisconnected ignored (stale). index={} serial={}", dwIndex, dwSerial);
 		return;
 	}
 
 	// ===== 샘플: 로그아웃 시 즉시 DB 저장(flush_one_char) =====
-	if (dwProID == eLine_World)
 	{
 		const std::uint32_t world_code = 0;
 		std::uint64_t char_id = 0;
@@ -143,7 +139,7 @@ void ChannelHandler::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwInd
 			auto despawn_h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn,
 				(std::uint16_t)sizeof(despawn));
 
-			svr::g_Main.PostActor(char_id, [self, dwProID, world_code, char_id, despawn, despawn_h]() mutable {
+			svr::g_Main.PostActor(char_id, [self, world_code, char_id, despawn, despawn_h]() mutable {
 				// 1) PlayerActor: 오프라인 마킹 + zone_id 확보
 				auto& p = svr::g_Main.GetOrCreatePlayerActor(char_id);
 				const std::uint32_t zone_id = p.zone_id;
@@ -153,7 +149,7 @@ void ChannelHandler::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwInd
 
 				// 2) ZoneActor: Leave + neighbors 수집
 				const std::uint64_t zid = svr::MakeZoneActorId(zone_id);
-				svr::g_Main.PostActor(zid, [self, dwProID, zone_id, char_id, despawn, despawn_h]() mutable {
+				svr::g_Main.PostActor(zid, [self, zone_id, char_id, despawn, despawn_h]() mutable {
 					auto& z = svr::g_Main.GetOrCreateZoneActor(zone_id);
 
 					// 중복 disconnect 등 멱등 처리
@@ -172,7 +168,7 @@ void ChannelHandler::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwInd
 						auto it = z.players.find(other_id);
 						if (it == z.players.end()) continue;
 						if (it->second.sid == 0 || it->second.serial == 0) continue;
-						self->Send(dwProID, it->second.sid, it->second.serial, despawn_h, reinterpret_cast<const char*>(&despawn));
+						self->Send(eLine_World, it->second.sid, it->second.serial, despawn_h, reinterpret_cast<const char*>(&despawn));
 					}
 				});
 
@@ -183,11 +179,8 @@ void ChannelHandler::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwInd
 		}
 
 	}
-	else {
-		(void)dwProID;
-	}
 
-	spdlog::info("ChannelHandler::CloseClientCheck pro={} index={} serial={}", dwProID, dwIndex, dwSerial);
+	spdlog::info("ChannelHandler::OnWorldDisconnected index={} serial={}", dwIndex, dwSerial);
 }
 
 bool ChannelHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)

@@ -39,39 +39,14 @@ std::uint64_t ChannelHandler::ResolveActorIdForPacket(std::uint32_t session_idx,
 	return default_actor;
 }
 
-bool ChannelHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t dwClientIndex, _MSG_HEADER* pMsgHeader, char* pMsg)
-{
-	if (!pMsgHeader) return false;
-
-	switch (dwProID)
-	{
-	case eLine_World:
-		{
-			return WorldLineAnalysis(dwProID, dwClientIndex, pMsgHeader, pMsg);
-		}
-		break;
-	case eLine_Login:
-		{
-			return LoginLineAnalysis(dwProID, dwClientIndex, pMsgHeader, pMsg);
-		}
-		break;
-	case eLine_Control:
-		{
-			return ControlLineAnalysis(dwProID, dwClientIndex, pMsgHeader, pMsg);
-		}
-		break;
-	}
-	return false;
-}
-
-bool ChannelHandler::LoginLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
+bool ChannelHandler::HandleLoginPacket(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
 {
 	(void)n; (void)pMsgHeader; (void)pMsg;
-	// TODO: 레거시 LoginLineAnalysis 이식
+	// TODO: 레거시 Login line 처리 이식
 	return false;
 }
 
-bool ChannelHandler::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
+bool ChannelHandler::HandleWorldPacket(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
 {
 	const std::uint16_t type = proto::get_type_u16(*pMsgHeader);
 	const std::size_t body_len = pMsgHeader->m_wSize - MSG_HEADER_SIZE;
@@ -110,9 +85,9 @@ bool ChannelHandler::WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _
 	}
 }
 
-bool ChannelHandler::ControlLineAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
+bool ChannelHandler::HandleControlPacket(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
 {
 	(void)n; (void)pMsgHeader; (void)pMsg;
-	// TODO: 레거시 ControlLineAnalysis 이식
+	// TODO: 레거시 Control line 처리 이식
 	return false;
 }

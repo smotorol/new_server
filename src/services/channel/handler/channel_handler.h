@@ -7,7 +7,7 @@
 #include <cstring>
 #include <spdlog/spdlog.h>
 
-#include "app/runtime/networkex_base.h"
+#include "server_common/handler/service_line_handler_base.h"
 
 enum eLine
 {
@@ -17,28 +17,25 @@ enum eLine
 	eLine_Count,
 };
 
-class ChannelHandler : public dc::NetworkEXBase
+class ChannelHandler : public dc::ServiceLineHandlerBase
 {
 public:
-	explicit ChannelHandler(std::uint32_t pro_id = 0) : dc::NetworkEXBase(pro_id) {}
+	explicit ChannelHandler(std::uint32_t pro_id = 0) : dc::ServiceLineHandlerBase(pro_id) {}
 	~ChannelHandler() override = default;
 
 	// ✅ (sid -> char_id) 바인딩이 완료되면 char_id Actor로 라우팅
 	std::uint64_t GetActorIdBySession(std::uint32_t sid) const;
 protected:
-	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t dwClientIndex,
+	// line별 분석(공통 base 훅)
+	bool HandleLoginPacket(std::uint32_t dwProID, std::uint32_t n,
 		_MSG_HEADER* pMsgHeader, char* pMsg) override;
-	void AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex,
-		std::uint32_t dwSerial) override;
-	void CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex,
-		std::uint32_t dwSerial) override;
-	// line별 분석(레거시 구조 유지용)
-	bool LoginLineAnalysis(std::uint32_t dwProID, std::uint32_t n,
-		_MSG_HEADER* pMsgHeader, char* pMsg);
-	bool WorldLineAnalysis(std::uint32_t dwProID, std::uint32_t n,
-		_MSG_HEADER* pMsgHeader, char* pMsg);
-	bool ControlLineAnalysis(std::uint32_t dwProID, std::uint32_t n,
-		_MSG_HEADER* pMsgHeader, char* pMsg);
+	bool HandleWorldPacket(std::uint32_t dwProID, std::uint32_t n,
+		_MSG_HEADER* pMsgHeader, char* pMsg) override;
+	bool HandleControlPacket(std::uint32_t dwProID, std::uint32_t n,
+		_MSG_HEADER* pMsgHeader, char* pMsg) override;
+
+	void OnWorldAccepted(std::uint32_t dwIndex, std::uint32_t dwSerial) override;
+	void OnWorldDisconnected(std::uint32_t dwIndex, std::uint32_t dwSerial) override;
 
 	// ✅ ActorId 라우팅 키(기본 sid, 바인딩 후 char_id)
 	std::uint64_t ResolveActorId(std::uint32_t session_idx) const override;
