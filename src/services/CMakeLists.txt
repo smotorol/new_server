@@ -1,4 +1,4 @@
-add_subdirectory(channel)
+add_subdirectory(runtime)
 add_subdirectory(login)
 add_subdirectory(world)
 add_subdirectory(control)

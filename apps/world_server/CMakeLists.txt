@@ -14,5 +14,5 @@ target_link_libraries(world_server PRIVATE
     dc_db_core
     dc_db_odbc
     dc_server_common
-    dc_login_service
+    dc_world_service
 )

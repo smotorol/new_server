@@ -14,7 +14,7 @@
 #include "proto/common/proto_base.h"
 #include "proto/common/packet_util.h"
 
-#include "services/channel/bench/bench_stats.h"
+#include "services/world/bench/bench_stats.h"
 
 namespace svr {
 
@@ -460,7 +460,7 @@ namespace svr {
 		// ✅ Drain pending sends with budgets.
 		// - uses TrySendLossy() to avoid disconnect on overflow
 		// - if a session is saturated, keep its messages in pending (backpressure)
-		void FlushPendingSends_(ChannelHandler& net, std::uint32_t pro_id,
+		void FlushPendingSends_(dc::ServiceLineHandlerBase& net, std::uint32_t pro_id,
 			std::size_t budget_msgs = 2000,
 			std::size_t budget_bytes = 2 * 1024 * 1024)
 		{
@@ -742,7 +742,7 @@ namespace svr {
 		//   * 각 셀은 자신의 3x3 이웃 셀(관심영역)에서 발생한 move item들을 한 번에 받는다.
 		//   * 결과적으로 "sid별 payload 빌드" 비용이 사라지고, 직렬화는 "셀당 1회"만 수행된다.
 		// - FlushPendingSends_는 budget 기반으로 TrySendLossy()
-		bool FlushMoveTickIfDue_(ChannelHandler& net, std::uint32_t pro_id, bool force = false)
+		bool FlushMoveTickIfDue_(dc::ServiceLineHandlerBase& net, std::uint32_t pro_id, bool force = false)
 		{
 			using clock = std::chrono::steady_clock;
 			const auto now = clock::now();

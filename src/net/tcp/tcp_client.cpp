@@ -1,5 +1,5 @@
-#include "../tcp/tcp_client.h"
-#include "../tcp/tcp_session.h"
+#include "net/tcp/tcp_client.h"
+#include "net/tcp/tcp_session.h"
 
 
 namespace net {

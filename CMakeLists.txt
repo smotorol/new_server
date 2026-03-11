@@ -9,11 +9,11 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 option(BUILD_SAMPLES "Build sample targets" ON)
 option(BUILD_LOGIN_SERVER "Build login server" ON)
 option(BUILD_WORLD_SERVER "Build world server" ON)
+option(BUILD_CHANNEL_SERVER_LEGACY "Build legacy channel_server wrapper" OFF)
 option(BUILD_CONTROL_SERVER "Build control server" ON)
 option(BUILD_COMMUNITY_SERVER "Build community server" ON)
 
 # Debug일 때만 postfix 붙이기 (Release는 postfix 없음)
-# 예) common_d.lib / server_d.exe (Debug), common.lib / server.exe (Release)
 set(CMAKE_DEBUG_POSTFIX "_d")
 
 include(cmake/CompilerOptions.cmake)
@@ -30,7 +30,10 @@ add_subdirectory(src/cache)
 add_subdirectory(src/server_common)
 add_subdirectory(src/services)
 
-add_subdirectory(apps/channel_server)
+if(BUILD_CHANNEL_SERVER_LEGACY)
+    add_subdirectory(apps/channel_server)
+endif()
+
 add_subdirectory(apps/test_client)
 
 if(BUILD_LOGIN_SERVER)

@@ -1,4 +1,4 @@
-#include "channel_handler.h"
+#include "services/world/handler/world_handler.h"
 
 #include <chrono>
 #include <thread>
@@ -7,9 +7,8 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
-#include "services/channel/runtime/channel_runtime.h"
 
-bool ChannelHandler::HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_actor_seq_test>(body, body_len);
 	if (!req) return false;
@@ -54,7 +53,7 @@ bool ChannelHandler::HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_
 	return true;
 }
 
-bool ChannelHandler::HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_actor_forward>(body, body_len);
 	if (!req) return false;

@@ -15,5 +15,5 @@ target_link_libraries(channel_server PRIVATE
     dc_db_odbc
     dc_cache_redis
     dc_server_common
-    dc_channel_logic
+    dc_world_service
 )

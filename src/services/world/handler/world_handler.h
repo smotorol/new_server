@@ -8,34 +8,27 @@
 #include <spdlog/spdlog.h>
 
 #include "server_common/handler/service_line_handler_base.h"
+#include "services/world/runtime/i_world_runtime.h"
 
-enum eLine
-{
-	eLine_World = 0,
-	eLine_Login,
-	eLine_Control,
-	eLine_Count,
-};
-
-class ChannelHandler : public dc::ServiceLineHandlerBase
+class WorldHandler : public dc::ServiceLineHandlerBase
 {
 public:
-	explicit ChannelHandler(std::uint32_t pro_id = 0) : dc::ServiceLineHandlerBase(pro_id) {}
-	~ChannelHandler() override = default;
+	explicit WorldHandler(svr::IWorldRuntime& runtime)
+		: runtime_(runtime)
+	{}
+	~WorldHandler() override = default;
 
 	// ✅ (sid -> char_id) 바인딩이 완료되면 char_id Actor로 라우팅
 	std::uint64_t GetActorIdBySession(std::uint32_t sid) const;
 protected:
-	// line별 분석(공통 base 훅)
-	bool HandleLoginPacket(std::uint32_t dwProID, std::uint32_t n,
-		_MSG_HEADER* pMsgHeader, char* pMsg) override;
-	bool HandleWorldPacket(std::uint32_t dwProID, std::uint32_t n,
-		_MSG_HEADER* pMsgHeader, char* pMsg) override;
-	bool HandleControlPacket(std::uint32_t dwProID, std::uint32_t n,
+	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
 		_MSG_HEADER* pMsgHeader, char* pMsg) override;
 
-	void OnWorldAccepted(std::uint32_t dwIndex, std::uint32_t dwSerial) override;
-	void OnWorldDisconnected(std::uint32_t dwIndex, std::uint32_t dwSerial) override;
+	void OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex,
+		std::uint32_t dwSerial) override;
+	void OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex,
+		std::uint32_t dwSerial) override;
+	bool ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t dwSerial) override;
 
 	// ✅ ActorId 라우팅 키(기본 sid, 바인딩 후 char_id)
 	std::uint64_t ResolveActorId(std::uint32_t session_idx) const override;
@@ -44,6 +37,9 @@ protected:
 	std::uint64_t ResolveActorIdForPacket(std::uint32_t session_idx,
 		const _MSG_HEADER& header, const char* body, std::size_t body_len,
 		std::uint64_t default_actor) const override;
+
+	svr::IWorldRuntime& runtime() noexcept { return runtime_; }
+	const svr::IWorldRuntime& runtime() const noexcept { return runtime_; }
 
 private:
 	bool HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
@@ -62,4 +58,7 @@ private:
 
 	bool HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 	bool HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+
+private:
+	svr::IWorldRuntime& runtime_;
 };

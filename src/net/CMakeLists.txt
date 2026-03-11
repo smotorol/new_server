@@ -1,13 +1,4 @@
-file(GLOB_RECURSE DC_NET_SOURCES CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/actor/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/actor/*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/tcp/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/tcp/*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/packet/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/packet/*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/handler/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/handler/*.h
-)
+collect_sources(DC_NET_SOURCES ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(dc_net ${DC_NET_SOURCES})
 
@@ -18,3 +9,5 @@ target_link_libraries(dc_net PUBLIC
     dc_core
     Boost::system
 )
+
+group_sources(${CMAKE_CURRENT_SOURCE_DIR} "" "${DC_NET_SOURCES}")

@@ -1,12 +1,25 @@
-#ifdef _WIN32
-#include <windows.h>
-#endif
+#include <spdlog/spdlog.h>
+
+#include "core/log/common.h"
+#include "services/login/runtime/login_line_runtime.h"
 
 int main()
 {
 #ifdef _WIN32
-	SetConsoleOutputCP(CP_UTF8);
-	SetConsoleCP(CP_UTF8);
+    SetConsoleOutputCP(CP_UTF8);
+    SetConsoleCP(CP_UTF8);
 #endif
-	return 0;
+    common::init_logging();
+
+    constexpr std::uint16_t kLoginPort = 26788;
+    constexpr std::uint16_t kWorldPort = 27788; // TODO: 실제 world login port 값으로 수정
+
+    dc::LoginLineRuntime runtime(kLoginPort, "127.0.0.1", kWorldPort);
+    if (!runtime.InitMainThread()) {
+        spdlog::error("LoginLineRuntime InitMainThread failed.");
+        return 1;
+    }
+
+    runtime.MainLoop();
+    return 0;
 }

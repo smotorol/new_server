@@ -1,9 +1,4 @@
-file(GLOB_RECURSE DC_APP_SOURCES CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/endpoint/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/endpoint/*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/runtime/*.h
-)
+collect_sources(DC_APP_SOURCES ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(dc_app ${DC_APP_SOURCES})
 
@@ -14,3 +9,5 @@ target_link_libraries(dc_app PUBLIC
     dc_core
     dc_net
 )
+
+group_sources(${CMAKE_CURRENT_SOURCE_DIR} "" "${DC_APP_SOURCES}")

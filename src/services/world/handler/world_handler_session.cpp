@@ -1,4 +1,4 @@
-#include "channel_handler.h"
+#include "services/world/handler/world_handler.h"
 
 #include <cstring>
 #include <functional>
@@ -10,10 +10,8 @@
 #include "core/util/string_utils.h"
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
-#include "services/channel/runtime/channel_runtime.h"
-#include "services/channel/actors/channel_actors.h"
 #include "db/core/dqs_payloads.h"
-
+#include "services/world/actors/world_actors.h"
 
 namespace {
 #pragma pack(push, 1)
@@ -39,22 +37,22 @@ namespace {
 	}
 } // namespace
 
-void ChannelHandler::OnWorldAccepted(std::uint32_t dwIndex, std::uint32_t dwSerial)
+void WorldHandler::OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
-	spdlog::info("ChannelHandler::OnWorldAccepted index={} serial={}", dwIndex, dwSerial);
+	spdlog::info("WorldHandler::OnWorldAccepted index={} serial={}", dwIndex, dwSerial);
 
 	const std::uint32_t world_code = 0;
 
 	// (샘플) 임시 char_id: 실제 서비스에서는 로그인 이후 확정된 char_id를 바인딩해야 함
 	const std::uint64_t char_id = (std::uint64_t(dwIndex) << 32) | std::uint64_t(dwSerial);
-	svr::g_Main.BindSessionCharId(dwIndex, char_id);
+	runtime().BindSessionCharId(dwIndex, char_id);
 	// 1) Redis에서 상태 로드 시도
 	DemoCharState st{};
 	st.char_id = char_id;
 	st.gold = 1000;   // 신규 기본값
 	st.version = 1;
 
-	if (auto blob = svr::g_Main.TryLoadCharacterState(world_code, char_id))
+	if (auto blob = runtime().TryLoadCharacterState(world_code, char_id))
 	{
 		DemoCharState loaded{};
 		if (TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
@@ -79,8 +77,8 @@ void ChannelHandler::OnWorldAccepted(std::uint32_t dwIndex, std::uint32_t dwSeri
 
 	// ✅ 케이스1(Actor당 인스턴스) : PlayerActor 생성/초기화 + 세션 바인딩
 	// - 이 람다는 char_id Actor shard에서 실행되므로, PlayerActor 상태를 락 없이 안전하게 만질 수 있다.
-	svr::g_Main.PostActor(char_id, [char_id, sid = dwIndex, serial = dwSerial]() {
-		auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+	runtime().PostActor(char_id, [this, char_id, sid = dwIndex, serial = dwSerial]() {
+		auto& a = runtime().GetOrCreatePlayerActor(char_id);
 		a.bind_session(sid, serial);
 		// 기본 전투 스탯(샘플)
 		a.combat.hp = 100;
@@ -91,14 +89,14 @@ void ChannelHandler::OnWorldAccepted(std::uint32_t dwIndex, std::uint32_t dwSeri
 		// zone init
 		a.zone_id = 1;
 		a.pos = { 0,0 };
-		svr::g_Main.PostActor(svr::MakeZoneActorId(a.zone_id), [char_id, sid, serial]() {
-			auto& z = svr::g_Main.GetOrCreateZoneActor(1);
+		runtime().PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial]() {
+			auto& z = runtime().GetOrCreateZoneActor(1);
 			z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
 		});
 	});
 
 	// 3) Redis 저장 + dirty 마킹 (기존 함수 사용!)
-	svr::g_Main.CacheCharacterState(world_code, char_id, out_blob);
+	runtime().CacheCharacterState(world_code, char_id, out_blob);
 
 	// ✅ 클라에게 "바인딩된 ActorId(=char_id)" 통지 (테스트/벤치용)
 	{
@@ -106,11 +104,20 @@ void ChannelHandler::OnWorldAccepted(std::uint32_t dwIndex, std::uint32_t dwSeri
 		res.actor_id = char_id;
 		auto h = proto::make_header((std::uint16_t)proto::S2CMsg::actor_bound,
 			(std::uint16_t)sizeof(res));
-		Send(eLine_World, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&res));
+		Send(0, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&res));
 	}
 }
 
-void ChannelHandler::OnWorldDisconnected(std::uint32_t dwIndex, std::uint32_t dwSerial)
+bool WorldHandler::ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t dwSerial)
+{
+	if (GetLatestSerial(dwIndex) != dwSerial) {
+		spdlog::debug("WorldHandler::OnWorldDisconnected ignored (stale). index={} serial={}", dwIndex, dwSerial);
+		return false;
+	}
+	return true;
+}
+
+void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
 	// ✅ 늦게 도착한 disconnect(세션 재사용/재접속) 방지
 	// - 최신 serial이 아니면 이미 다른 세션이 같은 index를 쓰고 있는 것
@@ -124,7 +131,7 @@ void ChannelHandler::OnWorldDisconnected(std::uint32_t dwIndex, std::uint32_t dw
 		const std::uint32_t world_code = 0;
 		std::uint64_t char_id = 0;
 
-		char_id = svr::g_Main.UnbindSessionCharId(dwIndex);
+		char_id = runtime().UnbindSessionCharId(dwIndex);
 
 		if (char_id != 0) {
 			// ✅ 중요:
@@ -139,9 +146,9 @@ void ChannelHandler::OnWorldDisconnected(std::uint32_t dwIndex, std::uint32_t dw
 			auto despawn_h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn,
 				(std::uint16_t)sizeof(despawn));
 
-			svr::g_Main.PostActor(char_id, [self, world_code, char_id, despawn, despawn_h]() mutable {
+			runtime().PostActor(char_id, [this, self, world_code, char_id, despawn, despawn_h]() mutable {
 				// 1) PlayerActor: 오프라인 마킹 + zone_id 확보
-				auto& p = svr::g_Main.GetOrCreatePlayerActor(char_id);
+				auto& p = runtime().GetOrCreatePlayerActor(char_id);
 				const std::uint32_t zone_id = p.zone_id;
 				p.online = false;
 				p.sid = 0;
@@ -149,8 +156,8 @@ void ChannelHandler::OnWorldDisconnected(std::uint32_t dwIndex, std::uint32_t dw
 
 				// 2) ZoneActor: Leave + neighbors 수집
 				const std::uint64_t zid = svr::MakeZoneActorId(zone_id);
-				svr::g_Main.PostActor(zid, [self, zone_id, char_id, despawn, despawn_h]() mutable {
-					auto& z = svr::g_Main.GetOrCreateZoneActor(zone_id);
+				runtime().PostActor(zid, [this, self, zone_id, char_id, despawn, despawn_h]() mutable {
+					auto& z = runtime().GetOrCreateZoneActor(zone_id);
 
 					// 중복 disconnect 등 멱등 처리
 					auto itp = z.players.find(char_id);
@@ -168,22 +175,22 @@ void ChannelHandler::OnWorldDisconnected(std::uint32_t dwIndex, std::uint32_t dw
 						auto it = z.players.find(other_id);
 						if (it == z.players.end()) continue;
 						if (it->second.sid == 0 || it->second.serial == 0) continue;
-						self->Send(eLine_World, it->second.sid, it->second.serial, despawn_h, reinterpret_cast<const char*>(&despawn));
+						self->Send(0, it->second.sid, it->second.serial, despawn_h, reinterpret_cast<const char*>(&despawn));
 					}
 				});
 
 				// 4) Actor 제거 + DB flush (PlayerActor 샤드)
-				svr::g_Main.EraseActor(char_id);
-				svr::g_Main.RequestFlushCharacter(world_code, char_id);
+				runtime().EraseActor(char_id);
+				runtime().RequestFlushCharacter(world_code, char_id);
 			});
 		}
 
 	}
 
-	spdlog::info("ChannelHandler::OnWorldDisconnected index={} serial={}", dwIndex, dwSerial);
+	spdlog::info("WorldHandler::OnWorldDisconnected index={} serial={}", dwIndex, dwSerial);
 }
 
-bool ChannelHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_open_world_notice>(body, body_len);
 	if (!req) return false;
@@ -198,7 +205,7 @@ bool ChannelHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint
 	payload.serial = GetLatestSerial(sid);
 	copy_cstr(payload.world_name, req->szWorldName);
 
-	const bool pushed = svr::g_Main.PushDQSData(
+	const bool pushed = runtime().PushDQSData(
 		(std::uint8_t)svr::dqs::ProcessCode::world,
 		(std::uint8_t)svr::dqs::QueryCase::open_world_notice,
 		reinterpret_cast<const char*>(&payload),
@@ -221,20 +228,20 @@ bool ChannelHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint
 	return true;
 }
 
-bool ChannelHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_add_gold>(body, body_len);
 	if (!req) return false;
 
 	const std::uint32_t world_code = 0;
-	const std::uint64_t char_id = svr::g_Main.FindCharIdBySession(sid);
+	const std::uint64_t char_id = runtime().FindCharIdBySession(sid);
 	if (char_id == 0)
 	{
 		spdlog::warn("[Demo] add_gold but no bound char. sid={}", sid);
 		return true;
 	}
 
-	auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	a.combat.gold += req->add;
 	const std::uint32_t combat_gold = a.combat.gold;
 
@@ -243,7 +250,7 @@ bool ChannelHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid
 	st.gold = 1000;
 	st.version = 1;
 
-	if (auto blob = svr::g_Main.TryLoadCharacterState(world_code, char_id))
+	if (auto blob = runtime().TryLoadCharacterState(world_code, char_id))
 	{
 		DemoCharState loaded{};
 		if (TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
@@ -253,7 +260,7 @@ bool ChannelHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid
 	st.gold += req->add;
 	st.version += 1;
 	const std::string out_blob = SerializeDemo(st);
-	svr::g_Main.CacheCharacterState(world_code, char_id, out_blob);
+	runtime().CacheCharacterState(world_code, char_id, out_blob);
 
 	proto::S2C_add_gold_ok res{};
 	res.ok = 1;
@@ -269,10 +276,10 @@ bool ChannelHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid
 	return true;
 }
 
-bool ChannelHandler::HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t sid)
+bool WorldHandler::HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t sid)
 {
 	const std::uint64_t char_id = GetActorIdBySession(sid);
-	auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	auto cs = a.combat;
 
 	proto::S2C_stats res{};
@@ -293,13 +300,13 @@ bool ChannelHandler::HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t si
 	return true;
 }
 
-bool ChannelHandler::HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_heal_self>(body, body_len);
 	if (!req) return false;
 
 	const std::uint64_t char_id = GetActorIdBySession(sid);
-	auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	auto& st = a.combat;
 	if (req->amount == 0) st.hp = st.max_hp;
 	else {

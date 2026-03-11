@@ -4,7 +4,7 @@
 #include <spdlog/spdlog.h>
 
 #include "core/log/common.h"
-#include "services/channel/runtime/channel_runtime.h"
+#include "services/world/runtime/world_runtime.h"
 
 int main()
 {
@@ -14,8 +14,10 @@ int main()
 #endif
     common::init_logging();
 
+    spdlog::warn("channel_server is legacy wrapper. Use world_server as the primary target.");
+
     if (!svr::g_Main.InitMainThread()) {
-        spdlog::error("LogServer InitMainThread failed.");
+        spdlog::error("WorldServer InitMainThread failed.");
         return 1;
     }
 

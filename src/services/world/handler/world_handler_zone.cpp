@@ -1,4 +1,4 @@
-#include "channel_handler.h"
+#include "services/world/handler/world_handler.h"
 
 #include <algorithm>
 #include <iterator>
@@ -8,16 +8,15 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
-#include "services/channel/runtime/channel_runtime.h"
-#include "services/channel/actors/channel_actors.h"
+#include "services/world/actors/world_actors.h"
 
-bool ChannelHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_move>(body, body_len);
 	if (!req) return false;
 
 	const std::uint64_t char_id = GetActorIdBySession(sid);
-	auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.zone_id;
 	a.pos = { req->x, req->y };
 
@@ -25,8 +24,8 @@ bool ChannelHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, c
 	if (serial == 0) return true;
 	auto self = shared_from_this();
 
-	svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [self, dwProID, sid, serial, zone_id, char_id, nx = req->x, ny = req->y]() {
-		auto& z = svr::g_Main.GetOrCreateZoneActor(zone_id);
+	runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, self, dwProID, sid, serial, zone_id, char_id, nx = req->x, ny = req->y]() {
+		auto& z = runtime().GetOrCreateZoneActor(zone_id);
 		auto diff = z.Move(char_id, { nx, ny }, sid, serial);
 
 		std::vector<std::uint64_t> entered;
@@ -98,24 +97,24 @@ bool ChannelHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, c
 			z.EnqueueSend_(it->second.sid, it->second.serial, h_move, body_move, (std::uint16_t)proto::S2CMsg::player_move, char_id);
 		}
 
-		z.FlushPendingSends_(static_cast<ChannelHandler&>(*self), dwProID);
+		z.FlushPendingSends_(static_cast<WorldHandler&>(*self), dwProID);
 
 		if (z.HasPendingNet_()) {
 			auto flusher = std::make_shared<std::function<void(int)>>();
-			*flusher = [self, dwProID, zone_id, flusher](int depth) {
-				auto& zf = svr::g_Main.GetOrCreateZoneActor(zone_id);
-				zf.FlushPendingSends_(static_cast<ChannelHandler&>(*self), dwProID, 1500, 1 * 1024 * 1024);
+			*flusher = [this, self, dwProID, zone_id, flusher](int depth) {
+				auto& zf = runtime().GetOrCreateZoneActor(zone_id);
+				zf.FlushPendingSends_(static_cast<WorldHandler&>(*self), dwProID, 1500, 1 * 1024 * 1024);
 				if (depth < 16 && zf.HasPendingNet_()) {
-					svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [flusher, depth]() { (*flusher)(depth + 1); });
+					runtime().PostActor(svr::MakeZoneActorId(zone_id), [flusher, depth]() { (*flusher)(depth + 1); });
 				}
 			};
-			svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [flusher]() { (*flusher)(0); });
+			runtime().PostActor(svr::MakeZoneActorId(zone_id), [flusher]() { (*flusher)(0); });
 		}
 	});
 	return true;
 }
 
-bool ChannelHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_bench_move>(body, body_len);
 	if (!req) return false;
@@ -123,7 +122,7 @@ bool ChannelHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t s
 	svr::g_c2s_bench_move_rx.fetch_add(1, std::memory_order_relaxed);
 
 	const std::uint64_t char_id = GetActorIdBySession(sid);
-	auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.zone_id;
 	a.pos = { req->x, req->y };
 
@@ -132,12 +131,12 @@ bool ChannelHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t s
 	auto self = shared_from_this();
 	auto* th = this;
 
-	svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id),
-		[self, th, dwProID, sid, zone_id, char_id,
+	runtime().PostActor(svr::MakeZoneActorId(zone_id),
+		[this, self, th, dwProID, sid, zone_id, char_id,
 		seq = req->seq, work_us = req->work_us, nx = req->x, ny = req->y, cts = req->client_ts_ns]() {
 		const std::uint32_t serial = th->GetLatestSerial(sid);
 
-		auto& z = svr::g_Main.GetOrCreateZoneActor(zone_id);
+		auto& z = runtime().GetOrCreateZoneActor(zone_id);
 		if (serial != 0) {
 			z.MoveFastUpdate(char_id, { nx, ny }, sid, serial);
 			z.EnqueueBenchAck(sid, serial, seq, cts, zone_id);
@@ -147,40 +146,40 @@ bool ChannelHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t s
 			std::this_thread::sleep_for(std::chrono::microseconds(work_us));
 		}
 
-		z.FlushMoveTickIfDue_(static_cast<ChannelHandler&>(*self), dwProID, false);
+		z.FlushMoveTickIfDue_(static_cast<WorldHandler&>(*self), dwProID, false);
 	});
 	return true;
 }
 
-bool ChannelHandler::HandleWorldBenchReset()
+bool WorldHandler::HandleWorldBenchReset()
 {
-	svr::g_Main.RequestBenchReset();
+	runtime().RequestBenchReset();
 	return true;
 }
 
-bool ChannelHandler::HandleWorldBenchMeasure(const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldBenchMeasure(const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_bench_measure>(body, body_len);
 	if (!req) return false;
 	const int seconds = (int)std::max<proto::u32>(1, req->seconds);
-	svr::g_Main.RequestBenchMeasure(seconds);
+	runtime().RequestBenchMeasure(seconds);
 	return true;
 }
 
-bool ChannelHandler::HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_spawn_monster>(body, body_len);
 	if (!req) return false;
 
 	const std::uint64_t char_id = GetActorIdBySession(sid);
-	auto& a = svr::g_Main.GetOrCreatePlayerActor(char_id);
+	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.zone_id;
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (serial == 0) return true;
 
 	auto self = shared_from_this();
-	svr::g_Main.PostActor(svr::MakeZoneActorId(zone_id), [self, dwProID, sid, serial, zone_id, tid = req->template_id]() {
-		auto& z = svr::g_Main.GetOrCreateZoneActor(zone_id);
+	runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, self, dwProID, sid, serial, zone_id, tid = req->template_id]() {
+		auto& z = runtime().GetOrCreateZoneActor(zone_id);
 		svr::MonsterState m{};
 		m.id = z.next_monster_id++;
 		if (tid == 1) { m.hp = 120; m.atk = 15; m.def = 4; m.drop_item_id = 2001; m.drop_count = 1; }

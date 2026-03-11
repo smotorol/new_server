@@ -1,25 +1,24 @@
-#include "channel_handler.h"
+#include "services/world/handler/world_handler.h"
 
 #include <iostream>
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
-#include "services/channel/runtime/channel_runtime.h"
 
-std::uint64_t ChannelHandler::GetActorIdBySession(std::uint32_t sid) const
+std::uint64_t WorldHandler::GetActorIdBySession(std::uint32_t sid) const
 {
-	if (const auto char_id = svr::g_Main.FindCharIdBySession(sid); char_id != 0)
+	if (const auto char_id = runtime().FindCharIdBySession(sid); char_id != 0)
 		return char_id;
 	return static_cast<std::uint64_t>(sid);
 }
 
-std::uint64_t ChannelHandler::ResolveActorId(std::uint32_t session_idx) const
+std::uint64_t WorldHandler::ResolveActorId(std::uint32_t session_idx) const
 {
 	// World 라인은 (sid -> char_id) 바인딩 이후 char_id Actor로 라우팅
 	return GetActorIdBySession(session_idx);
 }
 
-std::uint64_t ChannelHandler::ResolveActorIdForPacket(std::uint32_t session_idx,
+std::uint64_t WorldHandler::ResolveActorIdForPacket(std::uint32_t session_idx,
 	const _MSG_HEADER& header, const char* body, std::size_t body_len,
 	std::uint64_t default_actor) const
 {
@@ -39,14 +38,7 @@ std::uint64_t ChannelHandler::ResolveActorIdForPacket(std::uint32_t session_idx,
 	return default_actor;
 }
 
-bool ChannelHandler::HandleLoginPacket(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
-{
-	(void)n; (void)pMsgHeader; (void)pMsg;
-	// TODO: 레거시 Login line 처리 이식
-	return false;
-}
-
-bool ChannelHandler::HandleWorldPacket(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
+bool WorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER * pMsgHeader, char* pMsg)
 {
 	const std::uint16_t type = proto::get_type_u16(*pMsgHeader);
 	const std::size_t body_len = pMsgHeader->m_wSize - MSG_HEADER_SIZE;
@@ -83,11 +75,4 @@ bool ChannelHandler::HandleWorldPacket(std::uint32_t dwProID, std::uint32_t n, _
 		std::cout << "[World] unknown type=" << type << "\n";
 		return true;
 	}
-}
-
-bool ChannelHandler::HandleControlPacket(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
-{
-	(void)n; (void)pMsgHeader; (void)pMsg;
-	// TODO: 레거시 Control line 처리 이식
-	return false;
 }

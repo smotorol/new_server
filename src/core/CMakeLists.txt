@@ -1,11 +1,4 @@
-file(GLOB_RECURSE DC_CORE_SOURCES CONFIGURE_DEPENDS
-    ${CMAKE_CURRENT_SOURCE_DIR}/log/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/log/*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/util/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/util/*.h
-    ${CMAKE_CURRENT_SOURCE_DIR}/metrics/*.cpp
-    ${CMAKE_CURRENT_SOURCE_DIR}/metrics/*.h
-)
+collect_sources(DC_CORE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(dc_core ${DC_CORE_SOURCES})
 
@@ -18,3 +11,5 @@ target_link_libraries(dc_core PUBLIC
     spdlog::spdlog
     nlohmann_json::nlohmann_json
 )
+
+group_sources(${CMAKE_CURRENT_SOURCE_DIR} "" "${DC_CORE_SOURCES}")
