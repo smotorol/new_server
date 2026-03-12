@@ -124,8 +124,7 @@ namespace svr {
             std::uint32_t sid,
             std::uint32_t serial,
             std::chrono::milliseconds delay);
-
-        void CancelAllDelayedWorldCloseTimers_() noexcept;
+        void CancelDelayedWorldCloseTimers_() noexcept;
 
         bool LoadIniFile();
         bool DatabaseInit();
@@ -153,9 +152,6 @@ namespace svr {
         int logic_thread_count_ = 1;
 
         boost::asio::steady_timer flush_timer_{ io_ };
-        std::mutex delayed_world_close_mtx_;
-        std::vector<std::shared_ptr<boost::asio::steady_timer>> delayed_world_close_timers_;
-
 
         std::unique_ptr<cache::RedisCache> redis_cache_;
 
@@ -185,6 +181,28 @@ namespace svr {
             std::uint32_t serial = 0;
         };
 
+        struct DelayedCloseKey
+        {
+            std::uint32_t sid = 0;
+            std::uint32_t serial = 0;
+
+            bool operator==(const DelayedCloseKey& rhs) const noexcept
+            {
+                return sid == rhs.sid && serial == rhs.serial;
+            }
+        };
+
+        struct DelayedCloseKeyHash
+        {
+            std::size_t operator()(const DelayedCloseKey& k) const noexcept
+            {
+                const std::uint64_t packed =
+                    (static_cast<std::uint64_t>(k.sid) << 32) |
+                    static_cast<std::uint64_t>(k.serial);
+                return std::hash<std::uint64_t>{}(packed);
+            }
+        };
+
         void RegisterLoginLine(
             std::uint32_t sid, std::uint32_t serial,
             std::uint32_t server_id, std::string_view server_name,
@@ -208,6 +226,12 @@ namespace svr {
 
         mutable std::mutex world_session_mtx_;
         std::unordered_map<std::uint64_t, WorldSessionRef> world_sessions_by_char_;
+
+        std::mutex delayed_world_close_mtx_;
+        std::unordered_map<
+            DelayedCloseKey,
+            std::shared_ptr<boost::asio::steady_timer>,
+            DelayedCloseKeyHash> delayed_world_close_timers_;
 
         static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
 

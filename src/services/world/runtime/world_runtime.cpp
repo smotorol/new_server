@@ -141,7 +141,7 @@ namespace svr {
 			flush_timer_.cancel();
 		}
 
-		CancelAllDelayedWorldCloseTimers_();
+		CancelDelayedWorldCloseTimers_();
 
 		if (db_shards_) {
 			db_shards_->stop();
@@ -195,16 +195,23 @@ namespace svr {
 		spdlog::info("WorldServer released.");
 	}
 
-	void WorldRuntime::CancelAllDelayedWorldCloseTimers_() noexcept
+	void WorldRuntime::CancelDelayedWorldCloseTimers_() noexcept
 	{
-		std::vector<std::shared_ptr<boost::asio::steady_timer>> timers;
+		std::unordered_map<
+			DelayedCloseKey,
+			std::shared_ptr<boost::asio::steady_timer>,
+			DelayedCloseKeyHash> timers;
+
 		{
 			std::lock_guard lk(delayed_world_close_mtx_);
 			timers.swap(delayed_world_close_timers_);
 		}
 
-		for (auto& timer : timers) {
-			if (!timer) continue;
+		for (auto& [key, timer] : timers) {
+			if (!timer) {
+				continue;
+			}
+
 			timer->cancel();
 		}
 	}
@@ -218,23 +225,31 @@ namespace svr {
 			return;
 		}
 
+		const DelayedCloseKey key{ sid, serial };
 		auto timer = std::make_shared<boost::asio::steady_timer>(io_);
 		timer->expires_after(delay);
 
 		{
 			std::lock_guard lk(delayed_world_close_mtx_);
-			delayed_world_close_timers_.push_back(timer);
+
+			const auto [it, inserted] = delayed_world_close_timers_.emplace(key, timer);
+			if (!inserted) {
+				spdlog::info(
+					"Delayed world close already scheduled. sid={} serial={}",
+					sid,
+					serial);
+				return;
+			}
 		}
 
 		timer->async_wait(
-			[this, sid, serial, timer](const boost::system::error_code& ec) {
+			[this, sid, serial, key](const boost::system::error_code& ec) {
 				{
 					std::lock_guard lk(delayed_world_close_mtx_);
-					auto it = std::remove(
-						delayed_world_close_timers_.begin(),
-						delayed_world_close_timers_.end(),
-						timer);
-					delayed_world_close_timers_.erase(it, delayed_world_close_timers_.end());
+					auto it = delayed_world_close_timers_.find(key);
+					if (it != delayed_world_close_timers_.end()) {
+						delayed_world_close_timers_.erase(it);
+					}
 				}
 
 				if (ec == boost::asio::error::operation_aborted) {
@@ -244,24 +259,27 @@ namespace svr {
 				if (ec) {
 					spdlog::warn(
 						"Delayed world close timer failed. sid={} serial={} ec={}",
-						sid, serial, ec.message());
+						sid,
+						serial,
+						ec.message());
 					return;
 				}
 
 				auto& line = lines_.entry(svr::WorldLineId::World);
 				auto world_handler = line.host.handler();
 				auto world_server = line.host.server();
-
 				if (!world_server || !world_handler) {
 					spdlog::warn(
-						"Delayed world close skipped. world server/handler null. sid={} serial={}",
-						sid, serial);
+						"Delayed world close skipped. world server or handler null. sid={} serial={}",
+						sid,
+						serial);
 					return;
 				}
 
 				spdlog::info(
 					"Delayed world close fired. sid={} serial={}",
-					sid, serial);
+					sid,
+					serial);
 
 				world_handler->Close(
 					static_cast<std::uint32_t>(svr::WorldLineId::World),
@@ -1650,26 +1668,37 @@ namespace svr {
 				h,
 				reinterpret_cast<const char*>(&kick));
 
-			spdlog::warn(
-				"Duplicate world session detected. kick scheduled-close old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={} send_ok={} delay_ms={}",
-				char_id,
-				old.sid,
-				old.serial,
-				new_sid,
-				new_serial,
-				kick_reason,
-				static_cast<int>(send_ok),
-				kDuplicateKickCloseDelay_.count());
+			if (send_ok) {
+				spdlog::warn(
+					"Duplicate world session detected. kick sent -> delayed close old session. char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={} delay_ms={}",
+					char_id,
+					old.sid,
+					old.serial,
+					new_sid,
+					new_serial,
+					kick_reason,
+					kDuplicateKickCloseDelay_.count());
 
-			ScheduleDelayedWorldClose_(
-				old.sid,
-				old.serial,
-				kDuplicateKickCloseDelay_);
+				ScheduleDelayedWorldClose_(
+					old.sid,
+					old.serial,
+					kDuplicateKickCloseDelay_);
+			}
+			else {
+				spdlog::warn(
+					"Duplicate world session detected. kick send failed -> immediate close old session. char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
+					char_id,
+					old.sid,
+					old.serial,
+					new_sid,
+					new_serial,
+					kick_reason);
 
-			world_handler->Close(
-				static_cast<std::uint32_t>(svr::WorldLineId::World),
-				old.sid,
-				old.serial);
+				world_handler->Close(
+					static_cast<std::uint32_t>(svr::WorldLineId::World),
+					old.sid,
+					old.serial);
+			}
 		}
 
 		return true;
