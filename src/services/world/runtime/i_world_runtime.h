@@ -39,10 +39,11 @@ namespace svr {
 			std::uint64_t char_id,
 			std::string_view token) = 0;
 
-		virtual bool ReplaceWorldSessionForChar(
+		virtual bool ReplaceWorldSessionForCharWithKick(
 			std::uint64_t char_id,
 			std::uint32_t new_sid,
-			std::uint32_t new_serial) = 0;
+			std::uint32_t new_serial,
+			std::uint16_t kick_reason) = 0;
 
 		virtual void RemoveWorldSessionBinding(
 			std::uint64_t char_id,

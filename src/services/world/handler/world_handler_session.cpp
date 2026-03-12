@@ -86,7 +86,11 @@ bool WorldHandler::HandleEnterWorldWithToken(
 	const std::uint64_t char_id = req->char_id;
 
 	runtime().BindSessionCharId(n, char_id);
-	runtime().ReplaceWorldSessionForChar(char_id, n, serial);
+	runtime().ReplaceWorldSessionForCharWithKick(
+		char_id,
+		n,
+		serial,
+		static_cast<std::uint16_t>(proto::WorldKickReason::duplicate_login));
 
 	DemoCharState st{};
 	st.char_id = char_id;

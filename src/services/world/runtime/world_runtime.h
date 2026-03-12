@@ -34,6 +34,8 @@
 #include "services/runtime/server_runtime_base.h"
 #include "services/world/runtime/i_world_runtime.h"
 #include "services/world/runtime/world_line_id.h"
+#include "proto/client/world_proto.h"
+#include "proto/common/packet_util.h"
 
 // World 세팅
 struct WorldInfo {
@@ -100,10 +102,11 @@ namespace svr {
             std::uint64_t char_id,
             std::string_view token);
 
-        bool ReplaceWorldSessionForChar(
+        bool ReplaceWorldSessionForCharWithKick(
             std::uint64_t char_id,
             std::uint32_t new_sid,
-            std::uint32_t new_serial);
+            std::uint32_t new_serial,
+            std::uint16_t kick_reason);
 
         void RemoveWorldSessionBinding(
             std::uint64_t char_id,

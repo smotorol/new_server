@@ -174,10 +174,11 @@ namespace svr {
 	}
 
 	void WorldRuntime::OnAfterIoStop() {
+		lines_.stop_all_reverse();
+
 		{
 			std::lock_guard lk(world_session_mtx_);
 			world_sessions_by_char_.clear();
-			lines_.stop_all_reverse();
 		}
 
 		spdlog::info("WorldServer released.");
@@ -1510,10 +1511,11 @@ namespace svr {
 		return true;
 	}
 
-	bool WorldRuntime::ReplaceWorldSessionForChar(
+	bool WorldRuntime::ReplaceWorldSessionForCharWithKick(
 		std::uint64_t char_id,
 		std::uint32_t new_sid,
-		std::uint32_t new_serial)
+		std::uint32_t new_serial,
+		std::uint16_t kick_reason)
 	{
 		if (char_id == 0 || new_sid == 0 || new_serial == 0) {
 			return false;
@@ -1537,19 +1539,45 @@ namespace svr {
 		}
 
 		if (has_old) {
-			auto* server = lines_.entry(svr::WorldLineId::World).host.server();
-			if (!server) {
+			auto& line = lines_.entry(svr::WorldLineId::World);
+			auto world_handler = line.host.handler();
+			auto world_server = line.host.server();
+			if (!world_server || !world_handler) {
 				spdlog::warn(
-					"ReplaceWorldSessionForChar: world server null. char_id={} old_sid={} old_serial={}",
+					"ReplaceWorldSessionForCharWithKick: world server or handler null. char_id={} old_sid={} old_serial={}",
 					char_id, old.sid, old.serial);
 				return true;
 			}
 
-			spdlog::warn(
-				"Duplicate world session detected. closing old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={}",
-				char_id, old.sid, old.serial, new_sid, new_serial);
+			proto::S2C_kick_notify kick{};
+			kick.reason = kick_reason;
+			kick.char_id = char_id;
 
-			server->close(old.sid, old.serial);
+			const auto h = proto::make_header(
+				static_cast<std::uint16_t>(proto::WorldS2CMsg::kick_notify),
+				static_cast<std::uint16_t>(sizeof(kick)));
+
+			const bool send_ok = world_handler->Send(
+				static_cast<std::uint32_t>(svr::WorldLineId::World),
+				old.sid,
+				old.serial,
+				h,
+				reinterpret_cast<const char*>(&kick));
+
+			spdlog::warn(
+				"Duplicate world session detected. kick+close old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={} send_ok={}",
+				char_id,
+				old.sid,
+				old.serial,
+				new_sid,
+				new_serial,
+				kick_reason,
+				static_cast<int>(send_ok));
+
+			world_handler->Close(
+				static_cast<std::uint32_t>(svr::WorldLineId::World),
+				old.sid,
+				old.serial);
 		}
 
 		return true;
