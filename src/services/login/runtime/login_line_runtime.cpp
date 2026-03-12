@@ -102,6 +102,108 @@ namespace dc {
         return (account_id << 8) | 1ull;
     }
 
+    void LoginLineRuntime::RemoveLoginSession_NoLock_(std::uint32_t sid, std::uint32_t serial)
+    {
+        auto it = login_sessions_.find(sid);
+        if (it == login_sessions_.end()) {
+            return;
+        }
+
+        if (it->second.serial != serial) {
+            return;
+        }
+
+        if (it->second.account_id != 0) {
+            auto ia = account_session_index_.find(it->second.account_id);
+            if (ia != account_session_index_.end() && ia->second == sid) {
+                account_session_index_.erase(ia);
+            }
+        }
+
+        if (it->second.char_id != 0) {
+            auto ic = char_session_index_.find(it->second.char_id);
+            if (ic != char_session_index_.end() && ic->second == sid) {
+                char_session_index_.erase(ic);
+            }
+        }
+
+        login_sessions_.erase(it);
+    }
+
+    void LoginLineRuntime::AddDuplicateCandidateBySid_NoLock_(
+        std::uint32_t sid,
+        std::uint32_t new_sid,
+        std::uint32_t new_serial,
+        std::vector<DuplicateSessionRef>& out)
+    {
+        auto it = login_sessions_.find(sid);
+        if (it == login_sessions_.end()) {
+            return;
+        }
+
+        const auto& st = it->second;
+
+        if (st.sid == new_sid && st.serial == new_serial) {
+            return;
+        }
+
+        for (const auto& e : out) {
+            if (e.sid == st.sid && e.serial == st.serial) {
+                return;
+            }
+        }
+
+        out.push_back(DuplicateSessionRef{
+            st.sid,
+            st.serial,
+            st.account_id,
+            st.char_id
+            });
+    }
+
+    std::vector<LoginLineRuntime::DuplicateSessionRef>
+        LoginLineRuntime::CollectDuplicateSessions_NoLock_(
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::uint32_t new_sid,
+            std::uint32_t new_serial)
+    {
+        std::vector<DuplicateSessionRef> victims;
+
+        if (account_id != 0) {
+            auto ia = account_session_index_.find(account_id);
+            if (ia != account_session_index_.end()) {
+                AddDuplicateCandidateBySid_NoLock_(ia->second, new_sid, new_serial, victims);
+            }
+        }
+
+        if (char_id != 0) {
+            auto ic = char_session_index_.find(char_id);
+            if (ic != char_session_index_.end()) {
+                AddDuplicateCandidateBySid_NoLock_(ic->second, new_sid, new_serial, victims);
+            }
+        }
+
+        return victims;
+    }
+
+    void LoginLineRuntime::CloseDuplicateLoginSessions_(const std::vector<DuplicateSessionRef>& victims)
+    {
+        auto* server = client_line_.host.server();
+        if (!server) {
+            spdlog::warn("CloseDuplicateLoginSessions_: login client server is null");
+            return;
+        }
+
+        for (const auto& v : victims) {
+            spdlog::warn(
+                "Duplicate login detected. closing old session sid={} serial={} account_id={} char_id={}",
+                v.sid, v.serial, v.account_id, v.char_id);
+
+            server->close(v.sid, v.serial);
+        }
+    }
+
     bool LoginLineRuntime::IssueLoginSuccess(
         std::uint32_t sid,
         std::uint32_t serial,
@@ -117,8 +219,22 @@ namespace dc {
         const auto char_id = ResolveCharId_(selected_char_id, account_id);
         const auto token = GenerateWorldToken_();
 
+        std::vector<DuplicateSessionRef> victims;
+        {
+            std::lock_guard lk(login_sessions_mtx_);
+            victims = CollectDuplicateSessions_NoLock_(account_id, char_id, sid, serial);
+
+            // 기존 세션 인덱스는 미리 제거해 둔다.
+            // 실제 close callback이 나중에 와도 stale serial이면 안전하게 무시된다.
+            for (const auto& v : victims) {
+                RemoveLoginSession_NoLock_(v.sid, v.serial);
+            }
+        }
+
+        CloseDuplicateLoginSessions_(victims);
+
         if (!world_handler_) {
-            spdlog::error("IssueLoginSuccess failed: login-world handler cast failed");
+            spdlog::error("IssueLoginSuccess failed: world_handler_ is null");
             return false;
         }
 
@@ -140,6 +256,10 @@ namespace dc {
 
         {
             std::lock_guard lk(login_sessions_mtx_);
+
+            // 같은 sid 슬롯이 재사용된 경우를 대비해서 한번 더 정리
+            RemoveLoginSession_NoLock_(sid, serial);
+
             auto& st = login_sessions_[sid];
             st.sid = sid;
             st.serial = serial;
@@ -149,6 +269,9 @@ namespace dc {
             st.world_token = token;
             st.issued_at = std::chrono::steady_clock::now();
             st.expires_at = st.issued_at + std::chrono::seconds(30);
+
+            account_session_index_[account_id] = sid;
+            char_session_index_[char_id] = sid;
         }
 
         proto::S2C_login_result res{};
@@ -164,7 +287,7 @@ namespace dc {
             static_cast<std::uint16_t>(sizeof(res)));
 
         if (!login_handler_) {
-            spdlog::error("IssueLoginSuccess failed: login handler cast failed");
+            spdlog::error("IssueLoginSuccess failed: login_handler_ is null");
             return false;
         }
 
@@ -183,14 +306,7 @@ namespace dc {
     void LoginLineRuntime::RemoveLoginSession(std::uint32_t sid, std::uint32_t serial)
     {
         std::lock_guard lk(login_sessions_mtx_);
-        auto it = login_sessions_.find(sid);
-        if (it == login_sessions_.end()) {
-            return;
-        }
-        if (it->second.serial != serial) {
-            return;
-        }
-        login_sessions_.erase(it);
+        RemoveLoginSession_NoLock_(sid, serial);
     }
 
     bool LoginLineRuntime::OnRuntimeInit()
@@ -203,7 +319,7 @@ namespace dc {
             false,
             0);
 
-       login_handler_ = std::make_shared<LoginHandler>(*this);
+        login_handler_ = std::make_shared<LoginHandler>(*this);
 
         if (!dc::StartHostedLine(
             client_line_,
@@ -276,6 +392,8 @@ namespace dc {
         {
             std::lock_guard lk(login_sessions_mtx_);
             login_sessions_.clear();
+            account_session_index_.clear();
+            char_session_index_.clear();
         }
 
         world_handler_.reset();

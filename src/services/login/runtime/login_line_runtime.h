@@ -2,9 +2,13 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
+#include <memory>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <unordered_map>
+#include <vector>
 
 #include "server_common/runtime/line_client_start_helper.h"
 #include "server_common/runtime/line_registry.h"
@@ -31,6 +35,15 @@ namespace dc {
         void RemoveLoginSession(std::uint32_t sid, std::uint32_t serial);
 
     private:
+        struct DuplicateSessionRef
+        {
+            std::uint32_t sid = 0;
+            std::uint32_t serial = 0;
+            std::uint64_t account_id = 0;
+            std::uint64_t char_id = 0;
+        };
+
+    private:
         bool OnRuntimeInit() override;
         void OnBeforeIoStop() override;
         void OnAfterIoStop() override;
@@ -51,6 +64,21 @@ namespace dc {
         std::uint64_t ResolveAccountId_(std::string_view login_id) const;
         std::uint64_t ResolveCharId_(std::uint64_t selected_char_id, std::uint64_t account_id) const;
 
+        void RemoveLoginSession_NoLock_(std::uint32_t sid, std::uint32_t serial);
+        void AddDuplicateCandidateBySid_NoLock_(
+            std::uint32_t sid,
+            std::uint32_t new_sid,
+            std::uint32_t new_serial,
+            std::vector<DuplicateSessionRef>& out);
+
+        std::vector<DuplicateSessionRef> CollectDuplicateSessions_NoLock_(
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::uint32_t new_sid,
+            std::uint32_t new_serial);
+
+        void CloseDuplicateLoginSessions_(const std::vector<DuplicateSessionRef>& victims);
+
     private:
         std::uint16_t port_ = 0;
         std::string world_host_ = "127.0.0.1";
@@ -63,6 +91,8 @@ namespace dc {
 
         std::mutex login_sessions_mtx_;
         std::unordered_map<std::uint32_t, LoginSessionAuthState> login_sessions_;
+        std::unordered_map<std::uint64_t, std::uint32_t> account_session_index_;
+        std::unordered_map<std::uint64_t, std::uint32_t> char_session_index_;
 
         HostedLineEntry client_line_{};
         OutboundLineEntry world_line_{};
