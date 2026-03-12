@@ -51,7 +51,8 @@ namespace dc {
             world_host_,
             world_port_,
             true,
-            3000);
+            1000,
+            10000);
 
         if (!dc::StartOutboundLine(
                 world_line_,

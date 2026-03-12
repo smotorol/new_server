@@ -18,11 +18,6 @@ namespace proto::internal {
         std::uint32_t server_id = 0;
         std::uint16_t listen_port = 0;
         char server_name[k_service_name_max_len + 1];
-
-        LoginServerHello()
-        {
-            proto::zero(*this);
-        }
     };
 #pragma pack(pop)
     static_assert(sizeof(LoginServerHello) == 4 + 2 + (k_service_name_max_len + 1));

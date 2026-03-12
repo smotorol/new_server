@@ -28,6 +28,7 @@ namespace dc {
             // 설정값은 보관만 하고, 로그 용도로만 둔다.
             bool auto_reconnect = false;
             std::uint32_t reconnect_delay_ms = 3000;
+            std::uint32_t reconnect_delay_max_ms = 10000;
 
             std::function<void()> on_started;
             std::function<void()> on_stopped;
@@ -58,8 +59,12 @@ namespace dc {
 
             handler_->AttachDispatcher(dispatch);
 
-            client_ = std::make_shared<net::TcpClient>(io, handler_);
-            handler_->AttachClient(client_);
+			client_ = std::make_shared<net::TcpClient>(io, handler_);
+			client_->set_auto_reconnect(config_.auto_reconnect);
+			client_->set_reconnect_delay_ms(config_.reconnect_delay_ms);
+			client_->set_reconnect_delay_max_ms(config_.reconnect_delay_max_ms);
+
+			handler_->AttachClient(client_);
 
             spdlog::info(
                 "LineClientHost[{}] starting. remote={}:{} auto_reconnect={} reconnect_delay_ms={}",
@@ -83,10 +88,7 @@ namespace dc {
             if (client_) {
                 spdlog::info("LineClientHost[{}] stopping.", config_.name);
 
-                if (auto s = client_->session()) {
-                    s->close();
-                }
-
+                client_->stop();
                 client_.reset();
             }
 

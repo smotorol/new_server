@@ -19,6 +19,7 @@ namespace dc {
         std::uint16_t remote_port = 0;
         bool auto_reconnect = false;
         std::uint32_t reconnect_delay_ms = 3000;
+        std::uint32_t reconnect_delay_max_ms = 10000;
     };
 
     struct OutboundLineEntry
@@ -34,7 +35,8 @@ namespace dc {
         std::string_view remote_host,
         std::uint16_t remote_port,
         bool auto_reconnect = false,
-        std::uint32_t reconnect_delay_ms = 3000)
+        std::uint32_t reconnect_delay_ms = 3000,
+        std::uint32_t reconnect_delay_max_ms = 10000)
     {
         line.desc.id = id;
         line.desc.name = name;
@@ -42,6 +44,7 @@ namespace dc {
         line.desc.remote_port = remote_port;
         line.desc.auto_reconnect = auto_reconnect;
         line.desc.reconnect_delay_ms = reconnect_delay_ms;
+        line.desc.reconnect_delay_max_ms = reconnect_delay_max_ms;
     }
 
     inline bool StartOutboundLine(
@@ -58,6 +61,7 @@ namespace dc {
                 .remote_port = line.desc.remote_port,
                 .auto_reconnect = line.desc.auto_reconnect,
                 .reconnect_delay_ms = line.desc.reconnect_delay_ms,
+                .reconnect_delay_max_ms = line.desc.reconnect_delay_max_ms,
                 .on_started = [name = line.desc.name,
                                host = line.desc.remote_host,
                                port = line.desc.remote_port]() {
