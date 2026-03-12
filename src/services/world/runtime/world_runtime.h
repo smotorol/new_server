@@ -120,6 +120,13 @@ namespace svr {
         void OnMainLoopTick(std::chrono::steady_clock::time_point now) override;
 
     private:
+        void ScheduleDelayedWorldClose_(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::chrono::milliseconds delay);
+
+        void CancelAllDelayedWorldCloseTimers_() noexcept;
+
         bool LoadIniFile();
         bool DatabaseInit();
         bool NetworkInit();
@@ -146,6 +153,9 @@ namespace svr {
         int logic_thread_count_ = 1;
 
         boost::asio::steady_timer flush_timer_{ io_ };
+        std::mutex delayed_world_close_mtx_;
+        std::vector<std::shared_ptr<boost::asio::steady_timer>> delayed_world_close_timers_;
+
 
         std::unique_ptr<cache::RedisCache> redis_cache_;
 
@@ -198,6 +208,8 @@ namespace svr {
 
         mutable std::mutex world_session_mtx_;
         std::unordered_map<std::uint64_t, WorldSessionRef> world_sessions_by_char_;
+
+        static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
 
         static constexpr std::uint32_t MAX_DB_SYC_DATA_NUM = 200000;
         std::vector<svr::dqs::DqsSlot> dqs_slots_;

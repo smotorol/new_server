@@ -137,6 +137,12 @@ namespace svr {
 	}
 
 	void WorldRuntime::OnBeforeIoStop() {
+		{
+			flush_timer_.cancel();
+		}
+
+		CancelAllDelayedWorldCloseTimers_();
+
 		if (db_shards_) {
 			db_shards_->stop();
 			db_shards_.reset();
@@ -177,11 +183,91 @@ namespace svr {
 		lines_.stop_all_reverse();
 
 		{
+			std::lock_guard lk(delayed_world_close_mtx_);
+			delayed_world_close_timers_.clear();
+		}
+
+		{
 			std::lock_guard lk(world_session_mtx_);
 			world_sessions_by_char_.clear();
 		}
 
 		spdlog::info("WorldServer released.");
+	}
+
+	void WorldRuntime::CancelAllDelayedWorldCloseTimers_() noexcept
+	{
+		std::vector<std::shared_ptr<boost::asio::steady_timer>> timers;
+		{
+			std::lock_guard lk(delayed_world_close_mtx_);
+			timers.swap(delayed_world_close_timers_);
+		}
+
+		for (auto& timer : timers) {
+			if (!timer) continue;
+			timer->cancel();
+		}
+	}
+
+	void WorldRuntime::ScheduleDelayedWorldClose_(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::chrono::milliseconds delay)
+	{
+		if (sid == 0 || serial == 0) {
+			return;
+		}
+
+		auto timer = std::make_shared<boost::asio::steady_timer>(io_);
+		timer->expires_after(delay);
+
+		{
+			std::lock_guard lk(delayed_world_close_mtx_);
+			delayed_world_close_timers_.push_back(timer);
+		}
+
+		timer->async_wait(
+			[this, sid, serial, timer](const boost::system::error_code& ec) {
+				{
+					std::lock_guard lk(delayed_world_close_mtx_);
+					auto it = std::remove(
+						delayed_world_close_timers_.begin(),
+						delayed_world_close_timers_.end(),
+						timer);
+					delayed_world_close_timers_.erase(it, delayed_world_close_timers_.end());
+				}
+
+				if (ec == boost::asio::error::operation_aborted) {
+					return;
+				}
+
+				if (ec) {
+					spdlog::warn(
+						"Delayed world close timer failed. sid={} serial={} ec={}",
+						sid, serial, ec.message());
+					return;
+				}
+
+				auto& line = lines_.entry(svr::WorldLineId::World);
+				auto world_handler = line.host.handler();
+				auto world_server = line.host.server();
+
+				if (!world_server || !world_handler) {
+					spdlog::warn(
+						"Delayed world close skipped. world server/handler null. sid={} serial={}",
+						sid, serial);
+					return;
+				}
+
+				spdlog::info(
+					"Delayed world close fired. sid={} serial={}",
+					sid, serial);
+
+				world_handler->Close(
+					static_cast<std::uint32_t>(svr::WorldLineId::World),
+					sid,
+					serial);
+			});
 	}
 
 	void WorldRuntime::PostActor(std::uint64_t actor_id, std::function<void()> fn)
@@ -1565,14 +1651,20 @@ namespace svr {
 				reinterpret_cast<const char*>(&kick));
 
 			spdlog::warn(
-				"Duplicate world session detected. kick+close old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={} send_ok={}",
+				"Duplicate world session detected. kick scheduled-close old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={} send_ok={} delay_ms={}",
 				char_id,
 				old.sid,
 				old.serial,
 				new_sid,
 				new_serial,
 				kick_reason,
-				static_cast<int>(send_ok));
+				static_cast<int>(send_ok),
+				kDuplicateKickCloseDelay_.count());
+
+			ScheduleDelayedWorldClose_(
+				old.sid,
+				old.serial,
+				kDuplicateKickCloseDelay_);
 
 			world_handler->Close(
 				static_cast<std::uint32_t>(svr::WorldLineId::World),
