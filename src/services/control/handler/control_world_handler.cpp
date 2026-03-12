@@ -1,11 +1,20 @@
 #include "services/control/handler/control_world_handler.h"
 
+#include <cstdio>
 #include <cstring>
 
 #include <spdlog/spdlog.h>
 
-#include "proto/internal/control_proto.h"
 #include "proto/common/packet_util.h"
+#include "proto/internal/control_proto.h"
+
+ControlWorldHandler::ControlWorldHandler(
+    RegisterAckCallback on_register_ack,
+    DisconnectCallback on_disconnect)
+    : on_register_ack_(std::move(on_register_ack))
+    , on_disconnect_(std::move(on_disconnect))
+{
+}
 
 void ControlWorldHandler::SetServerIdentity(
     std::uint32_t server_id,
@@ -34,11 +43,11 @@ bool ControlWorldHandler::SendHelloRegister(
     const auto h = proto::make_header(
         static_cast<std::uint16_t>(proto::internal::ControlWorldMsg::control_server_hello),
         static_cast<std::uint16_t>(sizeof(pkt)));
- 
-     spdlog::info(
+
+    spdlog::info(
         "ControlWorldHandler::SendHelloRegister idx={} serial={} server_id={} server_name={} listen_port={}",
         dwIndex, dwSerial, server_id_, server_name_, listen_port_);
- 
+
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
@@ -46,13 +55,45 @@ bool ControlWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
     _MSG_HEADER* pMsgHeader, char* pMsg)
 {
     (void)dwProID;
-    (void)n;
-    (void)pMsgHeader;
-    (void)pMsg;
 
-    // TODO:
-    // control <-> world 내부 프로토콜 처리
-    return false;
+    if (!pMsgHeader) {
+        return false;
+    }
+
+    const auto msg_type = proto::get_type_u16(*pMsgHeader);
+    const std::size_t body_len =
+        (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
+
+    switch (static_cast<proto::internal::ControlWorldMsg>(msg_type)) {
+    case proto::internal::ControlWorldMsg::control_server_register_ack:
+        {
+            const auto* ack = proto::as<proto::internal::ControlServerRegisterAck>(pMsg, body_len);
+            if (!ack) {
+                spdlog::error("ControlWorldHandler invalid control_server_register_ack packet. sid={}", n);
+                return false;
+            }
+
+            if (ack->accepted == 0) {
+                spdlog::warn(
+                    "ControlWorldHandler register denied. sid={} serial={} server_id={} server_name={}",
+                    n, GetLatestSerial(n), ack->server_id, ack->server_name);
+                return true;
+            }
+
+            spdlog::info(
+                "ControlWorldHandler register ack. sid={} serial={} server_id={} server_name={} listen_port={}",
+                n, GetLatestSerial(n), ack->server_id, ack->server_name, ack->listen_port);
+
+            if (on_register_ack_) {
+                on_register_ack_(n, GetLatestSerial(n), ack->server_id, ack->server_name, ack->listen_port);
+            }
+            return true;
+        }
+
+    default:
+        spdlog::warn("ControlWorldHandler unknown msg_type={} sid={}", msg_type, n);
+        return false;
+    }
 }
 
 void ControlWorldHandler::OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex,
@@ -87,6 +128,11 @@ void ControlWorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIn
     std::uint32_t dwSerial)
 {
     (void)dwProID;
+
+    if (on_disconnect_) {
+        on_disconnect_(dwIndex, dwSerial);
+    }
+
     spdlog::warn(
         "ControlWorldHandler::OnWorldDisconnected index={} serial={}",
         dwIndex,
