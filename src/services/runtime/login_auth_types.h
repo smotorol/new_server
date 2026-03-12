@@ -1,0 +1,24 @@
+#pragma once
+
+#include <cstdint>
+#include <string>
+#include <chrono>
+
+namespace dc {
+
+    struct LoginSessionAuthState
+    {
+        std::uint32_t sid = 0;
+        std::uint32_t serial = 0;
+
+        bool logged_in = false;
+
+        std::uint64_t account_id = 0;
+        std::uint64_t char_id = 0;
+
+        std::string world_token;
+        std::chrono::steady_clock::time_point issued_at{};
+        std::chrono::steady_clock::time_point expires_at{};
+    };
+
+} // namespace dc

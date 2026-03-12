@@ -1,17 +1,17 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 
 #include "server_common/handler/service_line_handler_base.h"
+
+namespace dc {
+    class LoginLineRuntime;
+}
 
 class LoginHandler : public dc::ServiceLineHandlerBase
 {
 public:
-    using WorldReadyFn = std::function<bool()>;
-
-public:
-    explicit LoginHandler(WorldReadyFn is_world_ready);
+    explicit LoginHandler(dc::LoginLineRuntime& runtime);
     ~LoginHandler() override = default;
 
 protected:
@@ -25,8 +25,5 @@ protected:
     bool ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t dwSerial) override;
 
 private:
-    bool RequireWorldReady(std::uint16_t msg_type) const noexcept;
-
-private:
-    WorldReadyFn is_world_ready_;
+    dc::LoginLineRuntime& runtime_;
 };

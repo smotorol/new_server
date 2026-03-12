@@ -31,6 +31,15 @@ public:
         std::uint32_t dwIndex,
         std::uint32_t dwSerial);
 
+    bool SendAuthTicketUpsert(
+        std::uint32_t dwProID,
+        std::uint32_t dwIndex,
+        std::uint32_t dwSerial,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view token,
+        std::uint64_t expire_at_unix_sec);
+
     void SetServerIdentity(std::uint32_t server_id, std::string server_name, std::uint16_t listen_port);
 
 protected:

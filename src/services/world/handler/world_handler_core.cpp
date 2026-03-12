@@ -4,6 +4,7 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "proto/client/world_proto.h"
 
 std::uint64_t WorldHandler::GetActorIdBySession(std::uint32_t sid) const
 {
@@ -45,6 +46,8 @@ bool WorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEA
 
 	switch (type)
 	{
+	case static_cast<std::uint16_t>(proto::WorldC2SMsg::enter_world_with_token):
+		return HandleEnterWorldWithToken(dwProID, n, pMsg, body_len);
 	case proto::C2SMsg::open_world_notice:
 		return HandleWorldOpenWorldNotice(dwProID, n, pMsg, body_len);
 	case proto::C2SMsg::add_gold:

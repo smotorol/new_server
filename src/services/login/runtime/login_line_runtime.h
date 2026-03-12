@@ -2,12 +2,15 @@
 
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 #include "server_common/runtime/line_client_start_helper.h"
 #include "server_common/runtime/line_registry.h"
 #include "services/login/handler/login_handler.h"
 #include "services/login/handler/login_world_handler.h"
+#include "services/runtime/login_auth_types.h"
 #include "services/runtime/server_runtime_base.h"
 
 namespace dc {
@@ -18,6 +21,14 @@ namespace dc {
         ~LoginLineRuntime() override = default;
 
         bool IsWorldReady() const noexcept;
+
+        bool IssueLoginSuccess(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::string_view login_id,
+            std::uint64_t selected_char_id);
+
+        void RemoveLoginSession(std::uint32_t sid, std::uint32_t serial);
 
     private:
         bool OnRuntimeInit() override;
@@ -36,6 +47,10 @@ namespace dc {
             std::uint32_t sid,
             std::uint32_t serial);
 
+        std::string GenerateWorldToken_() const;
+        std::uint64_t ResolveAccountId_(std::string_view login_id) const;
+        std::uint64_t ResolveCharId_(std::uint64_t selected_char_id, std::uint64_t account_id) const;
+
     private:
         std::uint16_t port_ = 0;
         std::string world_host_ = "127.0.0.1";
@@ -46,8 +61,14 @@ namespace dc {
         std::atomic<std::uint32_t> world_serial_{ 0 };
         std::atomic<std::uint32_t> world_server_id_{ 0 };
 
+        std::mutex login_sessions_mtx_;
+        std::unordered_map<std::uint32_t, LoginSessionAuthState> login_sessions_;
+
         HostedLineEntry client_line_{};
         OutboundLineEntry world_line_{};
+
+        std::shared_ptr<LoginHandler> login_handler_;
+        std::shared_ptr<LoginWorldHandler> world_handler_;
     };
 
 } // namespace dc

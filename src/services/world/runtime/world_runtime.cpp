@@ -2,7 +2,7 @@
 
 #include <iomanip>
 #include <sstream>
-
+#include <ctime>
 #include <algorithm>
 #include <filesystem>
 #include <fstream>
@@ -10,6 +10,7 @@
 #include <chrono>
 #include <type_traits>
 #include <spdlog/spdlog.h>
+
 #include <boost/asio/co_spawn.hpp>
 #include <boost/asio/detached.hpp>
 
@@ -850,6 +851,7 @@ namespace svr {
 			lines_.entry(svr::WorldLineId::Login),
 			io_,
 			std::make_shared<WorldLoginHandler>(
+				*this,
 				[this](std::uint32_t sid, std::uint32_t serial,
 					std::uint32_t server_id, std::string_view server_name,
 					std::uint16_t listen_port) {
@@ -1435,5 +1437,72 @@ namespace svr {
 				control_line.stats().session_open_count.load(std::memory_order_relaxed),
 				control_line.stats().session_close_count.load(std::memory_order_relaxed));
 		}
+	}
+
+	bool WorldRuntime::UpsertPendingWorldAuthTicket(
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::string token,
+		std::uint64_t expire_at_unix_sec)
+	{
+		if (token.empty()) {
+			return false;
+		}
+
+		std::lock_guard lk(auth_ticket_mtx_);
+
+		auto& t = pending_world_auth_tickets_[token];
+		t.account_id = account_id;
+		t.char_id = char_id;
+		t.token = std::move(token);
+		t.expire_at_unix_sec = expire_at_unix_sec;
+
+		spdlog::info(
+			"WorldRuntime auth ticket upserted. account_id={} char_id={} expire_at={}",
+			account_id, char_id, expire_at_unix_sec);
+
+		return true;
+	}
+
+	bool WorldRuntime::ConsumePendingWorldAuthTicket(
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::string_view token)
+	{
+		if (token.empty()) {
+			return false;
+		}
+
+		std::lock_guard lk(auth_ticket_mtx_);
+
+		auto it = pending_world_auth_tickets_.find(std::string(token));
+		if (it == pending_world_auth_tickets_.end()) {
+			spdlog::warn("WorldRuntime auth ticket not found. token={}", token);
+			return false;
+		}
+
+		const auto now_sec = static_cast<std::uint64_t>(std::time(nullptr));
+		if (it->second.expire_at_unix_sec != 0 && now_sec > it->second.expire_at_unix_sec) {
+			spdlog::warn(
+				"WorldRuntime auth ticket expired. token={} account_id={} char_id={}",
+				token, it->second.account_id, it->second.char_id);
+			pending_world_auth_tickets_.erase(it);
+			return false;
+		}
+
+		if (it->second.account_id != account_id || it->second.char_id != char_id) {
+			spdlog::warn(
+				"WorldRuntime auth ticket mismatch. token={} req_account_id={} req_char_id={} stored_account_id={} stored_char_id={}",
+				token, account_id, char_id, it->second.account_id, it->second.char_id);
+			return false;
+		}
+
+		pending_world_auth_tickets_.erase(it);
+
+		spdlog::info(
+			"WorldRuntime auth ticket consumed. account_id={} char_id={} token={}",
+			account_id, char_id, token);
+
+		return true;
 	}
 }

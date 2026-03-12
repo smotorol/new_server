@@ -10,6 +10,7 @@
 #include "core/util/string_utils.h"
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "proto/client/world_proto.h"
 #include "db/core/dqs_payloads.h"
 #include "services/world/actors/world_actors.h"
 
@@ -39,17 +40,56 @@ namespace {
 
 void WorldHandler::OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
+	(void)dwProID;
 	spdlog::info("WorldHandler::OnWorldAccepted index={} serial={}", dwIndex, dwSerial);
 
-	const std::uint32_t world_code = 0;
+	// 더 이상 여기서 임시 char_id를 만들지 않는다.
+	// 실제 char_id 바인딩은 enter_world_with_token 성공 후에만 수행한다.
+}
 
-	// (샘플) 임시 char_id: 실제 서비스에서는 로그인 이후 확정된 char_id를 바인딩해야 함
-	const std::uint64_t char_id = (std::uint64_t(dwIndex) << 32) | std::uint64_t(dwSerial);
-	runtime().BindSessionCharId(dwIndex, char_id);
-	// 1) Redis에서 상태 로드 시도
+bool WorldHandler::HandleEnterWorldWithToken(
+	std::uint32_t dwProID,
+	std::uint32_t n,
+	const char* body,
+	std::size_t body_len)
+{
+	auto* req = proto::as<proto::C2S_enter_world_with_token>(body, body_len);
+	if (!req) {
+		spdlog::error("HandleEnterWorldWithToken invalid packet sid={}", n);
+		return false;
+	}
+
+	proto::S2C_enter_world_result res{};
+	res.account_id = req->account_id;
+	res.char_id = req->char_id;
+
+	const auto serial = GetLatestSerial(n);
+
+	if (!runtime().ConsumePendingWorldAuthTicket(
+		req->account_id,
+		req->char_id,
+		req->world_token))
+	{
+		res.ok = 0;
+		const auto h = proto::make_header(
+			static_cast<std::uint16_t>(proto::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(sizeof(res)));
+		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+
+		spdlog::warn(
+			"HandleEnterWorldWithToken denied sid={} serial={} account_id={} char_id={}",
+			n, serial, req->account_id, req->char_id);
+		return true;
+	}
+
+	const std::uint32_t world_code = 0;
+	const std::uint64_t char_id = req->char_id;
+
+	runtime().BindSessionCharId(n, char_id);
+
 	DemoCharState st{};
 	st.char_id = char_id;
-	st.gold = 1000;   // 신규 기본값
+	st.gold = 1000;
 	st.version = 1;
 
 	if (auto blob = runtime().TryLoadCharacterState(world_code, char_id))
@@ -70,42 +110,51 @@ void WorldHandler::OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex, 
 		spdlog::info("[Demo] no redis state, create new char_id={}", char_id);
 	}
 
-	// 2) 샘플 게임 로직: 접속 보상 gold +10
 	st.gold += 10;
 	st.version += 1;
 	const std::string out_blob = SerializeDemo(st);
 
-	// ✅ 케이스1(Actor당 인스턴스) : PlayerActor 생성/초기화 + 세션 바인딩
-	// - 이 람다는 char_id Actor shard에서 실행되므로, PlayerActor 상태를 락 없이 안전하게 만질 수 있다.
-	runtime().PostActor(char_id, [this, char_id, sid = dwIndex, serial = dwSerial]() {
+	runtime().PostActor(char_id, [this, char_id, sid = n, serial]() {
 		auto& a = runtime().GetOrCreatePlayerActor(char_id);
 		a.bind_session(sid, serial);
-		// 기본 전투 스탯(샘플)
 		a.combat.hp = 100;
 		a.combat.max_hp = 100;
 		a.combat.atk = 20;
 		a.combat.def = 3;
 		a.combat.gold = 1000;
-		// zone init
 		a.zone_id = 1;
 		a.pos = { 0,0 };
+
 		runtime().PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial]() {
 			auto& z = runtime().GetOrCreateZoneActor(1);
 			z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
 		});
 	});
 
-	// 3) Redis 저장 + dirty 마킹 (기존 함수 사용!)
 	runtime().CacheCharacterState(world_code, char_id, out_blob);
 
-	// ✅ 클라에게 "바인딩된 ActorId(=char_id)" 통지 (테스트/벤치용)
 	{
-		proto::S2C_actor_bound res{};
-		res.actor_id = char_id;
-		auto h = proto::make_header((std::uint16_t)proto::S2CMsg::actor_bound,
-			(std::uint16_t)sizeof(res));
-		Send(0, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&res));
+		proto::S2C_actor_bound bound{};
+		bound.actor_id = char_id;
+		auto h = proto::make_header(
+			static_cast<std::uint16_t>(proto::S2CMsg::actor_bound),
+			static_cast<std::uint16_t>(sizeof(bound)));
+		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&bound));
 	}
+
+	{
+		res.ok = 1;
+		auto h = proto::make_header(
+			static_cast<std::uint16_t>(proto::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(sizeof(res)));
+		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+	}
+
+	spdlog::info(
+		"HandleEnterWorldWithToken success sid={} serial={} account_id={} char_id={}",
+		n, serial, req->account_id, req->char_id);
+
+	return true;
 }
 
 bool WorldHandler::ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t dwSerial)

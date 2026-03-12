@@ -51,6 +51,38 @@ bool LoginWorldHandler::SendHelloRegister(
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
+bool LoginWorldHandler::SendAuthTicketUpsert(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
+    std::uint32_t dwSerial,
+    std::uint64_t account_id,
+    std::uint64_t char_id,
+    std::string_view token,
+    std::uint64_t expire_at_unix_sec)
+{
+    proto::internal::LoginAuthTicketUpsert pkt{};
+    pkt.account_id = account_id;
+    pkt.char_id = char_id;
+    pkt.expire_at_unix_sec = expire_at_unix_sec;
+
+    std::snprintf(
+        pkt.world_token,
+        sizeof(pkt.world_token),
+        "%.*s",
+        static_cast<int>(token.size()),
+        token.data());
+
+    const auto h = proto::make_header(
+        static_cast<std::uint16_t>(proto::internal::LoginWorldMsg::login_auth_ticket_upsert),
+        static_cast<std::uint16_t>(sizeof(pkt)));
+
+    spdlog::info(
+        "LoginWorldHandler::SendAuthTicketUpsert idx={} serial={} account_id={} char_id={} token={}",
+        dwIndex, dwSerial, account_id, char_id, token);
+
+    return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
 bool LoginWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
     _MSG_HEADER* pMsgHeader, char* pMsg)
 {
@@ -87,6 +119,20 @@ bool LoginWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
             if (on_register_ack_) {
                 on_register_ack_(n, GetLatestSerial(n), ack->server_id, ack->server_name, ack->listen_port);
             }
+            return true;
+        }
+
+    case proto::internal::LoginWorldMsg::login_auth_ticket_upsert_ack:
+        {
+            const auto* ack = proto::as<proto::internal::LoginAuthTicketUpsertAck>(pMsg, body_len);
+            if (!ack) {
+                spdlog::error("LoginWorldHandler invalid login_auth_ticket_upsert_ack packet. sid={}", n);
+                return false;
+            }
+
+            spdlog::info(
+                "LoginWorldHandler auth ticket ack. sid={} serial={} accepted={} account_id={} char_id={} token={}",
+                n, GetLatestSerial(n), static_cast<int>(ack->accepted), ack->account_id, ack->char_id, ack->world_token);
             return true;
         }
 

@@ -7,8 +7,12 @@
 #include "proto/common/packet_util.h"
 #include "proto/internal/login_world_proto.h"
 
-WorldLoginHandler::WorldLoginHandler(RegisterCallback on_register, UnregisterCallback on_unregister)
-    : on_register_(std::move(on_register))
+WorldLoginHandler::WorldLoginHandler(
+    svr::IWorldRuntime& runtime,
+    RegisterCallback on_register,
+    UnregisterCallback on_unregister)
+    : runtime_(runtime)
+    , on_register_(std::move(on_register))
     , on_unregister_(std::move(on_unregister))
 {
 }
@@ -67,6 +71,35 @@ bool WorldLoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
                     "WorldLoginHandler failed to send register ack. sid={} serial={} server_id={}",
                     n, serial, req->server_id);
             }
+            return true;
+        }
+
+    case proto::internal::LoginWorldMsg::login_auth_ticket_upsert:
+        {
+            const auto* req = proto::as<proto::internal::LoginAuthTicketUpsert>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("WorldLoginHandler invalid login_auth_ticket_upsert packet. sid={}", n);
+                return false;
+            }
+
+            const bool ok = runtime_.UpsertPendingWorldAuthTicket(
+                req->account_id,
+                req->char_id,
+                req->world_token,
+                req->expire_at_unix_sec);
+
+            proto::internal::LoginAuthTicketUpsertAck ack{};
+            ack.accepted = ok ? 1 : 0;
+            ack.account_id = req->account_id;
+            ack.char_id = req->char_id;
+            std::snprintf(ack.world_token, sizeof(ack.world_token), "%s", req->world_token);
+
+            const auto h = proto::make_header(
+                static_cast<std::uint16_t>(proto::internal::LoginWorldMsg::login_auth_ticket_upsert_ack),
+                static_cast<std::uint16_t>(sizeof(ack)));
+
+            const auto serial = GetLatestSerial(n);
+            Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&ack));
             return true;
         }
 

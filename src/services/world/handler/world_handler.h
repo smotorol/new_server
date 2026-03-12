@@ -42,6 +42,8 @@ protected:
 	const svr::IWorldRuntime& runtime() const noexcept { return runtime_; }
 
 private:
+	bool HandleEnterWorldWithToken(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+
 	bool HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 	bool HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 	bool HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t n);

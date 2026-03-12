@@ -13,6 +13,8 @@
 #include <optional>
 #include <chrono>
 #include <boost/asio.hpp>
+#include <unordered_map>
+
 #include "core/metrics/proc_metrics.h"
 
 #include "net/tcp/tcp_server.h"
@@ -86,6 +88,17 @@ namespace svr {
 
         void RequestBenchReset() noexcept;
         void RequestBenchMeasure(int seconds) noexcept;
+
+        bool UpsertPendingWorldAuthTicket(
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string token,
+            std::uint64_t expire_at_unix_sec);
+
+        bool ConsumePendingWorldAuthTicket(
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view token);
     private:
         bool OnRuntimeInit() override;
         void OnBeforeIoStop() override;
@@ -134,6 +147,14 @@ namespace svr {
             std::uint16_t listen_port = 0;
         };
 
+        struct PendingWorldAuthTicket
+        {
+            std::uint64_t account_id = 0;
+            std::uint64_t char_id = 0;
+            std::string token;
+            std::uint64_t expire_at_unix_sec = 0;
+        };
+
         void RegisterLoginLine(
             std::uint32_t sid, std::uint32_t serial,
             std::uint32_t server_id, std::string_view server_name,
@@ -151,6 +172,9 @@ namespace svr {
         mutable std::mutex service_line_mtx_;
         RemoteServiceLineState login_line_state_{};
         RemoteServiceLineState control_line_state_{};
+
+        mutable std::mutex auth_ticket_mtx_;
+        std::unordered_map<std::string, PendingWorldAuthTicket> pending_world_auth_tickets_;
 
         static constexpr std::uint32_t MAX_DB_SYC_DATA_NUM = 200000;
         std::vector<svr::dqs::DqsSlot> dqs_slots_;

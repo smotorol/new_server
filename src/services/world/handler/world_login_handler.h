@@ -5,6 +5,7 @@
 #include <string>
 
 #include "server_common/handler/service_line_handler_base.h"
+#include "services/world/runtime/i_world_runtime.h"
 
 class WorldLoginHandler : public dc::ServiceLineHandlerBase
 {
@@ -20,7 +21,10 @@ public:
         std::uint32_t sid,
         std::uint32_t serial)>;
 
-    WorldLoginHandler(RegisterCallback on_register, UnregisterCallback on_unregister);
+    WorldLoginHandler(
+        svr::IWorldRuntime& runtime,
+        RegisterCallback on_register,
+        UnregisterCallback on_unregister);
     ~WorldLoginHandler() override = default;
 
 protected:
@@ -44,6 +48,7 @@ private:
         bool accepted);
 
 private:
+    svr::IWorldRuntime& runtime_;
     RegisterCallback on_register_;
     UnregisterCallback on_unregister_;
 };
