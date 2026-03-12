@@ -86,6 +86,7 @@ bool WorldHandler::HandleEnterWorldWithToken(
 	const std::uint64_t char_id = req->char_id;
 
 	runtime().BindSessionCharId(n, char_id);
+	runtime().ReplaceWorldSessionForChar(char_id, n, serial);
 
 	DemoCharState st{};
 	st.char_id = char_id;
@@ -160,7 +161,9 @@ bool WorldHandler::HandleEnterWorldWithToken(
 bool WorldHandler::ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
 	if (GetLatestSerial(dwIndex) != dwSerial) {
-		spdlog::debug("WorldHandler::OnWorldDisconnected ignored (stale). index={} serial={}", dwIndex, dwSerial);
+		spdlog::debug(
+			"WorldHandler stale close ignored. index={} serial={}",
+			dwIndex, dwSerial);
 		return false;
 	}
 	return true;
@@ -168,77 +171,37 @@ bool WorldHandler::ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t dwSeri
 
 void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
-	// ✅ 늦게 도착한 disconnect(세션 재사용/재접속) 방지
-	// - 최신 serial이 아니면 이미 다른 세션이 같은 index를 쓰고 있는 것
-	if (GetLatestSerial(dwIndex) != dwSerial) {
-		spdlog::debug("OnWorldDisconnected ignored (stale). index={} serial={}", dwIndex, dwSerial);
-		return;
+	(void)dwProID;
+
+	const auto char_id = runtime().FindCharIdBySession(dwIndex);
+	if (char_id != 0) {
+		runtime().RemoveWorldSessionBinding(char_id, dwIndex, dwSerial);
 	}
 
-	// ===== 샘플: 로그아웃 시 즉시 DB 저장(flush_one_char) =====
-	{
-		const std::uint32_t world_code = 0;
-		std::uint64_t char_id = 0;
+	const auto unbound_char_id = runtime().UnbindSessionCharId(dwIndex);
 
-		char_id = runtime().UnbindSessionCharId(dwIndex);
+	if (unbound_char_id != 0) {
+		runtime().PostActor(unbound_char_id, [this, unbound_char_id, sid = dwIndex, serial = dwSerial]() {
+			auto& a = runtime().GetOrCreatePlayerActor(unbound_char_id);
 
-		if (char_id != 0) {
-			// ✅ 중요:
-			// HandleDisconnected_ -> CloseClientCheck 는 io 스레드에서 호출될 수 있다.
-			// ZoneActor 내부 컨테이너(players/cells)에 여기서 직접 접근하면 data race로 크래시가 난다.
-			// => 반드시 ActorSystem(PostActor)로 넘겨서, 각 Actor 소유 샤드에서만 상태를 바꾼다.
+			if (a.sid == sid && a.serial == serial) {
+				a.bind_session(0, 0);
+			}
 
-			auto self = shared_from_this(); // shared_ptr<dc::NetworkEXBase>
-
-			proto::S2C_player_despawn despawn{};
-			despawn.char_id = char_id;
-			auto despawn_h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn,
-				(std::uint16_t)sizeof(despawn));
-
-			runtime().PostActor(char_id, [this, self, world_code, char_id, despawn, despawn_h]() mutable {
-				// 1) PlayerActor: 오프라인 마킹 + zone_id 확보
-				auto& p = runtime().GetOrCreatePlayerActor(char_id);
-				const std::uint32_t zone_id = p.zone_id;
-				p.online = false;
-				p.sid = 0;
-				p.serial = 0;
-
-				// 2) ZoneActor: Leave + neighbors 수집
-				const std::uint64_t zid = svr::MakeZoneActorId(zone_id);
-				runtime().PostActor(zid, [this, self, zone_id, char_id, despawn, despawn_h]() mutable {
+			if (a.zone_id != 0) {
+				const auto zone_id = a.zone_id;
+				runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, unbound_char_id, zone_id]() {
 					auto& z = runtime().GetOrCreateZoneActor(zone_id);
-
-					// 중복 disconnect 등 멱등 처리
-					auto itp = z.players.find(char_id);
-					if (itp == z.players.end()) {
-						z.Leave(char_id);
-						return;
-					}
-
-					const auto neigh = z.GatherNeighborsVec(itp->second.cx, itp->second.cy);
-					z.Leave(char_id);
-
-					// 3) 수신자 Actor에서 세션 체크 후 send
-					for (auto other_id : neigh) {
-						if (other_id == char_id) continue;
-						auto it = z.players.find(other_id);
-						if (it == z.players.end()) continue;
-						if (it->second.sid == 0 || it->second.serial == 0) continue;
-						self->Send(0, it->second.sid, it->second.serial, despawn_h, reinterpret_cast<const char*>(&despawn));
-					}
+					z.Leave(unbound_char_id);
 				});
-
-				// 4) Actor 제거 + DB flush (PlayerActor 샤드)
-				runtime().EraseActor(char_id);
-				runtime().RequestFlushCharacter(world_code, char_id);
-			});
-		}
-
+			}
+		});
 	}
 
-	spdlog::info("WorldHandler::OnWorldDisconnected index={} serial={}", dwIndex, dwSerial);
+	spdlog::info(
+		"WorldHandler::OnWorldDisconnected index={} serial={} char_id={}",
+		dwIndex, dwSerial, unbound_char_id);
 }
-
 bool WorldHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
 	auto* req = proto::as<proto::C2S_open_world_notice>(body, body_len);

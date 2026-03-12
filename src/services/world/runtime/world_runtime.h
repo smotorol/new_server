@@ -99,6 +99,17 @@ namespace svr {
             std::uint64_t account_id,
             std::uint64_t char_id,
             std::string_view token);
+
+        bool ReplaceWorldSessionForChar(
+            std::uint64_t char_id,
+            std::uint32_t new_sid,
+            std::uint32_t new_serial);
+
+        void RemoveWorldSessionBinding(
+            std::uint64_t char_id,
+            std::uint32_t sid,
+            std::uint32_t serial);
+
     private:
         bool OnRuntimeInit() override;
         void OnBeforeIoStop() override;
@@ -155,6 +166,12 @@ namespace svr {
             std::uint64_t expire_at_unix_sec = 0;
         };
 
+        struct WorldSessionRef
+        {
+            std::uint32_t sid = 0;
+            std::uint32_t serial = 0;
+        };
+
         void RegisterLoginLine(
             std::uint32_t sid, std::uint32_t serial,
             std::uint32_t server_id, std::string_view server_name,
@@ -175,6 +192,9 @@ namespace svr {
 
         mutable std::mutex auth_ticket_mtx_;
         std::unordered_map<std::string, PendingWorldAuthTicket> pending_world_auth_tickets_;
+
+        mutable std::mutex world_session_mtx_;
+        std::unordered_map<std::uint64_t, WorldSessionRef> world_sessions_by_char_;
 
         static constexpr std::uint32_t MAX_DB_SYC_DATA_NUM = 200000;
         std::vector<svr::dqs::DqsSlot> dqs_slots_;

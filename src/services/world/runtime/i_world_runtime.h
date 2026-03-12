@@ -39,6 +39,16 @@ namespace svr {
 			std::uint64_t char_id,
 			std::string_view token) = 0;
 
+		virtual bool ReplaceWorldSessionForChar(
+			std::uint64_t char_id,
+			std::uint32_t new_sid,
+			std::uint32_t new_serial) = 0;
+
+		virtual void RemoveWorldSessionBinding(
+			std::uint64_t char_id,
+			std::uint32_t sid,
+			std::uint32_t serial) = 0;
+
 		virtual bool PushDQSData(std::uint8_t process_code, std::uint8_t qry_case, const char* data, int size) = 0;
 
 		virtual void CacheCharacterState(std::uint32_t world_code, std::uint64_t char_id, const std::string& blob) = 0;

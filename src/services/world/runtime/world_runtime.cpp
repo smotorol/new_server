@@ -174,7 +174,11 @@ namespace svr {
 	}
 
 	void WorldRuntime::OnAfterIoStop() {
-		lines_.stop_all_reverse();
+		{
+			std::lock_guard lk(world_session_mtx_);
+			world_sessions_by_char_.clear();
+			lines_.stop_all_reverse();
+		}
 
 		spdlog::info("WorldServer released.");
 	}
@@ -1504,5 +1508,77 @@ namespace svr {
 			account_id, char_id, token);
 
 		return true;
+	}
+
+	bool WorldRuntime::ReplaceWorldSessionForChar(
+		std::uint64_t char_id,
+		std::uint32_t new_sid,
+		std::uint32_t new_serial)
+	{
+		if (char_id == 0 || new_sid == 0 || new_serial == 0) {
+			return false;
+		}
+
+		WorldSessionRef old{};
+		bool has_old = false;
+
+		{
+			std::lock_guard lk(world_session_mtx_);
+
+			auto it = world_sessions_by_char_.find(char_id);
+			if (it != world_sessions_by_char_.end()) {
+				if (!(it->second.sid == new_sid && it->second.serial == new_serial)) {
+					old = it->second;
+					has_old = true;
+				}
+			}
+
+			world_sessions_by_char_[char_id] = WorldSessionRef{ new_sid, new_serial };
+		}
+
+		if (has_old) {
+			auto* server = lines_.entry(svr::WorldLineId::World).host.server();
+			if (!server) {
+				spdlog::warn(
+					"ReplaceWorldSessionForChar: world server null. char_id={} old_sid={} old_serial={}",
+					char_id, old.sid, old.serial);
+				return true;
+			}
+
+			spdlog::warn(
+				"Duplicate world session detected. closing old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={}",
+				char_id, old.sid, old.serial, new_sid, new_serial);
+
+			server->close(old.sid, old.serial);
+		}
+
+		return true;
+	}
+
+	void WorldRuntime::RemoveWorldSessionBinding(
+		std::uint64_t char_id,
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		if (char_id == 0 || sid == 0 || serial == 0) {
+			return;
+		}
+
+		std::lock_guard lk(world_session_mtx_);
+
+		auto it = world_sessions_by_char_.find(char_id);
+		if (it == world_sessions_by_char_.end()) {
+			return;
+		}
+
+		if (it->second.sid != sid || it->second.serial != serial) {
+			return;
+		}
+
+		world_sessions_by_char_.erase(it);
+
+		spdlog::info(
+			"World session binding removed. char_id={} sid={} serial={}",
+			char_id, sid, serial);
 	}
 }
