@@ -243,11 +243,11 @@ namespace svr {
 		}
 
 		timer->async_wait(
-			[this, sid, serial, key](const boost::system::error_code& ec) {
+			[this, sid, serial, key, timer](const boost::system::error_code& ec) {
 				{
 					std::lock_guard lk(delayed_world_close_mtx_);
 					auto it = delayed_world_close_timers_.find(key);
-					if (it != delayed_world_close_timers_.end()) {
+					if (it != delayed_world_close_timers_.end() && it->second == timer) {
 						delayed_world_close_timers_.erase(it);
 					}
 				}
@@ -1702,6 +1702,49 @@ namespace svr {
 		}
 
 		return true;
+	}
+
+	bool WorldRuntime::CancelDelayedWorldCloseTimer_(
+		std::uint32_t sid,
+		std::uint32_t serial) noexcept
+	{
+		if (sid == 0 || serial == 0) {
+			return false;
+		}
+
+		std::shared_ptr<boost::asio::steady_timer> timer;
+
+		{
+			std::lock_guard lk(delayed_world_close_mtx_);
+
+			const DelayedCloseKey key{ sid, serial };
+			auto it = delayed_world_close_timers_.find(key);
+			if (it == delayed_world_close_timers_.end()) {
+				return false;
+			}
+
+			timer = std::move(it->second);
+			delayed_world_close_timers_.erase(it);
+		}
+
+		if (timer) {
+			boost::system::error_code ec;
+			timer->cancel(ec);
+		}
+
+		return true;
+	}
+
+	void WorldRuntime::CancelDelayedWorldClose(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		if (CancelDelayedWorldCloseTimer_(sid, serial)) {
+			spdlog::info(
+				"Delayed world close canceled early. sid={} serial={}",
+				sid,
+				serial);
+		}
 	}
 
 	void WorldRuntime::RemoveWorldSessionBinding(

@@ -113,6 +113,10 @@ namespace svr {
             std::uint32_t sid,
             std::uint32_t serial);
 
+        void CancelDelayedWorldClose(
+            std::uint32_t sid,
+            std::uint32_t serial) override;
+
     private:
         bool OnRuntimeInit() override;
         void OnBeforeIoStop() override;
@@ -130,6 +134,9 @@ namespace svr {
         bool DatabaseInit();
         bool NetworkInit();
         void InitHostedLineDescriptors_() noexcept;
+        bool CancelDelayedWorldCloseTimer_(
+            std::uint32_t sid,
+            std::uint32_t serial) noexcept;
 
         bool InitRedis();
         void ScheduleFlush_();

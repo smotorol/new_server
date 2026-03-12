@@ -49,6 +49,10 @@ namespace svr {
 			std::uint64_t char_id,
 			std::uint32_t sid,
 			std::uint32_t serial) = 0;
+		
+		virtual void CancelDelayedWorldClose(
+			std::uint32_t sid,
+			std::uint32_t serial) = 0;
 
 		virtual bool PushDQSData(std::uint8_t process_code, std::uint8_t qry_case, const char* data, int size) = 0;
 
