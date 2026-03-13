@@ -241,8 +241,10 @@ namespace svr {
 
 			it->second.timer = timer;
 			it->second.armed = true;
-			it->second.trace_id = trace_id;
-			it->second.char_id = char_id;
+			it->second.log_ctx.trace_id = trace_id;
+			it->second.log_ctx.char_id = char_id;
+			it->second.log_ctx.sid = sid;
+			it->second.log_ctx.serial = serial;
 		}
 
 		timer->async_wait(
@@ -263,11 +265,11 @@ namespace svr {
 			}
 
 			if (ec) {
-					if (fired_entry.trace_id != 0) {
+				if (fired_entry.log_ctx.trace_id != 0) {
 						spdlog::warn(
 							"[dup_login trace={}] delayed close timer failed. char_id={} sid={} serial={} ec={}",
-							fired_entry.trace_id,
-							fired_entry.char_id,
+							fired_entry.log_ctx.trace_id,
+							fired_entry.log_ctx.char_id,
 							sid,
 							serial,
 							ec.message());
@@ -275,7 +277,7 @@ namespace svr {
 					else {
 						spdlog::warn(
 							"[session_close] delayed close timer failed. char_id={} sid={} serial={} ec={}",
-							fired_entry.char_id,
+							fired_entry.log_ctx.char_id,
 							sid,
 							serial,
 							ec.message());
@@ -290,20 +292,14 @@ namespace svr {
 					LogSessionCloseEvent_(
 						spdlog::level::warn,
 						"delayed close skipped. world server or handler null",
-						fired_entry.trace_id,
-						fired_entry.char_id,
-						sid,
-						serial);
+						fired_entry.log_ctx);
 				return;
 			}
 
 			LogSessionCloseEvent_(
 				spdlog::level::info,
 				"delayed close fired",
-				fired_entry.trace_id,
-				fired_entry.char_id,
-				sid,
-				serial);
+					fired_entry.log_ctx);
 
 			world_handler->Close(
 				static_cast<std::uint32_t>(svr::WorldLineId::World),
@@ -358,10 +354,7 @@ namespace svr {
 			LogSessionCloseEvent_(
 				spdlog::level::info,
 				"delayed close canceled/released",
-				released_entry.trace_id,
-				released_entry.char_id,
-				sid,
-				serial);
+				released_entry.log_ctx);
 		}
 	}
 
@@ -406,30 +399,24 @@ namespace svr {
 		LogSessionCloseEvent_(
 			spdlog::level::info,
 			"close post-processing released delayed close entry",
-			released_entry.trace_id,
-			released_entry.char_id,
-			sid,
-			serial);
+			released_entry.log_ctx);
 
 		if (found_char_id != 0) {
-			LogSessionCloseProcessed_(
-				spdlog::level::info,
-				"world session closed processed on duplicate-login path",
-				released_entry.trace_id,
-				found_char_id,
-				sid,
-				serial,
-				removed);
-		}
-		else {
-			LogSessionCloseEvent_(
-				spdlog::level::info,
-				"world session closed processed on duplicate-login path. char binding not found",
-				released_entry.trace_id,
-				released_entry.char_id,
-				sid,
-				serial);
-		}
+			SessionCloseLogContext log_ctx = released_entry.log_ctx;
+			log_ctx.char_id = found_char_id;
+
+ 			LogSessionCloseProcessed_(
+ 				spdlog::level::info,
+ 				"world session closed processed on duplicate-login path",
+				log_ctx,
+ 				removed);
+ 		}
+ 		else {
+ 			LogSessionCloseEvent_(
+ 				spdlog::level::info,
+ 				"world session closed processed on duplicate-login path. char binding not found",
+				released_entry.log_ctx);
+ 		}
 	}
 
 	void WorldRuntime::ProcessNormalSessionClosedOnIo_(
@@ -485,7 +472,7 @@ namespace svr {
 		DelayedCloseEntry released_entry{};
 		const bool released = ReleaseDelayedWorldCloseReservation_(sid, serial, &released_entry);
 
-		if (released && released_entry.trace_id != 0) {
+		if (released && released_entry.log_ctx.trace_id != 0) {
 			ProcessDuplicateLoginSessionClosedOnIo_(
 				released_entry,
 				sid,
@@ -516,19 +503,16 @@ namespace svr {
 			LogSessionCloseEvent_(
 				spdlog::level::info,
 				"cancel delayed close timer on shutdown",
-				entry.trace_id,
-				entry.char_id,
-				key.sid,
-				key.serial);
+				entry.log_ctx);
 
 			entry.timer->cancel();
 		}
 	}
 
 	void WorldRuntime::ProcessDuplicateWorldSessionKickOnIo_(
-		DuplicateLoginTraceContext ctx)
+		DuplicateLoginLogContext ctx)
 	{
-		if (ctx.char_id == 0 || ctx.old_session.sid == 0 || ctx.old_session.serial == 0) {
+		if (ctx.char_id == 0 || ctx.sid == 0 || ctx.serial == 0) {
 			return;
 		}
 
@@ -556,8 +540,8 @@ namespace svr {
 				ctx);
 
 			const bool armed = ArmReservedDelayedWorldClose_(
-				ctx.old_session.sid,
-				ctx.old_session.serial,
+				ctx.sid,
+				ctx.serial,
 				kDuplicateKickCloseDelay_,
 				ctx.trace_id,
 				ctx.char_id);
@@ -572,8 +556,8 @@ namespace svr {
 					"[dup_login trace={}] delayed close armed. char_id={} old_sid={} old_serial={} delay_ms={}",
 					ctx.trace_id,
 					ctx.char_id,
-					ctx.old_session.sid,
-					ctx.old_session.serial,
+					ctx.sid,
+					ctx.serial,
 					kDuplicateKickCloseDelay_.count());
 			}
 			else {
@@ -1920,68 +1904,62 @@ namespace svr {
 	void WorldRuntime::LogSessionCloseEvent_(
 		spdlog::level::level_enum level,
 		std::string_view event_text,
-		std::uint64_t trace_id,
-		std::uint64_t char_id,
-		std::uint32_t sid,
-		std::uint32_t serial) const
+		const SessionCloseLogContext& ctx) const
 	{
-		if (trace_id != 0) {
-			spdlog::log(
-				level,
-				"[dup_login trace={}] {} char_id={} sid={} serial={}",
-				trace_id,
-				event_text,
-				char_id,
-				sid,
-				serial);
+		if (ctx.trace_id != 0) {
+ 			spdlog::log(
+ 				level,
+ 				"[dup_login trace={}] {} char_id={} sid={} serial={}",
+				ctx.trace_id,
+ 				event_text,
+				ctx.char_id,
+				ctx.sid,
+				ctx.serial);
 		}
 		else {
 			spdlog::log(
 				level,
 				"[session_close] {} char_id={} sid={} serial={}",
 				event_text,
-				char_id,
-				sid,
-				serial);
+				ctx.char_id,
+				ctx.sid,
+				ctx.serial);
 		}
 	}
 
 	void WorldRuntime::LogSessionCloseProcessed_(
 		spdlog::level::level_enum level,
 		std::string_view event_text,
-		std::uint64_t trace_id,
-		std::uint64_t char_id,
-		std::uint32_t sid,
-		std::uint32_t serial,
+		const SessionCloseLogContext& ctx,
 		bool removed) const
 	{
-		if (trace_id != 0) {
-			spdlog::log(
-				level,
-				"[dup_login trace={}] {} char_id={} sid={} serial={} removed={}",
-				trace_id,
-				event_text,
-				char_id,
-				sid,
-				serial,
-				static_cast<int>(removed));
-		}
-		else {
-			spdlog::log(
-				level,
-				"[session_close] {} char_id={} sid={} serial={} removed={}",
-				event_text,
-				char_id,
-				sid,
-				serial,
-				static_cast<int>(removed));
-		}
+		if (ctx.trace_id != 0) {
+ 			spdlog::log(
+ 				level,
+ 				"[dup_login trace={}] {} char_id={} sid={} serial={} removed={}",
+				ctx.trace_id,
+ 				event_text,
+				ctx.char_id,
+				ctx.sid,
+				ctx.serial,
+ 				static_cast<int>(removed));
+ 		}
+ 		else {
+ 			spdlog::log(
+ 				level,
+ 				"[session_close] {} char_id={} sid={} serial={} removed={}",
+ 				event_text,
+				ctx.char_id,
+				ctx.sid,
+				ctx.serial,
+ 				static_cast<int>(removed));
+ 		}
 	}
 
 	void WorldRuntime::LogDuplicateWorldSessionEvent_(
 		spdlog::level::level_enum level,
 		std::string_view event_text,
-		const DuplicateLoginTraceContext& ctx) const
+		const DuplicateLoginLogContext& ctx) const
 	{
 		spdlog::log(
 			level,
@@ -1989,8 +1967,8 @@ namespace svr {
 			ctx.trace_id,
 			event_text,
 			ctx.char_id,
-			ctx.old_session.sid,
-			ctx.old_session.serial,
+			ctx.sid,
+			ctx.serial,
 			ctx.new_sid,
 			ctx.new_serial,
 			ctx.kick_reason);
@@ -1999,7 +1977,7 @@ namespace svr {
 	void WorldRuntime::LogDuplicateWorldSessionCloseDecision_(
 		spdlog::level::level_enum level,
 		std::string_view decision_text,
-		const DuplicateLoginTraceContext& ctx) const
+		const DuplicateLoginLogContext& ctx) const
 	{
 		spdlog::log(
 			level,
@@ -2007,8 +1985,8 @@ namespace svr {
 			ctx.trace_id,
 			decision_text,
 			ctx.char_id,
-			ctx.old_session.sid,
-			ctx.old_session.serial,
+			ctx.sid,
+			ctx.serial,
 			ctx.new_sid,
 			ctx.new_serial,
 			ctx.kick_reason);
@@ -2057,9 +2035,9 @@ namespace svr {
 	}
 
 	void WorldRuntime::EnqueueDuplicateWorldSessionKickClose_(
-		DuplicateLoginTraceContext ctx)
+		DuplicateLoginLogContext ctx)
 	{
-		if (ctx.char_id == 0 || ctx.old_session.sid == 0 || ctx.old_session.serial == 0) {
+		if (ctx.char_id == 0 || ctx.sid == 0 || ctx.serial == 0) {
 			return;
 		}
 
@@ -2076,9 +2054,9 @@ namespace svr {
 	}
 
 	bool WorldRuntime::TryBeginDuplicateWorldSessionKickClose_(
-		const DuplicateLoginTraceContext& ctx)
+		const DuplicateLoginLogContext& ctx)
 	{
-		if (!TryReserveDelayedWorldClose_(ctx.old_session.sid, ctx.old_session.serial)) {
+		if (!TryReserveDelayedWorldClose_(ctx.sid, ctx.serial)) {
 			LogDuplicateWorldSessionEvent_(
 				spdlog::level::info,
 				"close reservation already exists -> skip duplicate kick",
@@ -2096,7 +2074,7 @@ namespace svr {
 
 	template<class HandlerT>
 	bool WorldRuntime::SendDuplicateWorldSessionKick_(
-		const DuplicateLoginTraceContext& ctx,
+		const DuplicateLoginLogContext& ctx,
 		HandlerT& world_handler)
 	{
 		proto::S2C_kick_notify kick{};
@@ -2109,22 +2087,22 @@ namespace svr {
 
 		return world_handler.Send(
 			static_cast<std::uint32_t>(svr::WorldLineId::World),
-			ctx.old_session.sid,
-			ctx.old_session.serial,
+			ctx.sid,
+			ctx.serial,
 			h,
 			reinterpret_cast<const char*>(&kick));
 	}
 
 	template<class HandlerT>
 	void WorldRuntime::CloseDuplicateWorldSessionImmediately_(
-		const DuplicateLoginTraceContext& ctx,
+		const DuplicateLoginLogContext& ctx,
 		std::string_view reason,
 		HandlerT& world_handler)
 	{
 		DelayedCloseEntry released_entry{};
 		ReleaseDelayedWorldCloseReservation_(
-			ctx.old_session.sid,
-			ctx.old_session.serial,
+			ctx.sid,
+			ctx.serial,
 			&released_entry);
 
 		LogDuplicateWorldSessionCloseDecision_(
@@ -2134,8 +2112,8 @@ namespace svr {
 
 		world_handler.Close(
 			static_cast<std::uint32_t>(svr::WorldLineId::World),
-			ctx.old_session.sid,
-			ctx.old_session.serial);
+			ctx.sid,
+			ctx.serial);
 	}
 
 	bool WorldRuntime::ReplaceWorldSessionForCharWithKick(
@@ -2156,10 +2134,11 @@ namespace svr {
 			old_session);
 
 		if (has_old) {
-			DuplicateLoginTraceContext ctx{};
+			DuplicateLoginLogContext ctx{};
 			ctx.trace_id = duplicate_login_trace_seq_.fetch_add(1, std::memory_order_relaxed);
 			ctx.char_id = char_id;
-			ctx.old_session = old_session;
+			ctx.sid = old_session.sid;
+			ctx.serial = old_session.serial;
 			ctx.new_sid = new_sid;
 			ctx.new_serial = new_serial;
 			ctx.kick_reason = kick_reason;

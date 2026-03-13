@@ -87,14 +87,23 @@ namespace svr {
 			std::uint32_t serial = 0;
 		};
 
-		struct DuplicateLoginTraceContext
+		struct DuplicateLoginLogContext
 		{
 			std::uint64_t trace_id = 0;
 			std::uint64_t char_id = 0;
-			WorldSessionRef old_session{};
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
 			std::uint32_t new_sid = 0;
 			std::uint32_t new_serial = 0;
 			std::uint16_t kick_reason = 0;
+		};
+
+		struct SessionCloseLogContext
+		{
+			std::uint64_t trace_id = 0;
+			std::uint64_t char_id = 0;
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
 		};
 
 		struct DelayedCloseKey
@@ -123,8 +132,7 @@ namespace svr {
 		{
 			std::shared_ptr<boost::asio::steady_timer> timer;
 			bool armed = false;
-			std::uint64_t trace_id = 0;
-			std::uint64_t char_id = 0;
+			SessionCloseLogContext log_ctx{};
 		};
 	public:
 		WorldRuntime();
@@ -194,7 +202,7 @@ namespace svr {
 	private:
 		void CancelDelayedWorldCloseTimers_() noexcept;
 		void ProcessDuplicateWorldSessionKickOnIo_(
-			DuplicateLoginTraceContext ctx);
+			DuplicateLoginLogContext ctx);
 		void ProcessWorldSessionClosedOnIo_(
 			std::uint32_t sid,
 			std::uint32_t serial);
@@ -216,38 +224,32 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial,
 			DelayedCloseEntry* released_entry = nullptr) noexcept;
-        void ProcessDuplicateLoginSessionClosedOnIo_(
-            const DelayedCloseEntry& released_entry,
-            std::uint32_t sid,
-            std::uint32_t serial);
-        void ProcessNormalSessionClosedOnIo_(
-            std::uint32_t sid,
-            std::uint32_t serial);
+		void ProcessDuplicateLoginSessionClosedOnIo_(
+			const DelayedCloseEntry& released_entry,
+			std::uint32_t sid,
+			std::uint32_t serial);
+		void ProcessNormalSessionClosedOnIo_(
+			std::uint32_t sid,
+			std::uint32_t serial);
 
 		void LogSessionCloseEvent_(
 			spdlog::level::level_enum level,
 			std::string_view event_text,
-			std::uint64_t trace_id,
-			std::uint64_t char_id,
-			std::uint32_t sid,
-			std::uint32_t serial) const;
+			const SessionCloseLogContext& ctx) const;
 		void LogSessionCloseProcessed_(
 			spdlog::level::level_enum level,
 			std::string_view event_text,
-			std::uint64_t trace_id,
-			std::uint64_t char_id,
-			std::uint32_t sid,
-			std::uint32_t serial,
+			const SessionCloseLogContext& ctx,
 			bool removed) const;
 
 		void LogDuplicateWorldSessionEvent_(
 			spdlog::level::level_enum level,
 			std::string_view event_text,
-			const DuplicateLoginTraceContext& ctx) const;
+			const DuplicateLoginLogContext& ctx) const;
 		void LogDuplicateWorldSessionCloseDecision_(
 			spdlog::level::level_enum level,
 			std::string_view decision_text,
-			const DuplicateLoginTraceContext& ctx) const;
+			const DuplicateLoginLogContext& ctx) const;
 
 		bool UpdateWorldSessionBindingForLogin_(
 			std::uint64_t char_id,
@@ -255,16 +257,16 @@ namespace svr {
 			std::uint32_t new_serial,
 			WorldSessionRef& old_session);
 		void EnqueueDuplicateWorldSessionKickClose_(
-			DuplicateLoginTraceContext ctx);
+			DuplicateLoginLogContext ctx);
 		bool TryBeginDuplicateWorldSessionKickClose_(
-			const DuplicateLoginTraceContext& ctx);
+			const DuplicateLoginLogContext& ctx);
 		template<class HandlerT>
 		bool SendDuplicateWorldSessionKick_(
-			const DuplicateLoginTraceContext& ctx,
+			const DuplicateLoginLogContext& ctx,
 			HandlerT& world_handler);
 		template<class HandlerT>
 		void CloseDuplicateWorldSessionImmediately_(
-			const DuplicateLoginTraceContext& ctx,
+			const DuplicateLoginLogContext& ctx,
 			std::string_view reason,
 			HandlerT& world_handler);
 		bool CancelDelayedWorldCloseTimer_(
