@@ -62,6 +62,58 @@ namespace svr {
     constexpr std::uint16_t PORT_CONTROL = 27789;
 
     class WorldRuntime final : public dc::ServerRuntimeBase, public IWorldRuntime {
+    private:
+        struct RemoteServiceLineState
+        {
+            bool registered = false;
+            std::uint32_t sid = 0;
+            std::uint32_t serial = 0;
+            std::uint32_t server_id = 0;
+            std::string server_name;
+            std::uint16_t listen_port = 0;
+        };
+
+        struct PendingWorldAuthTicket
+        {
+            std::uint64_t account_id = 0;
+            std::uint64_t char_id = 0;
+            std::string token;
+            std::uint64_t expire_at_unix_sec = 0;
+        };
+
+        struct WorldSessionRef
+        {
+            std::uint32_t sid = 0;
+            std::uint32_t serial = 0;
+        };
+
+        struct DelayedCloseKey
+        {
+            std::uint32_t sid = 0;
+            std::uint32_t serial = 0;
+
+            bool operator==(const DelayedCloseKey& rhs) const noexcept
+            {
+                return sid == rhs.sid && serial == rhs.serial;
+            }
+        };
+
+        struct DelayedCloseKeyHash
+        {
+            std::size_t operator()(const DelayedCloseKey& k) const noexcept
+            {
+                const std::uint64_t packed =
+                    (static_cast<std::uint64_t>(k.sid) << 32) |
+                    static_cast<std::uint64_t>(k.serial);
+                return std::hash<std::uint64_t>{}(packed);
+            }
+        };
+
+        struct DelayedCloseEntry
+        {
+            std::shared_ptr<boost::asio::steady_timer> timer;
+            bool armed = false;
+        };
     public:
         WorldRuntime();
         ~WorldRuntime();
@@ -117,6 +169,10 @@ namespace svr {
             std::uint32_t sid,
             std::uint32_t serial) override;
 
+        void HandleWorldSessionClosed(
+            std::uint32_t sid,
+            std::uint32_t serial) override;
+
     private:
         bool OnRuntimeInit() override;
         void OnBeforeIoStop() override;
@@ -124,16 +180,31 @@ namespace svr {
         void OnMainLoopTick(std::chrono::steady_clock::time_point now) override;
 
     private:
-        void ScheduleDelayedWorldClose_(
-            std::uint32_t sid,
-            std::uint32_t serial,
-            std::chrono::milliseconds delay);
         void CancelDelayedWorldCloseTimers_() noexcept;
+        void ProcessDuplicateWorldSessionKickOnIo_(
+            std::uint64_t char_id,
+            WorldSessionRef old_session,
+            std::uint32_t new_sid,
+            std::uint32_t new_serial,
+            std::uint16_t kick_reason);
+        void ProcessWorldSessionClosedOnIo_(
+            std::uint32_t sid,
+            std::uint32_t serial);
 
         bool LoadIniFile();
         bool DatabaseInit();
         bool NetworkInit();
         void InitHostedLineDescriptors_() noexcept;
+        bool TryReserveDelayedWorldClose_(
+            std::uint32_t sid,
+            std::uint32_t serial) noexcept;
+        bool ArmReservedDelayedWorldClose_(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::chrono::milliseconds delay);
+        bool ReleaseDelayedWorldCloseReservation_(
+            std::uint32_t sid,
+            std::uint32_t serial) noexcept;
         bool CancelDelayedWorldCloseTimer_(
             std::uint32_t sid,
             std::uint32_t serial) noexcept;
@@ -159,56 +230,11 @@ namespace svr {
         int logic_thread_count_ = 1;
 
         boost::asio::steady_timer flush_timer_{ io_ };
+        boost::asio::strand<boost::asio::io_context::executor_type> duplicate_session_strand_{ io_.get_executor() };
 
         std::unique_ptr<cache::RedisCache> redis_cache_;
 
         dc::BasicLineRegistry<svr::WorldLineId, svr::kWorldLineCount> lines_{};
-
-        struct RemoteServiceLineState
-        {
-            bool registered = false;
-            std::uint32_t sid = 0;
-            std::uint32_t serial = 0;
-            std::uint32_t server_id = 0;
-            std::string server_name;
-            std::uint16_t listen_port = 0;
-        };
-
-        struct PendingWorldAuthTicket
-        {
-            std::uint64_t account_id = 0;
-            std::uint64_t char_id = 0;
-            std::string token;
-            std::uint64_t expire_at_unix_sec = 0;
-        };
-
-        struct WorldSessionRef
-        {
-            std::uint32_t sid = 0;
-            std::uint32_t serial = 0;
-        };
-
-        struct DelayedCloseKey
-        {
-            std::uint32_t sid = 0;
-            std::uint32_t serial = 0;
-
-            bool operator==(const DelayedCloseKey& rhs) const noexcept
-            {
-                return sid == rhs.sid && serial == rhs.serial;
-            }
-        };
-
-        struct DelayedCloseKeyHash
-        {
-            std::size_t operator()(const DelayedCloseKey& k) const noexcept
-            {
-                const std::uint64_t packed =
-                    (static_cast<std::uint64_t>(k.sid) << 32) |
-                    static_cast<std::uint64_t>(k.serial);
-                return std::hash<std::uint64_t>{}(packed);
-            }
-        };
 
         void RegisterLoginLine(
             std::uint32_t sid, std::uint32_t serial,
@@ -237,8 +263,8 @@ namespace svr {
         std::mutex delayed_world_close_mtx_;
         std::unordered_map<
             DelayedCloseKey,
-            std::shared_ptr<boost::asio::steady_timer>,
-            DelayedCloseKeyHash> delayed_world_close_timers_;
+            DelayedCloseEntry,
+            DelayedCloseKeyHash> delayed_world_close_entries_;
 
         static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
 

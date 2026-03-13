@@ -177,12 +177,7 @@ void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, st
 {
 	(void)dwProID;
 
-	runtime().CancelDelayedWorldClose(dwIndex, dwSerial);
-
-	const auto char_id = runtime().FindCharIdBySession(dwIndex);
-	if (char_id != 0) {
-		runtime().RemoveWorldSessionBinding(char_id, dwIndex, dwSerial);
-	}
+	runtime().HandleWorldSessionClosed(dwIndex, dwSerial);
 
 	const auto unbound_char_id = runtime().UnbindSessionCharId(dwIndex);
 

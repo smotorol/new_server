@@ -54,6 +54,10 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial) = 0;
 
+		virtual void HandleWorldSessionClosed(
+			std::uint32_t sid,
+			std::uint32_t serial) = 0;
+
 		virtual bool PushDQSData(std::uint8_t process_code, std::uint8_t qry_case, const char* data, int size) = 0;
 
 		virtual void CacheCharacterState(std::uint32_t world_code, std::uint64_t char_id, const std::string& blob) = 0;
