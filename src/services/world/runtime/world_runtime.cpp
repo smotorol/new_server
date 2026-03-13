@@ -397,7 +397,7 @@ namespace svr {
 				spdlog::info(
 					"[dup_login trace={}] duplicate-login close unbind result kind={} char_id={} sid={} serial={}",
 					released_entry.log_ctx.trace_id,
-					static_cast<int>(unbind_result.kind),
+					ToString(unbind_result.kind),
 					found_char_id,
 					sid,
 					serial);
@@ -426,14 +426,14 @@ namespace svr {
  				sid,
  				serial,
 				static_cast<int>(removed),
-				static_cast<int>(unbind_result.kind));
+				ToString(unbind_result.kind));
  		}
  		else {
  			spdlog::info(
 				"[session_close] world session closed processed on normal path. char binding not found. sid={} serial={} unbind_kind={}",
 				sid,
 				serial,
-				static_cast<int>(unbind_result.kind));
+				ToString(unbind_result.kind));
 		}
 	}
 
@@ -1968,6 +1968,40 @@ namespace svr {
 			ctx.kick_reason);
 	}
 
+	const char* WorldRuntime::ToString(BindWorldSessionResultKind kind) noexcept
+	{
+		switch (kind) {
+		case BindWorldSessionResultKind::InvalidInput:
+			return "InvalidInput";
+		case BindWorldSessionResultKind::Inserted:
+			return "Inserted";
+		case BindWorldSessionResultKind::ReplacedOld:
+			return "ReplacedOld";
+		case BindWorldSessionResultKind::AlreadyBoundSameSession:
+			return "AlreadyBoundSameSession";
+		default:
+			return "UnknownBindWorldSessionResult";
+		}
+	}
+
+	const char* WorldRuntime::ToString(UnbindWorldSessionResultKind kind) noexcept
+	{
+		switch (kind) {
+		case UnbindWorldSessionResultKind::InvalidInput:
+			return "InvalidInput";
+		case UnbindWorldSessionResultKind::NotFoundBySid:
+			return "NotFoundBySid";
+		case UnbindWorldSessionResultKind::CharBindingMissing:
+			return "CharBindingMissing";
+		case UnbindWorldSessionResultKind::SerialMismatch:
+			return "SerialMismatch";
+		case UnbindWorldSessionResultKind::Removed:
+			return "Removed";
+		default:
+			return "UnknownUnbindWorldSessionResult";
+		}
+	}
+
 	WorldRuntime::BindWorldSessionResult WorldRuntime::BindWorldSessionByChar_(
 		std::uint64_t char_id,
 		std::uint32_t sid,
@@ -2066,7 +2100,7 @@ namespace svr {
 			char_id,
 			new_sid,
 			new_serial,
-			static_cast<int>(bind_result.kind),
+			ToString(bind_result.kind),
 			static_cast<int>(has_old),
 			old_session.sid,
 			old_session.serial);

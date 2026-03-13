@@ -263,6 +263,9 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial,
 			DelayedCloseEntry* released_entry = nullptr) noexcept;
+        static const char* ToString(BindWorldSessionResultKind kind) noexcept;
+        static const char* ToString(UnbindWorldSessionResultKind kind) noexcept;
+
 		BindWorldSessionResult BindWorldSessionByChar_(
 			std::uint64_t char_id,
 			std::uint32_t sid,
