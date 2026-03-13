@@ -87,6 +87,45 @@ namespace svr {
 			std::uint32_t serial = 0;
 		};
 
+        enum class BindWorldSessionResultKind
+        {
+            InvalidInput,
+            Inserted,
+            ReplacedOld,
+            AlreadyBoundSameSession,
+        };
+
+        struct BindWorldSessionResult
+        {
+            BindWorldSessionResultKind kind = BindWorldSessionResultKind::InvalidInput;
+            WorldSessionRef old_session{};
+
+            [[nodiscard]] bool has_old_session() const noexcept
+            {
+                return kind == BindWorldSessionResultKind::ReplacedOld;
+            }
+        };
+
+        enum class UnbindWorldSessionResultKind
+        {
+            InvalidInput,
+            NotFoundBySid,
+            CharBindingMissing,
+            SerialMismatch,
+            Removed,
+        };
+
+        struct UnbindWorldSessionResult
+        {
+            UnbindWorldSessionResultKind kind = UnbindWorldSessionResultKind::InvalidInput;
+            std::uint64_t char_id = 0;
+
+            [[nodiscard]] bool removed() const noexcept
+            {
+                return kind == UnbindWorldSessionResultKind::Removed;
+            }
+        };
+
 		struct DuplicateLoginLogContext
 		{
 			std::uint64_t trace_id = 0;
@@ -224,6 +263,14 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial,
 			DelayedCloseEntry* released_entry = nullptr) noexcept;
+		BindWorldSessionResult BindWorldSessionByChar_(
+			std::uint64_t char_id,
+			std::uint32_t sid,
+			std::uint32_t serial);
+		UnbindWorldSessionResult UnbindWorldSessionBySid_(
+			std::uint32_t sid,
+			std::uint32_t serial);
+
 		void ProcessDuplicateLoginSessionClosedOnIo_(
 			const DelayedCloseEntry& released_entry,
 			std::uint32_t sid,

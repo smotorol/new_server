@@ -266,22 +266,22 @@ namespace svr {
 
 			if (ec) {
 				if (fired_entry.log_ctx.trace_id != 0) {
-						spdlog::warn(
-							"[dup_login trace={}] delayed close timer failed. char_id={} sid={} serial={} ec={}",
-							fired_entry.log_ctx.trace_id,
-							fired_entry.log_ctx.char_id,
-							sid,
-							serial,
-							ec.message());
-					}
-					else {
-						spdlog::warn(
-							"[session_close] delayed close timer failed. char_id={} sid={} serial={} ec={}",
-							fired_entry.log_ctx.char_id,
-							sid,
-							serial,
-							ec.message());
-					}
+					spdlog::warn(
+						"[dup_login trace={}] delayed close timer failed. char_id={} sid={} serial={} ec={}",
+						fired_entry.log_ctx.trace_id,
+						fired_entry.log_ctx.char_id,
+						sid,
+						serial,
+						ec.message());
+				}
+				else {
+					spdlog::warn(
+						"[session_close] delayed close timer failed. char_id={} sid={} serial={} ec={}",
+						fired_entry.log_ctx.char_id,
+						sid,
+						serial,
+						ec.message());
+				}
 				return;
 			}
 
@@ -289,17 +289,17 @@ namespace svr {
 			auto world_handler = line.host.handler();
 			auto world_server = line.host.server();
 			if (!world_server || !world_handler) {
-					LogSessionCloseEvent_(
-						spdlog::level::warn,
-						"delayed close skipped. world server or handler null",
-						fired_entry.log_ctx);
+				LogSessionCloseEvent_(
+					spdlog::level::warn,
+					"delayed close skipped. world server or handler null",
+					fired_entry.log_ctx);
 				return;
 			}
 
 			LogSessionCloseEvent_(
 				spdlog::level::info,
 				"delayed close fired",
-					fired_entry.log_ctx);
+				fired_entry.log_ctx);
 
 			world_handler->Close(
 				static_cast<std::uint32_t>(svr::WorldLineId::World),
@@ -374,8 +374,9 @@ namespace svr {
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
-		std::uint64_t found_char_id = 0;
-		const bool removed = UnbindWorldSessionBySid_(sid, serial, found_char_id);
+		const auto unbind_result = UnbindWorldSessionBySid_(sid, serial);
+		const auto found_char_id = unbind_result.char_id;
+		const bool removed = unbind_result.removed();
 
 		LogSessionCloseEvent_(
 			spdlog::level::info,
@@ -386,40 +387,53 @@ namespace svr {
 			SessionCloseLogContext log_ctx = released_entry.log_ctx;
 			log_ctx.char_id = found_char_id;
 
- 			LogSessionCloseProcessed_(
- 				spdlog::level::info,
- 				"world session closed processed on duplicate-login path",
+			LogSessionCloseProcessed_(
+				spdlog::level::info,
+				"world session closed processed on duplicate-login path",
 				log_ctx,
- 				removed);
- 		}
- 		else {
- 			LogSessionCloseEvent_(
- 				spdlog::level::info,
- 				"world session closed processed on duplicate-login path. char binding not found",
+				removed);
+
+			if (!removed) {
+				spdlog::info(
+					"[dup_login trace={}] duplicate-login close unbind result kind={} char_id={} sid={} serial={}",
+					released_entry.log_ctx.trace_id,
+					static_cast<int>(unbind_result.kind),
+					found_char_id,
+					sid,
+					serial);
+			}
+		}
+		else {
+			LogSessionCloseEvent_(
+				spdlog::level::info,
+				"world session closed processed on duplicate-login path. char binding not found",
 				released_entry.log_ctx);
- 		}
+		}
 	}
 
 	void WorldRuntime::ProcessNormalSessionClosedOnIo_(
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
-		std::uint64_t found_char_id = 0;
-		const bool removed = UnbindWorldSessionBySid_(sid, serial, found_char_id);
-
-		if (found_char_id != 0) {
-			spdlog::info(
-				"[session_close] world session closed processed on normal path. char_id={} sid={} serial={} removed={}",
-				found_char_id,
+		const auto unbind_result = UnbindWorldSessionBySid_(sid, serial);
+		const auto found_char_id = unbind_result.char_id;
+		const bool removed = unbind_result.removed();
+ 
+ 		if (found_char_id != 0) {
+ 			spdlog::info(
+				"[session_close] world session closed processed on normal path. char_id={} sid={} serial={} removed={} unbind_kind={}",
+ 				found_char_id,
+ 				sid,
+ 				serial,
+				static_cast<int>(removed),
+				static_cast<int>(unbind_result.kind));
+ 		}
+ 		else {
+ 			spdlog::info(
+				"[session_close] world session closed processed on normal path. char binding not found. sid={} serial={} unbind_kind={}",
 				sid,
 				serial,
-				static_cast<int>(removed));
-		}
-		else {
-			spdlog::info(
-				"[session_close] world session closed processed on normal path. char binding not found. sid={} serial={}",
-				sid,
-				serial);
+				static_cast<int>(unbind_result.kind));
 		}
 	}
 
@@ -1869,11 +1883,11 @@ namespace svr {
 		const SessionCloseLogContext& ctx) const
 	{
 		if (ctx.trace_id != 0) {
- 			spdlog::log(
- 				level,
- 				"[dup_login trace={}] {} char_id={} sid={} serial={}",
+			spdlog::log(
+				level,
+				"[dup_login trace={}] {} char_id={} sid={} serial={}",
 				ctx.trace_id,
- 				event_text,
+				event_text,
 				ctx.char_id,
 				ctx.sid,
 				ctx.serial);
@@ -1896,26 +1910,26 @@ namespace svr {
 		bool removed) const
 	{
 		if (ctx.trace_id != 0) {
- 			spdlog::log(
- 				level,
- 				"[dup_login trace={}] {} char_id={} sid={} serial={} removed={}",
+			spdlog::log(
+				level,
+				"[dup_login trace={}] {} char_id={} sid={} serial={} removed={}",
 				ctx.trace_id,
- 				event_text,
+				event_text,
 				ctx.char_id,
 				ctx.sid,
 				ctx.serial,
- 				static_cast<int>(removed));
- 		}
- 		else {
- 			spdlog::log(
- 				level,
- 				"[session_close] {} char_id={} sid={} serial={} removed={}",
- 				event_text,
+				static_cast<int>(removed));
+		}
+		else {
+			spdlog::log(
+				level,
+				"[session_close] {} char_id={} sid={} serial={} removed={}",
+				event_text,
 				ctx.char_id,
 				ctx.sid,
 				ctx.serial,
- 				static_cast<int>(removed));
- 		}
+				static_cast<int>(removed));
+		}
 	}
 
 	void WorldRuntime::LogDuplicateWorldSessionEvent_(
@@ -1954,73 +1968,83 @@ namespace svr {
 			ctx.kick_reason);
 	}
 
-	bool WorldRuntime::BindWorldSessionByChar_(
+	WorldRuntime::BindWorldSessionResult WorldRuntime::BindWorldSessionByChar_(
 		std::uint64_t char_id,
 		std::uint32_t sid,
-		std::uint32_t serial,
-		WorldSessionRef* old_session)
+		std::uint32_t serial)
 	{
-		if (old_session) {
-			*old_session = WorldSessionRef{};
-		}
+		BindWorldSessionResult result{};
 
 		if (char_id == 0 || sid == 0 || serial == 0) {
-			return false;
+			result.kind = BindWorldSessionResultKind::InvalidInput;
+			return result;
 		}
-
-		bool replaced_old = false;
 
 		std::lock_guard lk(world_session_mtx_);
 
 		auto it = world_sessions_by_char_.find(char_id);
 		if (it != world_sessions_by_char_.end()) {
-			if (!(it->second.sid == sid && it->second.serial == serial)) {
-				if (old_session) {
-					*old_session = it->second;
-				}
-				world_char_ids_by_sid_.erase(it->second.sid);
-				replaced_old = true;
+			if (it->second.sid == sid && it->second.serial == serial) {
+				result.kind = BindWorldSessionResultKind::AlreadyBoundSameSession;
+				return result;
 			}
+
+			result.old_session = it->second;
+			if (result.old_session.sid != 0) {
+				world_char_ids_by_sid_.erase(it->second.sid);
+			}
+
+			world_sessions_by_char_[char_id] = WorldSessionRef{ sid, serial };
+			world_char_ids_by_sid_[sid] = char_id;
+
+			result.kind = BindWorldSessionResultKind::ReplacedOld;
+			return result;
 		}
 
 		world_sessions_by_char_[char_id] = WorldSessionRef{ sid, serial };
 		world_char_ids_by_sid_[sid] = char_id;
-		return replaced_old;
+
+		result.kind = BindWorldSessionResultKind::Inserted;
+		return result;
 	}
 
-	bool WorldRuntime::UnbindWorldSessionBySid_(
+	WorldRuntime::UnbindWorldSessionResult WorldRuntime::UnbindWorldSessionBySid_(
 		std::uint32_t sid,
-		std::uint32_t serial,
-		std::uint64_t& out_char_id)
+		std::uint32_t serial)
 	{
-		out_char_id = 0;
+		UnbindWorldSessionResult result{};
 
 		if (sid == 0 || serial == 0) {
-			return false;
+			result.kind = UnbindWorldSessionResultKind::InvalidInput;
+			return result;
 		}
 
 		std::lock_guard lk(world_session_mtx_);
 
 		auto sid_it = world_char_ids_by_sid_.find(sid);
 		if (sid_it == world_char_ids_by_sid_.end()) {
-			return false;
+			result.kind = UnbindWorldSessionResultKind::NotFoundBySid;
+			return result;
 		}
 
-		out_char_id = sid_it->second;
+		result.char_id = sid_it->second;
 
-		auto char_it = world_sessions_by_char_.find(out_char_id);
+		auto char_it = world_sessions_by_char_.find(result.char_id);
 		if (char_it == world_sessions_by_char_.end()) {
 			world_char_ids_by_sid_.erase(sid_it);
-			return false;
+			result.kind = UnbindWorldSessionResultKind::CharBindingMissing;
+			return result;
 		}
 
 		if (char_it->second.sid != sid || char_it->second.serial != serial) {
-			return false;
+			result.kind = UnbindWorldSessionResultKind::SerialMismatch;
+			return result;
 		}
 
 		world_sessions_by_char_.erase(char_it);
 		world_char_ids_by_sid_.erase(sid_it);
-		return true;
+		result.kind = UnbindWorldSessionResultKind::Removed;
+		return result;
 	}
 
 	bool WorldRuntime::UpdateWorldSessionBindingForLogin_(
@@ -2029,17 +2053,20 @@ namespace svr {
 		std::uint32_t new_serial,
 		WorldSessionRef& old_session)
 	{
-		const bool has_old = BindWorldSessionByChar_(
+		const auto bind_result = BindWorldSessionByChar_(
 			char_id,
 			new_sid,
-			new_serial,
-			&old_session);
+			new_serial);
+
+		old_session = bind_result.old_session;
+		const bool has_old = bind_result.has_old_session();
 
 		spdlog::info(
-			"World session binding updated for login. char_id={} new_sid={} new_serial={} had_old={} old_sid={} old_serial={}",
+			"World session binding updated for login. char_id={} new_sid={} new_serial={} bind_kind={} had_old={} old_sid={} old_serial={}",
 			char_id,
 			new_sid,
 			new_serial,
+			static_cast<int>(bind_result.kind),
 			static_cast<int>(has_old),
 			old_session.sid,
 			old_session.serial);
@@ -2202,9 +2229,8 @@ namespace svr {
 			return;
 		}
 
-		std::uint64_t removed_char_id = 0;
-		const bool removed = UnbindWorldSessionBySid_(sid, serial, removed_char_id);
-		if (!removed || removed_char_id != char_id) {
+		const auto unbind_result = UnbindWorldSessionBySid_(sid, serial);
+		if (!unbind_result.removed() || unbind_result.char_id != char_id) {
 			return;
 		}
 
