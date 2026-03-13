@@ -49,7 +49,7 @@ namespace svr {
 			std::uint64_t char_id,
 			std::uint32_t sid,
 			std::uint32_t serial) = 0;
-		
+
 		virtual void CancelDelayedWorldClose(
 			std::uint32_t sid,
 			std::uint32_t serial) = 0;

@@ -205,6 +205,18 @@ namespace svr {
         bool ReleaseDelayedWorldCloseReservation_(
             std::uint32_t sid,
             std::uint32_t serial) noexcept;
+       bool UpdateWorldSessionBindingForLogin_(
+           std::uint64_t char_id,
+           std::uint32_t new_sid,
+           std::uint32_t new_serial,
+           WorldSessionRef& old_session);
+       void EnqueueDuplicateWorldSessionKickClose_(
+           std::uint64_t char_id,
+           WorldSessionRef old_session,
+           std::uint32_t new_sid,
+           std::uint32_t new_serial,
+           std::uint16_t kick_reason);
+
         bool CancelDelayedWorldCloseTimer_(
             std::uint32_t sid,
             std::uint32_t serial) noexcept;
@@ -259,6 +271,7 @@ namespace svr {
 
         mutable std::mutex world_session_mtx_;
         std::unordered_map<std::uint64_t, WorldSessionRef> world_sessions_by_char_;
+        std::unordered_map<std::uint32_t, std::uint64_t> world_char_ids_by_sid_;
 
         std::mutex delayed_world_close_mtx_;
         std::unordered_map<

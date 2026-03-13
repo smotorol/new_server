@@ -190,6 +190,7 @@ namespace svr {
 		{
 			std::lock_guard lk(world_session_mtx_);
 			world_sessions_by_char_.clear();
+			world_char_ids_by_sid_.clear();
 		}
 
 		spdlog::info("WorldServer released.");
@@ -357,15 +358,19 @@ namespace svr {
 
 		{
 			std::lock_guard lk(world_session_mtx_);
-			for (auto it = world_sessions_by_char_.begin(); it != world_sessions_by_char_.end(); ++it) {
-				if (it->second.sid == sid) {
-					found_char_id = it->first;
 
-					if (it->second.serial == serial) {
-						world_sessions_by_char_.erase(it);
-						removed = true;
-					}
-					break;
+			auto sid_it = world_char_ids_by_sid_.find(sid);
+			if (sid_it != world_char_ids_by_sid_.end()) {
+				found_char_id = sid_it->second;
+
+				auto char_it = world_sessions_by_char_.find(found_char_id);
+				if (char_it == world_sessions_by_char_.end()) {
+					world_char_ids_by_sid_.erase(sid_it);
+				}
+				else if (char_it->second.sid == sid && char_it->second.serial == serial) {
+					world_sessions_by_char_.erase(char_it);
+					world_char_ids_by_sid_.erase(sid_it);
+					removed = true;
 				}
 			}
 		}
@@ -1840,6 +1845,80 @@ namespace svr {
 		return true;
 	}
 
+	bool WorldRuntime::UpdateWorldSessionBindingForLogin_(
+		std::uint64_t char_id,
+		std::uint32_t new_sid,
+		std::uint32_t new_serial,
+		WorldSessionRef& old_session)
+	{
+		old_session = WorldSessionRef{};
+
+		if (char_id == 0 || new_sid == 0 || new_serial == 0) {
+			return false;
+		}
+
+		bool has_old = false;
+
+		{
+			std::lock_guard lk(world_session_mtx_);
+
+			auto it = world_sessions_by_char_.find(char_id);
+			if (it != world_sessions_by_char_.end()) {
+				if (!(it->second.sid == new_sid && it->second.serial == new_serial)) {
+					old_session = it->second;
+					has_old = true;
+					world_char_ids_by_sid_.erase(it->second.sid);
+				}
+			}
+
+			world_sessions_by_char_[char_id] = WorldSessionRef{ new_sid, new_serial };
+			world_char_ids_by_sid_[new_sid] = char_id;
+		}
+
+		spdlog::info(
+			"World session binding updated for login. char_id={} new_sid={} new_serial={} had_old={} old_sid={} old_serial={}",
+			char_id,
+			new_sid,
+			new_serial,
+			static_cast<int>(has_old),
+			old_session.sid,
+			old_session.serial);
+
+		return has_old;
+	}
+
+	void WorldRuntime::EnqueueDuplicateWorldSessionKickClose_(
+		std::uint64_t char_id,
+		WorldSessionRef old_session,
+		std::uint32_t new_sid,
+		std::uint32_t new_serial,
+		std::uint16_t kick_reason)
+	{
+		if (char_id == 0 || old_session.sid == 0 || old_session.serial == 0) {
+			return;
+		}
+
+		spdlog::info(
+			"Duplicate world session detected. enqueue serialized old-session kick/close char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
+			char_id,
+			old_session.sid,
+			old_session.serial,
+			new_sid,
+			new_serial,
+			kick_reason);
+
+		boost::asio::dispatch(
+			duplicate_session_strand_,
+			[this, char_id, old_session, new_sid, new_serial, kick_reason]() {
+				ProcessDuplicateWorldSessionKickOnIo_(
+					char_id,
+					old_session,
+					new_sid,
+					new_serial,
+					kick_reason);
+			});
+	}
+
 	bool WorldRuntime::ReplaceWorldSessionForCharWithKick(
 		std::uint64_t char_id,
 		std::uint32_t new_sid,
@@ -1850,43 +1929,20 @@ namespace svr {
 			return false;
 		}
 
-		WorldSessionRef old{};
-		bool has_old = false;
-
-		{
-			std::lock_guard lk(world_session_mtx_);
-
-			auto it = world_sessions_by_char_.find(char_id);
-			if (it != world_sessions_by_char_.end()) {
-				if (!(it->second.sid == new_sid && it->second.serial == new_serial)) {
-					old = it->second;
-					has_old = true;
-				}
-			}
-
-			world_sessions_by_char_[char_id] = WorldSessionRef{ new_sid, new_serial };
-		}
+		WorldSessionRef old_session{};
+		const bool has_old = UpdateWorldSessionBindingForLogin_(
+			char_id,
+			new_sid,
+			new_serial,
+			old_session);
 
 		if (has_old) {
-			spdlog::info(
-				"Duplicate world session detected. enqueue serialized old-session kick/close char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
+			EnqueueDuplicateWorldSessionKickClose_(
 				char_id,
-				old.sid,
-				old.serial,
+				old_session,
 				new_sid,
 				new_serial,
 				kick_reason);
-
-			boost::asio::dispatch(
-				duplicate_session_strand_,
-				[this, char_id, old, new_sid, new_serial, kick_reason]() {
-					ProcessDuplicateWorldSessionKickOnIo_(
-						char_id,
-						old,
-						new_sid,
-						new_serial,
-						kick_reason);
-				});
 		}
 
 		return true;
@@ -1943,6 +1999,11 @@ namespace svr {
 		}
 
 		world_sessions_by_char_.erase(it);
+
+		auto sid_it = world_char_ids_by_sid_.find(sid);
+		if (sid_it != world_char_ids_by_sid_.end() && sid_it->second == char_id) {
+			world_char_ids_by_sid_.erase(sid_it);
+		}
 
 		spdlog::info(
 			"World session binding removed. char_id={} sid={} serial={}",
