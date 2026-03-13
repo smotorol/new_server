@@ -213,6 +213,17 @@ namespace svr {
 			std::uint64_t char_id,
 			std::string_view token);
 
+		BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint16_t kick_reason) override;
+
+		UnbindAuthedWorldSessionResult UnbindAuthenticatedWorldSessionBySid(
+			std::uint32_t sid,
+			std::uint32_t serial) override;
+
 		bool ReplaceWorldSessionForCharWithKick(
 			std::uint64_t char_id,
 			std::uint32_t new_sid,
@@ -263,8 +274,11 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial,
 			DelayedCloseEntry* released_entry = nullptr) noexcept;
+
         static const char* ToString(BindWorldSessionResultKind kind) noexcept;
         static const char* ToString(UnbindWorldSessionResultKind kind) noexcept;
+		static const char* ToString(BindAuthedWorldSessionResultKind kind) noexcept;
+		static const char* ToString(UnbindAuthedWorldSessionResultKind kind) noexcept;
 
 		BindWorldSessionResult BindWorldSessionByChar_(
 			std::uint64_t char_id,
@@ -372,8 +386,15 @@ namespace svr {
 		std::unordered_map<std::string, PendingWorldAuthTicket> pending_world_auth_tickets_;
 
 		mutable std::mutex world_session_mtx_;
+
+		// 기존 char 중심 월드 세션 바인딩(1차 diff에서는 유지)
 		std::unordered_map<std::uint64_t, WorldSessionRef> world_sessions_by_char_;
 		std::unordered_map<std::uint32_t, std::uint64_t> world_char_ids_by_sid_;
+
+		// 신규 인증 세션 바인딩(account_id + char_id + sid + serial)
+		std::unordered_map<std::uint32_t, WorldAuthedSession> authed_sessions_by_sid_;
+		std::unordered_map<std::uint64_t, std::uint32_t> authed_sid_by_char_id_;
+		std::unordered_map<std::uint64_t, std::uint32_t> authed_sid_by_account_id_;
 
 		std::mutex delayed_world_close_mtx_;
 		std::unordered_map<

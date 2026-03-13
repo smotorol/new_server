@@ -191,6 +191,10 @@ namespace svr {
 			std::lock_guard lk(world_session_mtx_);
 			world_sessions_by_char_.clear();
 			world_char_ids_by_sid_.clear();
+
+			authed_sessions_by_sid_.clear();
+			authed_sid_by_char_id_.clear();
+			authed_sid_by_account_id_.clear();
 		}
 
 		spdlog::info("WorldServer released.");
@@ -418,18 +422,18 @@ namespace svr {
 		const auto unbind_result = UnbindWorldSessionBySid_(sid, serial);
 		const auto found_char_id = unbind_result.char_id;
 		const bool removed = unbind_result.removed();
- 
- 		if (found_char_id != 0) {
- 			spdlog::info(
+
+		if (found_char_id != 0) {
+			spdlog::info(
 				"[session_close] world session closed processed on normal path. char_id={} sid={} serial={} removed={} unbind_kind={}",
- 				found_char_id,
- 				sid,
- 				serial,
+				found_char_id,
+				sid,
+				serial,
 				static_cast<int>(removed),
 				ToString(unbind_result.kind));
- 		}
- 		else {
- 			spdlog::info(
+		}
+		else {
+			spdlog::info(
 				"[session_close] world session closed processed on normal path. char binding not found. sid={} serial={} unbind_kind={}",
 				sid,
 				serial,
@@ -620,6 +624,198 @@ namespace svr {
 	std::uint64_t WorldRuntime::UnbindSessionCharId(std::uint32_t sid)
 	{
 		return session_registry_.UnbindSessionCharId(sid);
+	}
+
+	BindAuthedWorldSessionResult WorldRuntime::BindAuthenticatedWorldSessionForLogin(
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint16_t kick_reason)
+	{
+		BindAuthedWorldSessionResult result{};
+		result.current_session = WorldAuthedSession{
+			account_id,
+			char_id,
+			sid,
+			serial
+		};
+
+		if (account_id == 0 || char_id == 0 || sid == 0 || serial == 0) {
+			result.kind = BindAuthedWorldSessionResultKind::InvalidInput;
+			spdlog::warn(
+				"BindAuthenticatedWorldSessionForLogin invalid input. account_id={} char_id={} sid={} serial={}",
+				account_id, char_id, sid, serial);
+			return result;
+		}
+
+		{
+			std::lock_guard lk(world_session_mtx_);
+
+			auto erase_sid_nolock = [this](std::uint32_t victim_sid)
+			{
+				auto victim_it = authed_sessions_by_sid_.find(victim_sid);
+				if (victim_it == authed_sessions_by_sid_.end()) {
+					return;
+				}
+
+				const auto victim = victim_it->second;
+
+				if (victim.char_id != 0) {
+					auto char_it = authed_sid_by_char_id_.find(victim.char_id);
+					if (char_it != authed_sid_by_char_id_.end() && char_it->second == victim_sid) {
+						authed_sid_by_char_id_.erase(char_it);
+					}
+				}
+
+				if (victim.account_id != 0) {
+					auto account_it = authed_sid_by_account_id_.find(victim.account_id);
+					if (account_it != authed_sid_by_account_id_.end() && account_it->second == victim_sid) {
+						authed_sid_by_account_id_.erase(account_it);
+					}
+				}
+
+				authed_sessions_by_sid_.erase(victim_it);
+			};
+
+			auto same_sid_it = authed_sessions_by_sid_.find(sid);
+			if (same_sid_it != authed_sessions_by_sid_.end()) {
+				const auto& existing = same_sid_it->second;
+				if (existing.serial == serial &&
+					existing.account_id == account_id &&
+					existing.char_id == char_id)
+				{
+					result.kind = BindAuthedWorldSessionResultKind::AlreadyBoundSameSession;
+				}
+				else {
+					erase_sid_nolock(sid);
+				}
+			}
+
+			if (result.kind != BindAuthedWorldSessionResultKind::AlreadyBoundSameSession) {
+				auto char_sid_it = authed_sid_by_char_id_.find(char_id);
+				if (char_sid_it != authed_sid_by_char_id_.end()) {
+					const auto old_sid = char_sid_it->second;
+					auto old_it = authed_sessions_by_sid_.find(old_sid);
+					if (old_it != authed_sessions_by_sid_.end()) {
+						result.old_char_session = old_it->second;
+					}
+				}
+
+				auto account_sid_it = authed_sid_by_account_id_.find(account_id);
+				if (account_sid_it != authed_sid_by_account_id_.end()) {
+					const auto old_sid = account_sid_it->second;
+					auto old_it = authed_sessions_by_sid_.find(old_sid);
+					if (old_it != authed_sessions_by_sid_.end()) {
+						result.old_account_session = old_it->second;
+					}
+				}
+
+				if (result.has_old_char_session()) {
+					erase_sid_nolock(result.old_char_session.sid);
+				}
+
+				if (result.has_old_account_session() &&
+					result.old_account_session.sid != result.old_char_session.sid)
+				{
+					erase_sid_nolock(result.old_account_session.sid);
+				}
+
+				authed_sessions_by_sid_[sid] = result.current_session;
+				authed_sid_by_char_id_[char_id] = sid;
+				authed_sid_by_account_id_[account_id] = sid;
+
+				if (result.has_old_char_session() && result.has_old_account_session()) {
+					result.kind = BindAuthedWorldSessionResultKind::ReplacedBoth;
+				}
+				else if (result.has_old_char_session()) {
+					result.kind = BindAuthedWorldSessionResultKind::ReplacedCharSession;
+				}
+				else if (result.has_old_account_session()) {
+					result.kind = BindAuthedWorldSessionResultKind::ReplacedAccountSession;
+				}
+				else {
+					result.kind = BindAuthedWorldSessionResultKind::Inserted;
+				}
+			}
+		}
+
+		// 1차 diff에서는 기존 흐름도 함께 유지한다.
+		session_registry_.BindSessionCharId(sid, char_id);
+		ReplaceWorldSessionForCharWithKick(char_id, sid, serial, kick_reason);
+
+		spdlog::info(
+			"World authenticated session bound. bind_kind={} account_id={} char_id={} sid={} serial={} old_char_sid={} old_char_serial={} old_account_sid={} old_account_serial={}",
+			ToString(result.kind),
+			account_id,
+			char_id,
+			sid,
+			serial,
+			result.old_char_session.sid,
+			result.old_char_session.serial,
+			result.old_account_session.sid,
+			result.old_account_session.serial);
+
+		return result;
+	}
+
+	UnbindAuthedWorldSessionResult WorldRuntime::UnbindAuthenticatedWorldSessionBySid(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		UnbindAuthedWorldSessionResult result{};
+
+		if (sid == 0 || serial == 0) {
+			result.kind = UnbindAuthedWorldSessionResultKind::InvalidInput;
+			spdlog::warn(
+				"UnbindAuthenticatedWorldSessionBySid invalid input. sid={} serial={}",
+				sid, serial);
+			return result;
+		}
+
+		{
+			std::lock_guard lk(world_session_mtx_);
+
+			auto it = authed_sessions_by_sid_.find(sid);
+			if (it == authed_sessions_by_sid_.end()) {
+				result.kind = UnbindAuthedWorldSessionResultKind::NotFoundBySid;
+				return result;
+			}
+
+			result.session = it->second;
+
+			if (result.session.serial != serial) {
+				result.kind = UnbindAuthedWorldSessionResultKind::SerialMismatch;
+				return result;
+			}
+
+			if (result.session.char_id != 0) {
+				auto char_it = authed_sid_by_char_id_.find(result.session.char_id);
+				if (char_it != authed_sid_by_char_id_.end() && char_it->second == sid) {
+					authed_sid_by_char_id_.erase(char_it);
+				}
+			}
+
+			if (result.session.account_id != 0) {
+				auto account_it = authed_sid_by_account_id_.find(result.session.account_id);
+				if (account_it != authed_sid_by_account_id_.end() && account_it->second == sid) {
+					authed_sid_by_account_id_.erase(account_it);
+				}
+			}
+
+			authed_sessions_by_sid_.erase(it);
+			result.kind = UnbindAuthedWorldSessionResultKind::Removed;
+		}
+
+		spdlog::info(
+			"World authenticated session unbound. unbind_kind={} account_id={} char_id={} sid={} serial={}",
+			ToString(result.kind),
+			result.session.account_id,
+			result.session.char_id,
+			sid,
+			serial);
+
+		return result;
 	}
 
 	void WorldRuntime::Post(std::function<void()> fn)
@@ -1999,6 +2195,42 @@ namespace svr {
 			return "Removed";
 		default:
 			return "UnknownUnbindWorldSessionResult";
+		}
+	}
+
+	const char* WorldRuntime::ToString(BindAuthedWorldSessionResultKind kind) noexcept
+	{
+		switch (kind) {
+		case BindAuthedWorldSessionResultKind::InvalidInput:
+			return "InvalidInput";
+		case BindAuthedWorldSessionResultKind::Inserted:
+			return "Inserted";
+		case BindAuthedWorldSessionResultKind::ReplacedCharSession:
+			return "ReplacedCharSession";
+		case BindAuthedWorldSessionResultKind::ReplacedAccountSession:
+			return "ReplacedAccountSession";
+		case BindAuthedWorldSessionResultKind::ReplacedBoth:
+			return "ReplacedBoth";
+		case BindAuthedWorldSessionResultKind::AlreadyBoundSameSession:
+			return "AlreadyBoundSameSession";
+		default:
+			return "UnknownBindAuthedWorldSessionResult";
+		}
+	}
+
+	const char* WorldRuntime::ToString(UnbindAuthedWorldSessionResultKind kind) noexcept
+	{
+		switch (kind) {
+		case UnbindAuthedWorldSessionResultKind::InvalidInput:
+			return "InvalidInput";
+		case UnbindAuthedWorldSessionResultKind::NotFoundBySid:
+			return "NotFoundBySid";
+		case UnbindAuthedWorldSessionResultKind::SerialMismatch:
+			return "SerialMismatch";
+		case UnbindAuthedWorldSessionResultKind::Removed:
+			return "Removed";
+		default:
+			return "UnknownUnbindAuthedWorldSessionResult";
 		}
 	}
 

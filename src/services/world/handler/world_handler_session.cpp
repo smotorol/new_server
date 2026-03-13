@@ -85,12 +85,25 @@ bool WorldHandler::HandleEnterWorldWithToken(
 	const std::uint32_t world_code = 0;
 	const std::uint64_t char_id = req->char_id;
 
-	runtime().BindSessionCharId(n, char_id);
-	runtime().ReplaceWorldSessionForCharWithKick(
+	const auto bind_result = runtime().BindAuthenticatedWorldSessionForLogin(
+		req->account_id,
 		char_id,
 		n,
 		serial,
 		static_cast<std::uint16_t>(proto::WorldKickReason::duplicate_login));
+
+	if (bind_result.kind == svr::BindAuthedWorldSessionResultKind::InvalidInput) {
+		res.ok = 0;
+		const auto h = proto::make_header(
+			static_cast<std::uint16_t>(proto::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(sizeof(res)));
+		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+
+		spdlog::warn(
+			"HandleEnterWorldWithToken bind denied sid={} serial={} account_id={} char_id={}",
+			n, serial, req->account_id, req->char_id);
+		return true;
+	}
 
 	DemoCharState st{};
 	st.char_id = char_id;
@@ -177,13 +190,32 @@ void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, st
 {
 	(void)dwProID;
 
+	const auto authed_unbind = runtime().UnbindAuthenticatedWorldSessionBySid(dwIndex, dwSerial);
+
 	runtime().HandleWorldSessionClosed(dwIndex, dwSerial);
 
-	const auto unbound_char_id = runtime().UnbindSessionCharId(dwIndex);
+	const auto registry_char_id = runtime().UnbindSessionCharId(dwIndex);
 
-	if (unbound_char_id != 0) {
-		runtime().PostActor(unbound_char_id, [this, unbound_char_id, sid = dwIndex, serial = dwSerial]() {
-			auto& a = runtime().GetOrCreatePlayerActor(unbound_char_id);
+	std::uint64_t close_char_id = registry_char_id;
+	std::uint64_t close_account_id = 0;
+
+	if (authed_unbind.removed()) {
+		close_char_id = authed_unbind.session.char_id;
+		close_account_id = authed_unbind.session.account_id;
+
+		if (registry_char_id != 0 && registry_char_id != close_char_id) {
+			spdlog::warn(
+				"WorldHandler::OnWorldDisconnected char_id mismatch. sid={} serial={} authed_char_id={} registry_char_id={}",
+				dwIndex,
+				dwSerial,
+				close_char_id,
+				registry_char_id);
+		}
+	}
+
+	if (close_char_id != 0) {
+		runtime().PostActor(close_char_id, [this, close_char_id, sid = dwIndex, serial = dwSerial]() {
+			auto& a = runtime().GetOrCreatePlayerActor(close_char_id);
 
 			if (a.sid == sid && a.serial == serial) {
 				a.bind_session(0, 0);
@@ -191,17 +223,20 @@ void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, st
 
 			if (a.zone_id != 0) {
 				const auto zone_id = a.zone_id;
-				runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, unbound_char_id, zone_id]() {
+				runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, close_char_id, zone_id]() {
 					auto& z = runtime().GetOrCreateZoneActor(zone_id);
-					z.Leave(unbound_char_id);
+					z.Leave(close_char_id);
 				});
 			}
 		});
 	}
 
 	spdlog::info(
-		"WorldHandler::OnWorldDisconnected index={} serial={} char_id={}",
-		dwIndex, dwSerial, unbound_char_id);
+		"WorldHandler::OnWorldDisconnected index={} serial={} account_id={} char_id={}",
+		dwIndex,
+		dwSerial,
+		close_account_id,
+		close_char_id);
 }
 bool WorldHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {

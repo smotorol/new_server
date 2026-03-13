@@ -11,6 +11,61 @@
 
 namespace svr {
 
+	struct WorldAuthedSession
+	{
+		std::uint64_t account_id = 0;
+		std::uint64_t char_id = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+	};
+
+	enum class BindAuthedWorldSessionResultKind
+	{
+		InvalidInput,
+		Inserted,
+		ReplacedCharSession,
+		ReplacedAccountSession,
+		ReplacedBoth,
+		AlreadyBoundSameSession,
+	};
+
+	struct BindAuthedWorldSessionResult
+	{
+		BindAuthedWorldSessionResultKind kind = BindAuthedWorldSessionResultKind::InvalidInput;
+		WorldAuthedSession current_session{};
+		WorldAuthedSession old_char_session{};
+		WorldAuthedSession old_account_session{};
+
+		[[nodiscard]] bool has_old_char_session() const noexcept
+		{
+			return old_char_session.sid != 0;
+		}
+
+		[[nodiscard]] bool has_old_account_session() const noexcept
+		{
+			return old_account_session.sid != 0;
+		}
+	};
+
+	enum class UnbindAuthedWorldSessionResultKind
+	{
+		InvalidInput,
+		NotFoundBySid,
+		SerialMismatch,
+		Removed,
+	};
+
+	struct UnbindAuthedWorldSessionResult
+	{
+		UnbindAuthedWorldSessionResultKind kind = UnbindAuthedWorldSessionResultKind::InvalidInput;
+		WorldAuthedSession session{};
+
+		[[nodiscard]] bool removed() const noexcept
+		{
+			return kind == UnbindAuthedWorldSessionResultKind::Removed;
+		}
+	};
+
 	class IWorldRuntime {
 	public:
 		virtual ~IWorldRuntime() = default;
@@ -38,6 +93,17 @@ namespace svr {
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::string_view token) = 0;
+
+		virtual BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint16_t kick_reason) = 0;
+
+		virtual UnbindAuthedWorldSessionResult UnbindAuthenticatedWorldSessionBySid(
+			std::uint32_t sid,
+			std::uint32_t serial) = 0;
 
 		virtual bool ReplaceWorldSessionForCharWithKick(
 			std::uint64_t char_id,
