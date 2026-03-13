@@ -276,7 +276,7 @@ namespace svr {
 				}
 
 				spdlog::info(
-					"Delayed world close fired. sid={} serial={}",
+					"Duplicate world session delayed close fired. sid={} serial={}",
 					sid,
 					serial);
 
@@ -325,7 +325,7 @@ namespace svr {
 	{
 		if (ReleaseDelayedWorldCloseReservation_(sid, serial)) {
 			spdlog::info(
-				"Delayed world close canceled/released. sid={} serial={}",
+				"Duplicate world session delayed close canceled/released. sid={} serial={}",
 				sid,
 				serial);
 		}
@@ -413,110 +413,68 @@ namespace svr {
 	}
 
 	void WorldRuntime::ProcessDuplicateWorldSessionKickOnIo_(
-		std::uint64_t char_id,
-		WorldSessionRef old_session,
-		std::uint32_t new_sid,
-		std::uint32_t new_serial,
-		std::uint16_t kick_reason)
-	{
-		if (char_id == 0 || old_session.sid == 0 || old_session.serial == 0) {
-			return;
-		}
+		DuplicateLoginTraceContext ctx)
+ 	{
+		if (ctx.char_id == 0 || ctx.old_session.sid == 0 || ctx.old_session.serial == 0) {
+ 			return;
+ 		}
+ 
+ 		auto& line = lines_.entry(svr::WorldLineId::World);
+ 		auto world_handler = line.host.handler();
+ 		auto world_server = line.host.server();
+ 		if (!world_server || !world_handler) {
+			LogDuplicateWorldSessionEvent_(
+				spdlog::level::warn,
+				"world server or handler null",
+				ctx);
+ 			return;
+ 		}
+ 
+		if (!TryBeginDuplicateWorldSessionKickClose_(ctx)) {
+ 			return;
+ 		}
+ 
+		const bool send_ok = SendDuplicateWorldSessionKick_(ctx, *world_handler);
+ 
+ 		if (send_ok) {
+			LogDuplicateWorldSessionEvent_(
+				spdlog::level::info,
+				"kick packet send accepted",
+				ctx);
 
-		auto& line = lines_.entry(svr::WorldLineId::World);
-		auto world_handler = line.host.handler();
-		auto world_server = line.host.server();
-		if (!world_server || !world_handler) {
-			spdlog::warn(
-				"ProcessDuplicateWorldSessionKickOnIo_: world server or handler null. char_id={} old_sid={} old_serial={} new_sid={} new_serial={}",
-				char_id,
-				old_session.sid,
-				old_session.serial,
-				new_sid,
-				new_serial);
-			return;
-		}
-
-		if (!TryReserveDelayedWorldClose_(old_session.sid, old_session.serial)) {
-			spdlog::info(
-				"Duplicate world session detected but close reservation already exists. skip duplicate kick. char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
-				char_id,
-				old_session.sid,
-				old_session.serial,
-				new_sid,
-				new_serial,
-				kick_reason);
-			return;
-		}
-
-		proto::S2C_kick_notify kick{};
-		kick.reason = kick_reason;
-		kick.char_id = char_id;
-
-		const auto h = proto::make_header(
-			static_cast<std::uint16_t>(proto::WorldS2CMsg::kick_notify),
-			static_cast<std::uint16_t>(sizeof(kick)));
-
-		const bool send_ok = world_handler->Send(
-			static_cast<std::uint32_t>(svr::WorldLineId::World),
-			old_session.sid,
-			old_session.serial,
-			h,
-			reinterpret_cast<const char*>(&kick));
-
-		if (send_ok) {
-			const bool armed = ArmReservedDelayedWorldClose_(
-				old_session.sid,
-				old_session.serial,
-				kDuplicateKickCloseDelay_);
-
-			if (armed) {
-				spdlog::warn(
-					"Duplicate world session detected. serialized kick sent -> delayed close old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={} delay_ms={}",
-					char_id,
-					old_session.sid,
-					old_session.serial,
-					new_sid,
-					new_serial,
-					kick_reason,
-					kDuplicateKickCloseDelay_.count());
-			}
-			else {
-				spdlog::warn(
-					"Duplicate world session detected. serialized kick sent but delayed close arm failed -> immediate close old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
-					char_id,
-					old_session.sid,
-					old_session.serial,
-					new_sid,
-					new_serial,
-					kick_reason);
-
-				ReleaseDelayedWorldCloseReservation_(old_session.sid, old_session.serial);
-
-				world_handler->Close(
-					static_cast<std::uint32_t>(svr::WorldLineId::World),
-					old_session.sid,
-					old_session.serial);
-			}
-		}
-		else {
-			ReleaseDelayedWorldCloseReservation_(old_session.sid, old_session.serial);
-
-			spdlog::warn(
-				"Duplicate world session detected. serialized kick send failed -> immediate close old session char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
-				char_id,
-				old_session.sid,
-				old_session.serial,
-				new_sid,
-				new_serial,
-				kick_reason);
-
-			world_handler->Close(
-				static_cast<std::uint32_t>(svr::WorldLineId::World),
-				old_session.sid,
-				old_session.serial);
-		}
-	}
+ 			const bool armed = ArmReservedDelayedWorldClose_(
+				ctx.old_session.sid,
+				ctx.old_session.serial,
+ 				kDuplicateKickCloseDelay_);
+ 
+ 			if (armed) {
+ 				LogDuplicateWorldSessionCloseDecision_(
+ 					spdlog::level::warn,
+ 					"serialized kick sent -> delayed close old session",
+					ctx);
+ 
+ 				spdlog::info(
+					"[dup_login trace={}] delayed close armed. char_id={} old_sid={} old_serial={} delay_ms={}",
+					ctx.trace_id,
+					ctx.char_id,
+					ctx.old_session.sid,
+					ctx.old_session.serial,
+ 					kDuplicateKickCloseDelay_.count());
+ 			}
+ 			else {
+ 				CloseDuplicateWorldSessionImmediately_(
+					ctx,
+ 					"serialized kick sent but delayed close arm failed",
+ 					*world_handler);
+ 			}
+ 		}
+ 		else {
+ 			CloseDuplicateWorldSessionImmediately_(
+				ctx,
+ 				"serialized kick send failed",
+ 				*world_handler);
+ 		}
+ 	}
 
 	void WorldRuntime::PostActor(std::uint64_t actor_id, std::function<void()> fn)
 	{
@@ -1844,6 +1802,41 @@ namespace svr {
 
 		return true;
 	}
+	void WorldRuntime::LogDuplicateWorldSessionEvent_(
+		spdlog::level::level_enum level,
+		std::string_view event_text,
+		const DuplicateLoginTraceContext& ctx) const
+	{
+		spdlog::log(
+			level,
+			"[dup_login trace={}] {} char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
+			ctx.trace_id,
+			event_text,
+			ctx.char_id,
+			ctx.old_session.sid,
+			ctx.old_session.serial,
+			ctx.new_sid,
+			ctx.new_serial,
+			ctx.kick_reason);
+	}
+
+ 	void WorldRuntime::LogDuplicateWorldSessionCloseDecision_(
+ 		spdlog::level::level_enum level,
+ 		std::string_view decision_text,
+		const DuplicateLoginTraceContext& ctx) const
+ 	{
+ 		spdlog::log(
+ 			level,
+			"[dup_login trace={}] close decision: {} char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
+			ctx.trace_id,
+ 			decision_text,
+			ctx.char_id,
+			ctx.old_session.sid,
+			ctx.old_session.serial,
+			ctx.new_sid,
+			ctx.new_serial,
+			ctx.kick_reason);
+ 	}
 
 	bool WorldRuntime::UpdateWorldSessionBindingForLogin_(
 		std::uint64_t char_id,
@@ -1888,36 +1881,82 @@ namespace svr {
 	}
 
 	void WorldRuntime::EnqueueDuplicateWorldSessionKickClose_(
-		std::uint64_t char_id,
-		WorldSessionRef old_session,
-		std::uint32_t new_sid,
-		std::uint32_t new_serial,
-		std::uint16_t kick_reason)
+		DuplicateLoginTraceContext ctx)
+ 	{
+		if (ctx.char_id == 0 || ctx.old_session.sid == 0 || ctx.old_session.serial == 0) {
+ 			return;
+ 		}
+ 
+ 		LogDuplicateWorldSessionEvent_(
+ 			spdlog::level::info,
+ 			"enqueue serialized old-session kick/close",
+			ctx);
+ 
+ 		boost::asio::dispatch(
+ 			duplicate_session_strand_,
+			[this, ctx]() {
+				ProcessDuplicateWorldSessionKickOnIo_(ctx);
+ 			});
+ 	}
+
+ 	bool WorldRuntime::TryBeginDuplicateWorldSessionKickClose_(
+		const DuplicateLoginTraceContext& ctx)
+ 	{
+		if (!TryReserveDelayedWorldClose_(ctx.old_session.sid, ctx.old_session.serial)) {
+ 			LogDuplicateWorldSessionEvent_(
+ 				spdlog::level::info,
+ 				"close reservation already exists -> skip duplicate kick",
+				ctx);
+ 			return false;
+ 		}
+ 
+		LogDuplicateWorldSessionEvent_(
+			spdlog::level::info,
+			"close reservation acquired",
+			ctx);
+
+ 		return true;
+ 	}
+
+ 	template<class HandlerT>
+ 	bool WorldRuntime::SendDuplicateWorldSessionKick_(
+		const DuplicateLoginTraceContext& ctx,
+		HandlerT& world_handler)
 	{
-		if (char_id == 0 || old_session.sid == 0 || old_session.serial == 0) {
-			return;
-		}
+		proto::S2C_kick_notify kick{};
+		kick.reason = ctx.kick_reason;
+		kick.char_id = ctx.char_id;
 
-		spdlog::info(
-			"Duplicate world session detected. enqueue serialized old-session kick/close char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
-			char_id,
-			old_session.sid,
-			old_session.serial,
-			new_sid,
-			new_serial,
-			kick_reason);
+		const auto h = proto::make_header(
+			static_cast<std::uint16_t>(proto::WorldS2CMsg::kick_notify),
+			static_cast<std::uint16_t>(sizeof(kick)));
 
-		boost::asio::dispatch(
-			duplicate_session_strand_,
-			[this, char_id, old_session, new_sid, new_serial, kick_reason]() {
-				ProcessDuplicateWorldSessionKickOnIo_(
-					char_id,
-					old_session,
-					new_sid,
-					new_serial,
-					kick_reason);
-			});
-	}
+		return world_handler.Send(
+			static_cast<std::uint32_t>(svr::WorldLineId::World),
+			ctx.old_session.sid,
+			ctx.old_session.serial,
+ 			h,
+ 			reinterpret_cast<const char*>(&kick));
+ 	}
+
+ 	template<class HandlerT>
+ 	void WorldRuntime::CloseDuplicateWorldSessionImmediately_(
+		const DuplicateLoginTraceContext& ctx,
+		std::string_view reason,
+		HandlerT& world_handler)
+	{
+		ReleaseDelayedWorldCloseReservation_(ctx.old_session.sid, ctx.old_session.serial);
+
+		LogDuplicateWorldSessionCloseDecision_(
+			spdlog::level::warn,
+			reason,
+			ctx);
+
+		world_handler.Close(
+			static_cast<std::uint32_t>(svr::WorldLineId::World),
+			ctx.old_session.sid,
+			ctx.old_session.serial);
+ 	}
 
 	bool WorldRuntime::ReplaceWorldSessionForCharWithKick(
 		std::uint64_t char_id,
@@ -1937,12 +1976,16 @@ namespace svr {
 			old_session);
 
 		if (has_old) {
-			EnqueueDuplicateWorldSessionKickClose_(
-				char_id,
-				old_session,
-				new_sid,
-				new_serial,
-				kick_reason);
+			DuplicateLoginTraceContext ctx{};
+			ctx.trace_id = duplicate_login_trace_seq_.fetch_add(1, std::memory_order_relaxed);
+			ctx.char_id = char_id;
+			ctx.old_session = old_session;
+			ctx.new_sid = new_sid;
+			ctx.new_serial = new_serial;
+			ctx.kick_reason = kick_reason;
+
+ 			EnqueueDuplicateWorldSessionKickClose_(
+				ctx);
 		}
 
 		return true;

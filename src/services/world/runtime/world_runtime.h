@@ -87,6 +87,16 @@ namespace svr {
             std::uint32_t serial = 0;
         };
 
+        struct DuplicateLoginTraceContext
+        {
+            std::uint64_t trace_id = 0;
+            std::uint64_t char_id = 0;
+            WorldSessionRef old_session{};
+            std::uint32_t new_sid = 0;
+            std::uint32_t new_serial = 0;
+            std::uint16_t kick_reason = 0;
+        };
+
         struct DelayedCloseKey
         {
             std::uint32_t sid = 0;
@@ -180,16 +190,12 @@ namespace svr {
         void OnMainLoopTick(std::chrono::steady_clock::time_point now) override;
 
     private:
-        void CancelDelayedWorldCloseTimers_() noexcept;
-        void ProcessDuplicateWorldSessionKickOnIo_(
-            std::uint64_t char_id,
-            WorldSessionRef old_session,
-            std::uint32_t new_sid,
-            std::uint32_t new_serial,
-            std::uint16_t kick_reason);
-        void ProcessWorldSessionClosedOnIo_(
-            std::uint32_t sid,
-            std::uint32_t serial);
+         void CancelDelayedWorldCloseTimers_() noexcept;
+         void ProcessDuplicateWorldSessionKickOnIo_(
+            DuplicateLoginTraceContext ctx);
+         void ProcessWorldSessionClosedOnIo_(
+             std::uint32_t sid,
+             std::uint32_t serial);
 
         bool LoadIniFile();
         bool DatabaseInit();
@@ -205,18 +211,33 @@ namespace svr {
         bool ReleaseDelayedWorldCloseReservation_(
             std::uint32_t sid,
             std::uint32_t serial) noexcept;
-       bool UpdateWorldSessionBindingForLogin_(
-           std::uint64_t char_id,
-           std::uint32_t new_sid,
-           std::uint32_t new_serial,
-           WorldSessionRef& old_session);
-       void EnqueueDuplicateWorldSessionKickClose_(
-           std::uint64_t char_id,
-           WorldSessionRef old_session,
-           std::uint32_t new_sid,
-           std::uint32_t new_serial,
-           std::uint16_t kick_reason);
+         void LogDuplicateWorldSessionEvent_(
+             spdlog::level::level_enum level,
+             std::string_view event_text,
+            const DuplicateLoginTraceContext& ctx) const;
+         void LogDuplicateWorldSessionCloseDecision_(
+             spdlog::level::level_enum level,
+             std::string_view decision_text,
+            const DuplicateLoginTraceContext& ctx) const;
 
+         bool UpdateWorldSessionBindingForLogin_(
+             std::uint64_t char_id,
+             std::uint32_t new_sid,
+             std::uint32_t new_serial,
+             WorldSessionRef& old_session);
+         void EnqueueDuplicateWorldSessionKickClose_(
+            DuplicateLoginTraceContext ctx);
+         bool TryBeginDuplicateWorldSessionKickClose_(
+            const DuplicateLoginTraceContext& ctx);
+         template<class HandlerT>
+         bool SendDuplicateWorldSessionKick_(
+            const DuplicateLoginTraceContext& ctx,
+             HandlerT& world_handler);
+         template<class HandlerT>
+         void CloseDuplicateWorldSessionImmediately_(
+            const DuplicateLoginTraceContext& ctx,
+             std::string_view reason,
+             HandlerT& world_handler);
         bool CancelDelayedWorldCloseTimer_(
             std::uint32_t sid,
             std::uint32_t serial) noexcept;
@@ -280,6 +301,7 @@ namespace svr {
             DelayedCloseKeyHash> delayed_world_close_entries_;
 
         static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
+        std::atomic<std::uint64_t> duplicate_login_trace_seq_{ 1 };
 
         static constexpr std::uint32_t MAX_DB_SYC_DATA_NUM = 200000;
         std::vector<svr::dqs::DqsSlot> dqs_slots_;
