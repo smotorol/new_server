@@ -216,6 +216,14 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial,
 			DelayedCloseEntry* released_entry = nullptr) noexcept;
+        void ProcessDuplicateLoginSessionClosedOnIo_(
+            const DelayedCloseEntry& released_entry,
+            std::uint32_t sid,
+            std::uint32_t serial);
+        void ProcessNormalSessionClosedOnIo_(
+            std::uint32_t sid,
+            std::uint32_t serial);
+
 		void LogSessionCloseEvent_(
 			spdlog::level::level_enum level,
 			std::string_view event_text,

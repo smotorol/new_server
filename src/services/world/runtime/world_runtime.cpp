@@ -376,26 +376,66 @@ namespace svr {
 		});
 	}
 
-	void WorldRuntime::ProcessWorldSessionClosedOnIo_(
+	void WorldRuntime::ProcessDuplicateLoginSessionClosedOnIo_(
+		const DelayedCloseEntry& released_entry,
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
-		if (sid == 0 || serial == 0) {
-			return;
+		std::uint64_t found_char_id = 0;
+		bool removed = false;
+
+		{
+			std::lock_guard lk(world_session_mtx_);
+
+			auto sid_it = world_char_ids_by_sid_.find(sid);
+			if (sid_it != world_char_ids_by_sid_.end()) {
+				found_char_id = sid_it->second;
+
+				auto char_it = world_sessions_by_char_.find(found_char_id);
+				if (char_it == world_sessions_by_char_.end()) {
+					world_char_ids_by_sid_.erase(sid_it);
+				}
+				else if (char_it->second.sid == sid && char_it->second.serial == serial) {
+					world_sessions_by_char_.erase(char_it);
+					world_char_ids_by_sid_.erase(sid_it);
+					removed = true;
+				}
+			}
 		}
 
-		DelayedCloseEntry released_entry{};
-		const bool released = ReleaseDelayedWorldCloseReservation_(sid, serial, &released_entry);
-		if (released) {
+		LogSessionCloseEvent_(
+			spdlog::level::info,
+			"close post-processing released delayed close entry",
+			released_entry.trace_id,
+			released_entry.char_id,
+			sid,
+			serial);
+
+		if (found_char_id != 0) {
+			LogSessionCloseProcessed_(
+				spdlog::level::info,
+				"world session closed processed on duplicate-login path",
+				released_entry.trace_id,
+				found_char_id,
+				sid,
+				serial,
+				removed);
+		}
+		else {
 			LogSessionCloseEvent_(
 				spdlog::level::info,
-				"close post-processing released delayed close entry",
+				"world session closed processed on duplicate-login path. char binding not found",
 				released_entry.trace_id,
 				released_entry.char_id,
 				sid,
 				serial);
 		}
+	}
 
+	void WorldRuntime::ProcessNormalSessionClosedOnIo_(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
 		std::uint64_t found_char_id = 0;
 		bool removed = false;
 
@@ -419,24 +459,41 @@ namespace svr {
 		}
 
 		if (found_char_id != 0) {
-			LogSessionCloseProcessed_(
-				spdlog::level::info,
-				"world session closed processed on serialized io path",
-				released_entry.trace_id,
+			spdlog::info(
+				"[session_close] world session closed processed on normal path. char_id={} sid={} serial={} removed={}",
 				found_char_id,
 				sid,
 				serial,
-				removed);
+				static_cast<int>(removed));
 		}
 		else {
-			LogSessionCloseEvent_(
-				spdlog::level::info,
-				"world session closed processed on serialized io path. char binding not found",
-				released_entry.trace_id,
-				0,
+			spdlog::info(
+				"[session_close] world session closed processed on normal path. char binding not found. sid={} serial={}",
 				sid,
 				serial);
 		}
+	}
+
+	void WorldRuntime::ProcessWorldSessionClosedOnIo_(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		if (sid == 0 || serial == 0) {
+			return;
+		}
+
+		DelayedCloseEntry released_entry{};
+		const bool released = ReleaseDelayedWorldCloseReservation_(sid, serial, &released_entry);
+
+		if (released && released_entry.trace_id != 0) {
+			ProcessDuplicateLoginSessionClosedOnIo_(
+				released_entry,
+				sid,
+				serial);
+			return;
+		}
+
+		ProcessNormalSessionClosedOnIo_(sid, serial);
 	}
 
 	void WorldRuntime::CancelDelayedWorldCloseTimers_() noexcept
