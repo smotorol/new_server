@@ -375,26 +375,7 @@ namespace svr {
 		std::uint32_t serial)
 	{
 		std::uint64_t found_char_id = 0;
-		bool removed = false;
-
-		{
-			std::lock_guard lk(world_session_mtx_);
-
-			auto sid_it = world_char_ids_by_sid_.find(sid);
-			if (sid_it != world_char_ids_by_sid_.end()) {
-				found_char_id = sid_it->second;
-
-				auto char_it = world_sessions_by_char_.find(found_char_id);
-				if (char_it == world_sessions_by_char_.end()) {
-					world_char_ids_by_sid_.erase(sid_it);
-				}
-				else if (char_it->second.sid == sid && char_it->second.serial == serial) {
-					world_sessions_by_char_.erase(char_it);
-					world_char_ids_by_sid_.erase(sid_it);
-					removed = true;
-				}
-			}
-		}
+		const bool removed = UnbindWorldSessionBySid_(sid, serial, found_char_id);
 
 		LogSessionCloseEvent_(
 			spdlog::level::info,
@@ -424,26 +405,7 @@ namespace svr {
 		std::uint32_t serial)
 	{
 		std::uint64_t found_char_id = 0;
-		bool removed = false;
-
-		{
-			std::lock_guard lk(world_session_mtx_);
-
-			auto sid_it = world_char_ids_by_sid_.find(sid);
-			if (sid_it != world_char_ids_by_sid_.end()) {
-				found_char_id = sid_it->second;
-
-				auto char_it = world_sessions_by_char_.find(found_char_id);
-				if (char_it == world_sessions_by_char_.end()) {
-					world_char_ids_by_sid_.erase(sid_it);
-				}
-				else if (char_it->second.sid == sid && char_it->second.serial == serial) {
-					world_sessions_by_char_.erase(char_it);
-					world_char_ids_by_sid_.erase(sid_it);
-					removed = true;
-				}
-			}
-		}
+		const bool removed = UnbindWorldSessionBySid_(sid, serial, found_char_id);
 
 		if (found_char_id != 0) {
 			spdlog::info(
@@ -1992,35 +1954,86 @@ namespace svr {
 			ctx.kick_reason);
 	}
 
+	bool WorldRuntime::BindWorldSessionByChar_(
+		std::uint64_t char_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		WorldSessionRef* old_session)
+	{
+		if (old_session) {
+			*old_session = WorldSessionRef{};
+		}
+
+		if (char_id == 0 || sid == 0 || serial == 0) {
+			return false;
+		}
+
+		bool replaced_old = false;
+
+		std::lock_guard lk(world_session_mtx_);
+
+		auto it = world_sessions_by_char_.find(char_id);
+		if (it != world_sessions_by_char_.end()) {
+			if (!(it->second.sid == sid && it->second.serial == serial)) {
+				if (old_session) {
+					*old_session = it->second;
+				}
+				world_char_ids_by_sid_.erase(it->second.sid);
+				replaced_old = true;
+			}
+		}
+
+		world_sessions_by_char_[char_id] = WorldSessionRef{ sid, serial };
+		world_char_ids_by_sid_[sid] = char_id;
+		return replaced_old;
+	}
+
+	bool WorldRuntime::UnbindWorldSessionBySid_(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t& out_char_id)
+	{
+		out_char_id = 0;
+
+		if (sid == 0 || serial == 0) {
+			return false;
+		}
+
+		std::lock_guard lk(world_session_mtx_);
+
+		auto sid_it = world_char_ids_by_sid_.find(sid);
+		if (sid_it == world_char_ids_by_sid_.end()) {
+			return false;
+		}
+
+		out_char_id = sid_it->second;
+
+		auto char_it = world_sessions_by_char_.find(out_char_id);
+		if (char_it == world_sessions_by_char_.end()) {
+			world_char_ids_by_sid_.erase(sid_it);
+			return false;
+		}
+
+		if (char_it->second.sid != sid || char_it->second.serial != serial) {
+			return false;
+		}
+
+		world_sessions_by_char_.erase(char_it);
+		world_char_ids_by_sid_.erase(sid_it);
+		return true;
+	}
+
 	bool WorldRuntime::UpdateWorldSessionBindingForLogin_(
 		std::uint64_t char_id,
 		std::uint32_t new_sid,
 		std::uint32_t new_serial,
 		WorldSessionRef& old_session)
 	{
-		old_session = WorldSessionRef{};
-
-		if (char_id == 0 || new_sid == 0 || new_serial == 0) {
-			return false;
-		}
-
-		bool has_old = false;
-
-		{
-			std::lock_guard lk(world_session_mtx_);
-
-			auto it = world_sessions_by_char_.find(char_id);
-			if (it != world_sessions_by_char_.end()) {
-				if (!(it->second.sid == new_sid && it->second.serial == new_serial)) {
-					old_session = it->second;
-					has_old = true;
-					world_char_ids_by_sid_.erase(it->second.sid);
-				}
-			}
-
-			world_sessions_by_char_[char_id] = WorldSessionRef{ new_sid, new_serial };
-			world_char_ids_by_sid_[new_sid] = char_id;
-		}
+		const bool has_old = BindWorldSessionByChar_(
+			char_id,
+			new_sid,
+			new_serial,
+			&old_session);
 
 		spdlog::info(
 			"World session binding updated for login. char_id={} new_sid={} new_serial={} had_old={} old_sid={} old_serial={}",
@@ -2185,26 +2198,14 @@ namespace svr {
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
-		if (char_id == 0 || sid == 0 || serial == 0) {
+		if (char_id == 0) {
 			return;
 		}
 
-		std::lock_guard lk(world_session_mtx_);
-
-		auto it = world_sessions_by_char_.find(char_id);
-		if (it == world_sessions_by_char_.end()) {
+		std::uint64_t removed_char_id = 0;
+		const bool removed = UnbindWorldSessionBySid_(sid, serial, removed_char_id);
+		if (!removed || removed_char_id != char_id) {
 			return;
-		}
-
-		if (it->second.sid != sid || it->second.serial != serial) {
-			return;
-		}
-
-		world_sessions_by_char_.erase(it);
-
-		auto sid_it = world_char_ids_by_sid_.find(sid);
-		if (sid_it != world_char_ids_by_sid_.end() && sid_it->second == char_id) {
-			world_char_ids_by_sid_.erase(sid_it);
 		}
 
 		spdlog::info(
