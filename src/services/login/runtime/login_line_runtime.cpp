@@ -27,10 +27,17 @@ namespace dc {
         }
     }
 
-    LoginLineRuntime::LoginLineRuntime(std::uint16_t port, std::string world_host, std::uint16_t world_port)
+    LoginLineRuntime::LoginLineRuntime(
+        std::uint16_t port,
+        std::string world_host,
+        std::uint16_t world_port,
+        std::string account_host,
+        std::uint16_t account_port)
         : port_(port)
         , world_host_(std::move(world_host))
         , world_port_(world_port)
+        , account_host_(std::move(account_host))
+        , account_port_(account_port)
     {
     }
 
@@ -204,101 +211,49 @@ namespace dc {
         }
     }
 
-    bool LoginLineRuntime::IssueLoginSuccess(
+    bool LoginLineRuntime::IssueLoginRequest(
         std::uint32_t sid,
         std::uint32_t serial,
         std::string_view login_id,
+        std::string_view password,
         std::uint64_t selected_char_id)
     {
         if (!IsWorldReady()) {
-            spdlog::warn("IssueLoginSuccess blocked: world not ready sid={}", sid);
+            spdlog::warn("IssueLoginRequest blocked: world not ready sid={}", sid);
             return false;
         }
 
-        const auto account_id = ResolveAccountId_(login_id);
-        const auto char_id = ResolveCharId_(selected_char_id, account_id);
-        const auto token = GenerateWorldToken_();
-
-        std::vector<DuplicateSessionRef> victims;
-        {
-            std::lock_guard lk(login_sessions_mtx_);
-            victims = CollectDuplicateSessions_NoLock_(account_id, char_id, sid, serial);
-
-            // 기존 세션 인덱스는 미리 제거해 둔다.
-            // 실제 close callback이 나중에 와도 stale serial이면 안전하게 무시된다.
-            for (const auto& v : victims) {
-                RemoveLoginSession_NoLock_(v.sid, v.serial);
-            }
-        }
-
-        CloseDuplicateLoginSessions_(victims);
-
-        if (!world_handler_) {
-            spdlog::error("IssueLoginSuccess failed: world_handler_ is null");
+        if (!IsAccountReady()) {
+            spdlog::warn("IssueLoginRequest blocked: account not ready sid={}", sid);
             return false;
         }
 
-        const auto world_sid = world_sid_.load(std::memory_order_relaxed);
-        const auto world_serial = world_serial_.load(std::memory_order_relaxed);
-
-        if (!world_handler_->SendAuthTicketUpsert(
-            1,
-            world_sid,
-            world_serial,
-            account_id,
-            char_id,
-            token,
-            static_cast<std::uint64_t>(std::time(nullptr) + 30)))
-        {
-            spdlog::error("IssueLoginSuccess failed: SendAuthTicketUpsert sid={} char_id={}", sid, char_id);
-            return false;
-        }
+        PendingLoginRequest pending{};
+        pending.request_id = next_login_request_id_.fetch_add(1, std::memory_order_relaxed);
+        pending.client_sid = sid;
+        pending.client_serial = serial;
+        pending.login_id.assign(login_id.data(), login_id.size());
+        pending.password.assign(password.data(), password.size());
+        pending.selected_char_id = selected_char_id;
+        pending.issued_at = std::chrono::steady_clock::now();
 
         {
-            std::lock_guard lk(login_sessions_mtx_);
-
-            // 같은 sid 슬롯이 재사용된 경우를 대비해서 한번 더 정리
-            RemoveLoginSession_NoLock_(sid, serial);
-
-            auto& st = login_sessions_[sid];
-            st.sid = sid;
-            st.serial = serial;
-            st.logged_in = true;
-            st.account_id = account_id;
-            st.char_id = char_id;
-            st.world_token = token;
-            st.issued_at = std::chrono::steady_clock::now();
-            st.expires_at = st.issued_at + std::chrono::seconds(30);
-
-            account_session_index_[account_id] = sid;
-            char_session_index_[char_id] = sid;
+            std::lock_guard lk(pending_login_mtx_);
+            pending_login_requests_[pending.request_id] = pending;
         }
 
-        proto::S2C_login_result res{};
-        res.ok = 1;
-        res.account_id = account_id;
-        res.char_id = char_id;
-        res.world_port = world_port_;
-        std::snprintf(res.world_host, sizeof(res.world_host), "%s", world_host_.c_str());
-        std::snprintf(res.world_token, sizeof(res.world_token), "%s", token.c_str());
-
-        const auto h = proto::make_header(
-            static_cast<std::uint16_t>(proto::LoginS2CMsg::login_result),
-            static_cast<std::uint16_t>(sizeof(res)));
-
-        if (!login_handler_) {
-            spdlog::error("IssueLoginSuccess failed: login_handler_ is null");
-            return false;
-        }
-
-        if (!login_handler_->Send(0, sid, serial, h, reinterpret_cast<const char*>(&res))) {
-            spdlog::error("IssueLoginSuccess failed: send login_result sid={}", sid);
+        if (!SendAccountAuthRequest_(pending)) {
+            std::lock_guard lk(pending_login_mtx_);
+            pending_login_requests_.erase(pending.request_id);
             return false;
         }
 
         spdlog::info(
-            "IssueLoginSuccess sid={} serial={} account_id={} char_id={} token={}",
-            sid, serial, account_id, char_id, token);
+            "IssueLoginRequest forwarded request_id={} sid={} serial={} login_id={}",
+            pending.request_id,
+            sid,
+            serial,
+            login_id);
 
         return true;
     }
@@ -371,6 +326,47 @@ namespace dc {
             return false;
         }
 
+        account_handler_ = std::make_shared<LoginAccountHandler>(
+            [this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::string_view server_name, std::uint16_t listen_port) {
+            MarkAccountRegistered(sid, serial, server_id, server_name, listen_port);
+        },
+            [this](std::uint32_t sid, std::uint32_t serial) {
+            MarkAccountDisconnected(sid, serial);
+        },
+            [this](std::uint64_t request_id, bool ok, std::uint64_t account_id, std::uint64_t char_id, std::string_view fail_reason) {
+            OnAccountAuthResult(request_id, ok, account_id, char_id, fail_reason);
+        });
+
+        account_handler_->SetServerIdentity(
+            1,
+            "login",
+            port_);
+
+        dc::InitOutboundLineEntry(
+            account_line_,
+            2,
+            "login-account",
+            account_host_,
+            account_port_,
+            true,
+            1000,
+            10000);
+
+        if (!dc::StartOutboundLine(
+            account_line_,
+            io_,
+            account_handler_,
+            [](std::uint64_t, std::function<void()> fn) {
+            if (fn) fn();
+        }))
+        {
+            spdlog::error(
+                "LoginLineRuntime failed to start outbound account line. remote={}:{}",
+                account_host_,
+                account_port_);
+            return false;
+        }
+
         spdlog::info(
             "LoginLineRuntime started. client_port={} world_remote={}:{}",
             port_,
@@ -382,10 +378,12 @@ namespace dc {
     void LoginLineRuntime::OnBeforeIoStop()
     {
         world_ready_.store(false, std::memory_order_release);
+        account_ready_.store(false, std::memory_order_release);
     }
 
     void LoginLineRuntime::OnAfterIoStop()
     {
+        account_line_.host.Stop();
         world_line_.host.Stop();
         client_line_.host.Stop();
 
@@ -396,6 +394,12 @@ namespace dc {
             char_session_index_.clear();
         }
 
+        {
+            std::lock_guard lk(pending_login_mtx_);
+            pending_login_requests_.clear();
+        }
+
+        account_handler_.reset();
         world_handler_.reset();
         login_handler_.reset();
 
@@ -404,11 +408,244 @@ namespace dc {
         world_serial_.store(0, std::memory_order_relaxed);
         world_server_id_.store(0, std::memory_order_relaxed);
 
-        spdlog::info("LoginLineRuntime stopped.");
+        account_ready_.store(false, std::memory_order_release);
+        account_sid_.store(0, std::memory_order_relaxed);
+        account_serial_.store(0, std::memory_order_relaxed);
+        account_server_id_.store(0, std::memory_order_relaxed);
     }
 
-    void LoginLineRuntime::OnMainLoopTick(std::chrono::steady_clock::time_point)
+    bool LoginLineRuntime::IsAccountReady() const noexcept
     {
+        return account_ready_.load(std::memory_order_acquire);
+    }
+
+    void LoginLineRuntime::MarkAccountRegistered(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint32_t server_id,
+        std::string_view server_name,
+        std::uint16_t listen_port)
+    {
+        account_sid_.store(sid, std::memory_order_relaxed);
+        account_serial_.store(serial, std::memory_order_relaxed);
+        account_server_id_.store(server_id, std::memory_order_relaxed);
+        account_ready_.store(true, std::memory_order_release);
+
+        spdlog::info(
+            "LoginLineRuntime account ready sid={} serial={} server_id={} server_name={} listen_port={}",
+            sid, serial, server_id, server_name, listen_port);
+    }
+
+    void LoginLineRuntime::MarkAccountDisconnected(
+        std::uint32_t sid,
+        std::uint32_t serial)
+    {
+        const auto cur_sid = account_sid_.load(std::memory_order_relaxed);
+        const auto cur_serial = account_serial_.load(std::memory_order_relaxed);
+
+        if (cur_sid != 0 && (cur_sid != sid || cur_serial != serial)) {
+            return;
+        }
+
+        account_ready_.store(false, std::memory_order_release);
+        account_sid_.store(0, std::memory_order_relaxed);
+        account_serial_.store(0, std::memory_order_relaxed);
+        account_server_id_.store(0, std::memory_order_relaxed);
+    }
+
+    bool LoginLineRuntime::SendAccountAuthRequest_(const PendingLoginRequest& pending)
+    {
+        if (!account_handler_) {
+            return false;
+        }
+
+        const auto sid = account_sid_.load(std::memory_order_relaxed);
+        const auto serial = account_serial_.load(std::memory_order_relaxed);
+
+        return account_handler_->SendAccountAuthRequest(
+            2,
+            sid,
+            serial,
+            pending.request_id,
+            pending.login_id,
+            pending.password,
+            pending.selected_char_id);
+    }
+
+    void LoginLineRuntime::OnAccountAuthResult(
+        std::uint64_t request_id,
+        bool ok,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view fail_reason)
+    {
+        PendingLoginRequest pending{};
+
+        {
+            std::lock_guard lk(pending_login_mtx_);
+            const auto it = pending_login_requests_.find(request_id);
+            if (it == pending_login_requests_.end()) {
+                spdlog::warn("OnAccountAuthResult dropped: request_id={} not found", request_id);
+                return;
+            }
+
+            pending = std::move(it->second);
+            pending_login_requests_.erase(it);
+        }
+
+        CompleteLoginRequest_(pending, ok, account_id, char_id, fail_reason);
+    }
+
+    void LoginLineRuntime::CompleteLoginRequest_(
+        const PendingLoginRequest& pending,
+        bool ok,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view fail_reason)
+    {
+        if (!ok) {
+            SendLoginResultFail_(
+                pending.client_sid,
+                pending.client_serial,
+                fail_reason.empty() ? "account_auth_failed" : fail_reason.data());
+            return;
+        }
+
+        const auto token = GenerateWorldToken_();
+
+        std::vector<DuplicateSessionRef> victims;
+        {
+            std::lock_guard lk(login_sessions_mtx_);
+            victims = CollectDuplicateSessions_NoLock_(
+                account_id,
+                char_id,
+                pending.client_sid,
+                pending.client_serial);
+
+            for (const auto& v : victims) {
+                RemoveLoginSession_NoLock_(v.sid, v.serial);
+            }
+        }
+
+        CloseDuplicateLoginSessions_(victims);
+
+        const auto world_sid = world_sid_.load(std::memory_order_relaxed);
+        const auto world_serial = world_serial_.load(std::memory_order_relaxed);
+
+        if (!world_handler_ ||
+            !world_handler_->SendAuthTicketUpsert(
+                1,
+                world_sid,
+                world_serial,
+                account_id,
+                char_id,
+                token,
+                static_cast<std::uint64_t>(std::time(nullptr) + 30)))
+        {
+            SendLoginResultFail_(pending.client_sid, pending.client_serial, "world_ticket_upsert_failed");
+            return;
+        }
+
+        {
+            std::lock_guard lk(login_sessions_mtx_);
+
+            RemoveLoginSession_NoLock_(pending.client_sid, pending.client_serial);
+
+            auto& st = login_sessions_[pending.client_sid];
+            st.sid = pending.client_sid;
+            st.serial = pending.client_serial;
+            st.logged_in = true;
+            st.account_id = account_id;
+            st.char_id = char_id;
+            st.world_token = token;
+            st.issued_at = std::chrono::steady_clock::now();
+            st.expires_at = st.issued_at + std::chrono::seconds(30);
+
+            account_session_index_[account_id] = pending.client_sid;
+            char_session_index_[char_id] = pending.client_sid;
+        }
+
+        SendLoginResultSuccess_(
+            pending.client_sid,
+            pending.client_serial,
+            account_id,
+            char_id,
+            token);
+    }
+
+    void LoginLineRuntime::ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now)
+    {
+        std::vector<PendingLoginRequest> expired;
+
+        {
+            std::lock_guard lk(pending_login_mtx_);
+            for (auto it = pending_login_requests_.begin(); it != pending_login_requests_.end();) {
+                if (now - it->second.issued_at >= std::chrono::seconds(5)) {
+                    expired.push_back(std::move(it->second));
+                    it = pending_login_requests_.erase(it);
+                }
+                else {
+                    ++it;
+                }
+            }
+        }
+
+        for (const auto& e : expired) {
+            SendLoginResultFail_(e.client_sid, e.client_serial, "account_timeout");
+        }
+    }
+
+    bool LoginLineRuntime::SendLoginResultFail_(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        const char* reason)
+    {
+        (void)reason;
+
+        if (!login_handler_) {
+            return false;
+        }
+
+        proto::S2C_login_result res{};
+        res.ok = 0;
+
+        const auto h = proto::make_header(
+            static_cast<std::uint16_t>(proto::LoginS2CMsg::login_result),
+            static_cast<std::uint16_t>(sizeof(res)));
+
+        return login_handler_->Send(0, sid, serial, h, reinterpret_cast<const char*>(&res));
+    }
+
+    bool LoginLineRuntime::SendLoginResultSuccess_(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view token)
+    {
+        if (!login_handler_) {
+            return false;
+        }
+
+        proto::S2C_login_result res{};
+        res.ok = 1;
+        res.account_id = account_id;
+        res.char_id = char_id;
+        res.world_port = world_port_;
+        std::snprintf(res.world_host, sizeof(res.world_host), "%s", world_host_.c_str());
+        std::snprintf(res.world_token, sizeof(res.world_token), "%.*s",
+            static_cast<int>(token.size()), token.data());
+
+        const auto h = proto::make_header(
+            static_cast<std::uint16_t>(proto::LoginS2CMsg::login_result),
+            static_cast<std::uint16_t>(sizeof(res)));
+
+        return login_handler_->Send(0, sid, serial, h, reinterpret_cast<const char*>(&res));
+    }
+
+    void LoginLineRuntime::OnMainLoopTick(std::chrono::steady_clock::time_point now)
+    {
+        ExpirePendingLoginRequests_(now);
     }
 
 } // namespace dc

@@ -4,6 +4,7 @@
 #include <variant>
 
 #include "db/core/dqs_types.h"
+#include "proto/internal/login_account_proto.h"
 
 namespace svr::dqs_result {
 
@@ -37,7 +38,22 @@ namespace svr::dqs_result {
 
 	};
 
-	using Result = std::variant<OpenWorldNoticeResult, FlushDirtyCharsResult, FlushOneCharResult>;
+	struct AccountAuthResult final {
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t request_id = 0;
+		std::uint8_t ok = 0;
+		std::uint64_t account_id = 0;
+		std::uint64_t char_id = 0;
+		char fail_reason[proto::internal::k_auth_fail_reason_max_len + 1]{};
+		svr::dqs::ResultCode result = svr::dqs::ResultCode::success;
+	};
+
+	using Result = std::variant<
+		OpenWorldNoticeResult,
+		FlushDirtyCharsResult,
+		FlushOneCharResult,
+		AccountAuthResult>;
 
 
 } // namespace svr::dqs_result

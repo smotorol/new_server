@@ -12,9 +12,14 @@ int main()
     common::init_logging();
 
     constexpr std::uint16_t kLoginPort = 26788;
-    constexpr std::uint16_t kWorldPort = 27788; // TODO: 실제 world login port 값으로 수정
-
-    dc::LoginLineRuntime runtime(kLoginPort, "127.0.0.1", kWorldPort);
+    constexpr std::uint16_t kWorldPort = 27788;
+    constexpr std::uint16_t kAccountPort = 27780;
+    dc::LoginLineRuntime runtime(
+        kLoginPort,
+        "127.0.0.1",
+        kWorldPort,
+        "127.0.0.1",
+        kAccountPort);
     if (!runtime.InitMainThread()) {
         spdlog::error("LoginLineRuntime InitMainThread failed.");
         return 1;

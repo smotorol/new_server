@@ -81,60 +81,22 @@ namespace svr {
 			std::uint64_t expire_at_unix_sec = 0;
 		};
 
-		struct WorldSessionRef
-		{
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-		};
-
-        enum class BindWorldSessionResultKind
-        {
-            InvalidInput,
-            Inserted,
-            ReplacedOld,
-            AlreadyBoundSameSession,
-        };
-
-        struct BindWorldSessionResult
-        {
-            BindWorldSessionResultKind kind = BindWorldSessionResultKind::InvalidInput;
-            WorldSessionRef old_session{};
-
-            [[nodiscard]] bool has_old_session() const noexcept
-            {
-                return kind == BindWorldSessionResultKind::ReplacedOld;
-            }
-        };
-
-        enum class UnbindWorldSessionResultKind
-        {
-            InvalidInput,
-            NotFoundBySid,
-            CharBindingMissing,
-            SerialMismatch,
-            Removed,
-        };
-
-        struct UnbindWorldSessionResult
-        {
-            UnbindWorldSessionResultKind kind = UnbindWorldSessionResultKind::InvalidInput;
-            std::uint64_t char_id = 0;
-
-            [[nodiscard]] bool removed() const noexcept
-            {
-                return kind == UnbindWorldSessionResultKind::Removed;
-            }
-        };
-
 		struct DuplicateLoginLogContext
 		{
 			std::uint64_t trace_id = 0;
+
+			std::uint64_t account_id = 0;
 			std::uint64_t char_id = 0;
+
 			std::uint32_t sid = 0;
 			std::uint32_t serial = 0;
+
 			std::uint32_t new_sid = 0;
 			std::uint32_t new_serial = 0;
-			std::uint16_t kick_reason = 0;
+
+			std::uint16_t packet_kick_reason = 0;
+			DuplicateSessionCause log_cause = DuplicateSessionCause::None;
+			SessionKickStatCategory stat_category = SessionKickStatCategory::None;
 		};
 
 		struct SessionCloseLogContext
@@ -173,6 +135,22 @@ namespace svr {
 			bool armed = false;
 			SessionCloseLogContext log_ctx{};
 		};
+
+		struct ClosedAuthedSessionContext
+		{
+			UnbindAuthedWorldSessionResultKind unbind_kind =
+				UnbindAuthedWorldSessionResultKind::NotFoundBySid;
+
+			std::uint64_t account_id = 0;
+			std::uint64_t char_id = 0;
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+
+			[[nodiscard]] bool removed() const noexcept
+			{
+				return unbind_kind == UnbindAuthedWorldSessionResultKind::Removed;
+			}
+		};
 	public:
 		WorldRuntime();
 		~WorldRuntime();
@@ -188,8 +166,6 @@ namespace svr {
 		void PostDqsResult(svr::dqs_result::Result r);
 
 		std::uint64_t FindCharIdBySession(std::uint32_t sid) const;
-		void BindSessionCharId(std::uint32_t sid, std::uint64_t char_id);
-		std::uint64_t UnbindSessionCharId(std::uint32_t sid);
 
 		void CloseWorldServer(std::uint32_t world_socket_index);
 
@@ -224,17 +200,6 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial) override;
 
-		bool ReplaceWorldSessionForCharWithKick(
-			std::uint64_t char_id,
-			std::uint32_t new_sid,
-			std::uint32_t new_serial,
-			std::uint16_t kick_reason);
-
-		void RemoveWorldSessionBinding(
-			std::uint64_t char_id,
-			std::uint32_t sid,
-			std::uint32_t serial);
-
 		void CancelDelayedWorldClose(
 			std::uint32_t sid,
 			std::uint32_t serial) override;
@@ -250,13 +215,6 @@ namespace svr {
 		void OnMainLoopTick(std::chrono::steady_clock::time_point now) override;
 
 	private:
-		void CancelDelayedWorldCloseTimers_() noexcept;
-		void ProcessDuplicateWorldSessionKickOnIo_(
-			DuplicateLoginLogContext ctx);
-		void ProcessWorldSessionClosedOnIo_(
-			std::uint32_t sid,
-			std::uint32_t serial);
-
 		bool LoadIniFile();
 		bool DatabaseInit();
 		bool NetworkInit();
@@ -275,26 +233,54 @@ namespace svr {
 			std::uint32_t serial,
 			DelayedCloseEntry* released_entry = nullptr) noexcept;
 
-        static const char* ToString(BindWorldSessionResultKind kind) noexcept;
-        static const char* ToString(UnbindWorldSessionResultKind kind) noexcept;
 		static const char* ToString(BindAuthedWorldSessionResultKind kind) noexcept;
 		static const char* ToString(UnbindAuthedWorldSessionResultKind kind) noexcept;
+		static const char* ToString(DuplicateSessionCause cause) noexcept;
+		static const char* ToString(SessionKickStatCategory category) noexcept;
 
-		BindWorldSessionResult BindWorldSessionByChar_(
-			std::uint64_t char_id,
-			std::uint32_t sid,
-			std::uint32_t serial);
-		UnbindWorldSessionResult UnbindWorldSessionBySid_(
+		std::optional<WorldAuthedSession> FindAuthenticatedWorldSessionBySid_(
+			std::uint32_t sid) const;
+
+		std::optional<WorldAuthedSession> FindAuthenticatedWorldSessionByCharId_(
+			std::uint64_t char_id) const;
+
+		void CancelDelayedWorldCloseTimers_() noexcept;
+		void ProcessDuplicateWorldSessionKickOnIo_(
+			DuplicateLoginLogContext ctx);
+
+		void ProcessWorldSessionClosedOnIo_(
 			std::uint32_t sid,
 			std::uint32_t serial);
 
 		void ProcessDuplicateLoginSessionClosedOnIo_(
 			const DelayedCloseEntry& released_entry,
-			std::uint32_t sid,
-			std::uint32_t serial);
+			const ClosedAuthedSessionContext& closed_ctx);
+
 		void ProcessNormalSessionClosedOnIo_(
+			const ClosedAuthedSessionContext& closed_ctx);
+
+		static ClosedAuthedSessionContext MakeClosedAuthedSessionContext_(
+			const UnbindAuthedWorldSessionResult& unbind_result,
 			std::uint32_t sid,
-			std::uint32_t serial);
+			std::uint32_t serial) noexcept;
+
+		static SessionCloseLogContext MakeSessionCloseLogContext_(
+			const ClosedAuthedSessionContext& closed_ctx,
+			std::uint64_t trace_id = 0,
+			std::uint64_t fallback_char_id = 0) noexcept;
+
+		static SessionCloseLogContext ResolveWorldSessionCloseLogContext_(
+			const ClosedAuthedSessionContext& closed_ctx,
+			const DelayedCloseEntry* released_entry) noexcept;
+
+		void FinalizeWorldSessionClosedOnIo_(
+			std::string_view processed_text,
+			const ClosedAuthedSessionContext& closed_ctx,
+			const SessionCloseLogContext& log_ctx) const;
+
+		void LogWorldSessionClosePostState_(
+			const ClosedAuthedSessionContext& closed_ctx,
+			std::uint64_t trace_id) const;
 
 		void LogSessionCloseEvent_(
 			spdlog::level::level_enum level,
@@ -315,13 +301,19 @@ namespace svr {
 			std::string_view decision_text,
 			const DuplicateLoginLogContext& ctx) const;
 
-		bool UpdateWorldSessionBindingForLogin_(
-			std::uint64_t char_id,
-			std::uint32_t new_sid,
-			std::uint32_t new_serial,
-			WorldSessionRef& old_session);
 		void EnqueueDuplicateWorldSessionKickClose_(
 			DuplicateLoginLogContext ctx);
+
+		void EnqueueDuplicateAuthedSessionCloseIfNeeded_(
+			const WorldAuthedSession& victim,
+			std::uint64_t fallback_account_id,
+			std::uint64_t fallback_char_id,
+			std::uint32_t new_sid,
+			std::uint32_t new_serial,
+			std::uint16_t packet_kick_reason,
+			DuplicateSessionCause log_cause,
+			SessionKickStatCategory stat_category);
+
 		bool TryBeginDuplicateWorldSessionKickClose_(
 			const DuplicateLoginLogContext& ctx);
 		template<class HandlerT>
@@ -354,7 +346,6 @@ namespace svr {
 
 	private:
 		net::ActorSystem actors_;
-		dc::SessionCharRegistry session_registry_;
 		int logic_thread_count_ = 1;
 
 		boost::asio::steady_timer flush_timer_{ io_ };
@@ -386,10 +377,6 @@ namespace svr {
 		std::unordered_map<std::string, PendingWorldAuthTicket> pending_world_auth_tickets_;
 
 		mutable std::mutex world_session_mtx_;
-
-		// 기존 char 중심 월드 세션 바인딩(1차 diff에서는 유지)
-		std::unordered_map<std::uint64_t, WorldSessionRef> world_sessions_by_char_;
-		std::unordered_map<std::uint32_t, std::uint64_t> world_char_ids_by_sid_;
 
 		// 신규 인증 세션 바인딩(account_id + char_id + sid + serial)
 		std::unordered_map<std::uint32_t, WorldAuthedSession> authed_sessions_by_sid_;

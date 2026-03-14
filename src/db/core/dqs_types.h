@@ -11,6 +11,7 @@ namespace svr::dqs {
 		world = 0,
 		login = 1,
 		control = 2,
+		account = 3,
 
 	};
 
@@ -26,6 +27,8 @@ namespace svr::dqs {
 		// Redis write-behind: dirty set flush
 		flush_dirty_chars = 110,
 		flush_one_char = 111,
+
+		account_auth = 120,
 
 	};
 

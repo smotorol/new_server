@@ -234,6 +234,20 @@ namespace svr {
 
 	std::uint64_t ChannelRuntime::FindCharIdBySession(std::uint32_t sid) const
 	{
+		if (sid == 0) {
+			return 0;
+		}
+
+		{
+			std::lock_guard lk(world_session_mtx_);
+
+			auto it = authed_sessions_by_sid_.find(sid);
+			if (it != authed_sessions_by_sid_.end()) {
+				return it->second.char_id;
+			}
+		}
+
+		// 2차 diff에서는 기존 registry를 fallback 으로만 유지한다.
 		return session_registry_.FindCharIdBySession(sid);
 	}
 

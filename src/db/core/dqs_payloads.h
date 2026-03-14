@@ -2,6 +2,8 @@
 #include <cstdint>
 #include <cstring>
 
+#include "proto/client/login_proto.h"
+
 namespace svr::dqs_payload {
 
 #pragma pack(push, 1)
@@ -32,6 +34,18 @@ namespace svr::dqs_payload {
 		std::uint32_t world_code = 0;
 		std::uint64_t char_id = 0;
 		FlushOneChar() { std::memset(this, 0, sizeof(*this)); }
+	};
+
+	struct AccountAuthRequest final
+	{
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t request_id = 0;
+		std::uint64_t selected_char_id = 0;
+		char login_id[proto::k_login_id_max_len + 1]{};
+		char password[proto::k_login_pw_max_len + 1]{};
+
+		AccountAuthRequest() { std::memset(this, 0, sizeof(*this)); }
 	};
 #pragma pack(pop)
 

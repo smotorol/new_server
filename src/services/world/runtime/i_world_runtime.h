@@ -29,9 +29,36 @@ namespace svr {
 		AlreadyBoundSameSession,
 	};
 
+	enum class UnbindAuthedWorldSessionResultKind
+	{
+		InvalidInput,
+		NotFoundBySid,
+		SerialMismatch,
+		Removed,
+	};
+
+	enum class DuplicateSessionCause
+	{
+		None,
+		DuplicateCharSession,
+		DuplicateAccountSession,
+		DuplicateCharAndAccountSession,
+	};
+
+	enum class SessionKickStatCategory
+	{
+		None,
+		DuplicateChar,
+		DuplicateAccount,
+		DuplicateBoth,
+		DuplicateDeduplicatedSameSession,
+		Other,
+	};
+
 	struct BindAuthedWorldSessionResult
 	{
 		BindAuthedWorldSessionResultKind kind = BindAuthedWorldSessionResultKind::InvalidInput;
+		DuplicateSessionCause duplicate_cause = DuplicateSessionCause::None;
 		WorldAuthedSession current_session{};
 		WorldAuthedSession old_char_session{};
 		WorldAuthedSession old_account_session{};
@@ -45,14 +72,6 @@ namespace svr {
 		{
 			return old_account_session.sid != 0;
 		}
-	};
-
-	enum class UnbindAuthedWorldSessionResultKind
-	{
-		InvalidInput,
-		NotFoundBySid,
-		SerialMismatch,
-		Removed,
 	};
 
 	struct UnbindAuthedWorldSessionResult
@@ -80,8 +99,6 @@ namespace svr {
 		virtual void EraseActor(std::uint64_t actor_id) = 0;
 
 		virtual std::uint64_t FindCharIdBySession(std::uint32_t sid) const = 0;
-		virtual void BindSessionCharId(std::uint32_t sid, std::uint64_t char_id) = 0;
-		virtual std::uint64_t UnbindSessionCharId(std::uint32_t sid) = 0;
 
 		virtual bool UpsertPendingWorldAuthTicket(
 			std::uint64_t account_id,
@@ -102,17 +119,6 @@ namespace svr {
 			std::uint16_t kick_reason) = 0;
 
 		virtual UnbindAuthedWorldSessionResult UnbindAuthenticatedWorldSessionBySid(
-			std::uint32_t sid,
-			std::uint32_t serial) = 0;
-
-		virtual bool ReplaceWorldSessionForCharWithKick(
-			std::uint64_t char_id,
-			std::uint32_t new_sid,
-			std::uint32_t new_serial,
-			std::uint16_t kick_reason) = 0;
-
-		virtual void RemoveWorldSessionBinding(
-			std::uint64_t char_id,
 			std::uint32_t sid,
 			std::uint32_t serial) = 0;
 

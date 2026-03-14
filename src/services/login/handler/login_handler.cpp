@@ -33,10 +33,11 @@ bool LoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
                 return false;
             }
 
-            if (!runtime_.IssueLoginSuccess(
+            if (!runtime_.IssueLoginRequest(
                 n,
                 GetLatestSerial(n),
                 req->login_id,
+                req->password,
                 req->selected_char_id))
             {
                 proto::S2C_login_result res{};

@@ -189,9 +189,6 @@ namespace svr {
 
 		{
 			std::lock_guard lk(world_session_mtx_);
-			world_sessions_by_char_.clear();
-			world_char_ids_by_sid_.clear();
-
 			authed_sessions_by_sid_.clear();
 			authed_sid_by_char_id_.clear();
 			authed_sid_by_account_id_.clear();
@@ -375,70 +372,51 @@ namespace svr {
 
 	void WorldRuntime::ProcessDuplicateLoginSessionClosedOnIo_(
 		const DelayedCloseEntry& released_entry,
-		std::uint32_t sid,
-		std::uint32_t serial)
+		const ClosedAuthedSessionContext& closed_ctx)
 	{
-		const auto unbind_result = UnbindWorldSessionBySid_(sid, serial);
-		const auto found_char_id = unbind_result.char_id;
-		const bool removed = unbind_result.removed();
-
 		LogSessionCloseEvent_(
 			spdlog::level::info,
 			"close post-processing released delayed close entry",
 			released_entry.log_ctx);
 
-		if (found_char_id != 0) {
-			SessionCloseLogContext log_ctx = released_entry.log_ctx;
-			log_ctx.char_id = found_char_id;
+		const auto log_ctx = MakeSessionCloseLogContext_(
+			closed_ctx,
+			released_entry.log_ctx.trace_id,
+			released_entry.log_ctx.char_id);
 
-			LogSessionCloseProcessed_(
-				spdlog::level::info,
-				"world session closed processed on duplicate-login path",
-				log_ctx,
-				removed);
-
-			if (!removed) {
-				spdlog::info(
-					"[dup_login trace={}] duplicate-login close unbind result kind={} char_id={} sid={} serial={}",
-					released_entry.log_ctx.trace_id,
-					ToString(unbind_result.kind),
-					found_char_id,
-					sid,
-					serial);
-			}
-		}
-		else {
-			LogSessionCloseEvent_(
-				spdlog::level::info,
-				"world session closed processed on duplicate-login path. char binding not found",
-				released_entry.log_ctx);
-		}
+		FinalizeWorldSessionClosedOnIo_(
+			"world session closed processed on duplicate-login path",
+			closed_ctx,
+			log_ctx);
 	}
 
 	void WorldRuntime::ProcessNormalSessionClosedOnIo_(
-		std::uint32_t sid,
-		std::uint32_t serial)
+		const ClosedAuthedSessionContext& closed_ctx)
 	{
-		const auto unbind_result = UnbindWorldSessionBySid_(sid, serial);
-		const auto found_char_id = unbind_result.char_id;
-		const bool removed = unbind_result.removed();
+		const auto log_ctx = ResolveWorldSessionCloseLogContext_(
+			closed_ctx,
+			nullptr);
 
-		if (found_char_id != 0) {
-			spdlog::info(
-				"[session_close] world session closed processed on normal path. char_id={} sid={} serial={} removed={} unbind_kind={}",
-				found_char_id,
-				sid,
-				serial,
-				static_cast<int>(removed),
-				ToString(unbind_result.kind));
-		}
-		else {
-			spdlog::info(
-				"[session_close] world session closed processed on normal path. char binding not found. sid={} serial={} unbind_kind={}",
-				sid,
-				serial,
-				ToString(unbind_result.kind));
-		}
+		FinalizeWorldSessionClosedOnIo_(
+			"world close post-processing completed on normal path",
+			closed_ctx,
+			log_ctx);
+	}
+
+	void WorldRuntime::FinalizeWorldSessionClosedOnIo_(
+		std::string_view processed_text,
+		const ClosedAuthedSessionContext& closed_ctx,
+		const SessionCloseLogContext& log_ctx) const
+	{
+		LogSessionCloseProcessed_(
+			spdlog::level::info,
+			processed_text,
+			log_ctx,
+			closed_ctx.removed());
+
+		LogWorldSessionClosePostState_(
+			closed_ctx,
+			log_ctx.trace_id);
 	}
 
 	void WorldRuntime::ProcessWorldSessionClosedOnIo_(
@@ -450,17 +428,54 @@ namespace svr {
 		}
 
 		DelayedCloseEntry released_entry{};
-		const bool released = ReleaseDelayedWorldCloseReservation_(sid, serial, &released_entry);
+		const bool released = ReleaseDelayedWorldCloseReservation_(
+			sid,
+			serial,
+			&released_entry);
+
+		const auto unbind_result =
+			UnbindAuthenticatedWorldSessionBySid(sid, serial);
+
+		ClosedAuthedSessionContext closed_ctx =
+			MakeClosedAuthedSessionContext_(unbind_result, sid, serial);
 
 		if (released && released_entry.log_ctx.trace_id != 0) {
+			if (closed_ctx.char_id == 0) {
+				closed_ctx.char_id = released_entry.log_ctx.char_id;
+			}
+
 			ProcessDuplicateLoginSessionClosedOnIo_(
 				released_entry,
-				sid,
-				serial);
+				closed_ctx);
 			return;
 		}
 
-		ProcessNormalSessionClosedOnIo_(sid, serial);
+		ProcessNormalSessionClosedOnIo_(closed_ctx);
+	}
+
+	void WorldRuntime::LogWorldSessionClosePostState_(
+		const ClosedAuthedSessionContext& closed_ctx,
+		std::uint64_t trace_id) const
+	{
+		if (trace_id != 0) {
+			spdlog::info(
+				"[dup_login trace={}] duplicate-login close post-state kind={} account_id={} char_id={} sid={} serial={}",
+				trace_id,
+				ToString(closed_ctx.unbind_kind),
+				closed_ctx.account_id,
+				closed_ctx.char_id,
+				closed_ctx.sid,
+				closed_ctx.serial);
+			return;
+		}
+
+		spdlog::info(
+			"[session_close] close post-state kind={} account_id={} char_id={} sid={} serial={}",
+			ToString(closed_ctx.unbind_kind),
+			closed_ctx.account_id,
+			closed_ctx.char_id,
+			closed_ctx.sid,
+			closed_ctx.serial);
 	}
 
 	void WorldRuntime::CancelDelayedWorldCloseTimers_() noexcept
@@ -613,17 +628,18 @@ namespace svr {
 
 	std::uint64_t WorldRuntime::FindCharIdBySession(std::uint32_t sid) const
 	{
-		return session_registry_.FindCharIdBySession(sid);
-	}
+		if (sid == 0) {
+			return 0;
+		}
 
-	void WorldRuntime::BindSessionCharId(std::uint32_t sid, std::uint64_t char_id)
-	{
-		session_registry_.BindSessionCharId(sid, char_id);
-	}
+		std::lock_guard lk(world_session_mtx_);
 
-	std::uint64_t WorldRuntime::UnbindSessionCharId(std::uint32_t sid)
-	{
-		return session_registry_.UnbindSessionCharId(sid);
+		auto it = authed_sessions_by_sid_.find(sid);
+		if (it == authed_sessions_by_sid_.end()) {
+			return 0;
+		}
+
+		return it->second.char_id;
 	}
 
 	BindAuthedWorldSessionResult WorldRuntime::BindAuthenticatedWorldSessionForLogin(
@@ -633,6 +649,11 @@ namespace svr {
 		std::uint32_t serial,
 		std::uint16_t kick_reason)
 	{
+	// 정책:
+	// - account_id 당 인증된 활성 월드 세션은 최대 1개만 허용한다.
+	// - 새 월드 입장 바인딩이 성공하면 동일 char_id 또는 동일 account_id 에 묶여 있던 기존 세션은 강제 종료한다.
+	// - 새 세션이 최종 권한(authoritative) 세션이 된다.
+
 		BindAuthedWorldSessionResult result{};
 		result.current_session = WorldAuthedSession{
 			account_id,
@@ -643,23 +664,32 @@ namespace svr {
 
 		if (account_id == 0 || char_id == 0 || sid == 0 || serial == 0) {
 			result.kind = BindAuthedWorldSessionResultKind::InvalidInput;
+			result.duplicate_cause = DuplicateSessionCause::None;
 			spdlog::warn(
 				"BindAuthenticatedWorldSessionForLogin invalid input. account_id={} char_id={} sid={} serial={}",
-				account_id, char_id, sid, serial);
+				account_id,
+				char_id,
+				sid,
+				serial);
 			return result;
 		}
 
 		{
 			std::lock_guard lk(world_session_mtx_);
 
-			auto erase_sid_nolock = [this](std::uint32_t victim_sid)
+			auto erase_authed_sid_nolock =
+				[this](std::uint32_t victim_sid, WorldAuthedSession* removed_session = nullptr)
 			{
 				auto victim_it = authed_sessions_by_sid_.find(victim_sid);
 				if (victim_it == authed_sessions_by_sid_.end()) {
-					return;
+					return false;
 				}
 
 				const auto victim = victim_it->second;
+
+				if (removed_session) {
+					*removed_session = victim;
+				}
 
 				if (victim.char_id != 0) {
 					auto char_it = authed_sid_by_char_id_.find(victim.char_id);
@@ -676,6 +706,7 @@ namespace svr {
 				}
 
 				authed_sessions_by_sid_.erase(victim_it);
+				return true;
 			};
 
 			auto same_sid_it = authed_sessions_by_sid_.find(sid);
@@ -686,17 +717,17 @@ namespace svr {
 					existing.char_id == char_id)
 				{
 					result.kind = BindAuthedWorldSessionResultKind::AlreadyBoundSameSession;
+					result.duplicate_cause = DuplicateSessionCause::None;
 				}
 				else {
-					erase_sid_nolock(sid);
+					erase_authed_sid_nolock(sid);
 				}
 			}
 
 			if (result.kind != BindAuthedWorldSessionResultKind::AlreadyBoundSameSession) {
 				auto char_sid_it = authed_sid_by_char_id_.find(char_id);
 				if (char_sid_it != authed_sid_by_char_id_.end()) {
-					const auto old_sid = char_sid_it->second;
-					auto old_it = authed_sessions_by_sid_.find(old_sid);
+					auto old_it = authed_sessions_by_sid_.find(char_sid_it->second);
 					if (old_it != authed_sessions_by_sid_.end()) {
 						result.old_char_session = old_it->second;
 					}
@@ -704,21 +735,20 @@ namespace svr {
 
 				auto account_sid_it = authed_sid_by_account_id_.find(account_id);
 				if (account_sid_it != authed_sid_by_account_id_.end()) {
-					const auto old_sid = account_sid_it->second;
-					auto old_it = authed_sessions_by_sid_.find(old_sid);
+					auto old_it = authed_sessions_by_sid_.find(account_sid_it->second);
 					if (old_it != authed_sessions_by_sid_.end()) {
 						result.old_account_session = old_it->second;
 					}
 				}
 
 				if (result.has_old_char_session()) {
-					erase_sid_nolock(result.old_char_session.sid);
+					erase_authed_sid_nolock(result.old_char_session.sid);
 				}
 
 				if (result.has_old_account_session() &&
 					result.old_account_session.sid != result.old_char_session.sid)
 				{
-					erase_sid_nolock(result.old_account_session.sid);
+					erase_authed_sid_nolock(result.old_account_session.sid);
 				}
 
 				authed_sessions_by_sid_[sid] = result.current_session;
@@ -727,26 +757,76 @@ namespace svr {
 
 				if (result.has_old_char_session() && result.has_old_account_session()) {
 					result.kind = BindAuthedWorldSessionResultKind::ReplacedBoth;
+					result.duplicate_cause = DuplicateSessionCause::DuplicateCharAndAccountSession;
 				}
 				else if (result.has_old_char_session()) {
 					result.kind = BindAuthedWorldSessionResultKind::ReplacedCharSession;
+					result.duplicate_cause = DuplicateSessionCause::DuplicateCharSession;
 				}
 				else if (result.has_old_account_session()) {
 					result.kind = BindAuthedWorldSessionResultKind::ReplacedAccountSession;
+					result.duplicate_cause = DuplicateSessionCause::DuplicateAccountSession;
 				}
 				else {
 					result.kind = BindAuthedWorldSessionResultKind::Inserted;
+					result.duplicate_cause = DuplicateSessionCause::None;
 				}
 			}
 		}
 
-		// 1차 diff에서는 기존 흐름도 함께 유지한다.
-		session_registry_.BindSessionCharId(sid, char_id);
-		ReplaceWorldSessionForCharWithKick(char_id, sid, serial, kick_reason);
+		if (result.has_old_char_session()) {
+			EnqueueDuplicateAuthedSessionCloseIfNeeded_(
+				result.old_char_session,
+				account_id,
+				char_id,
+				sid,
+				serial,
+				kick_reason,
+				(result.has_old_account_session()
+					? DuplicateSessionCause::DuplicateCharAndAccountSession
+					: DuplicateSessionCause::DuplicateCharSession),
+				(result.has_old_account_session()
+					? SessionKickStatCategory::DuplicateBoth
+					: SessionKickStatCategory::DuplicateChar));
+		}
+
+		if (result.has_old_account_session()) {
+			const bool same_old_session =
+				result.old_account_session.sid == result.old_char_session.sid &&
+				result.old_account_session.serial == result.old_char_session.serial;
+
+			if (!same_old_session) {
+				EnqueueDuplicateAuthedSessionCloseIfNeeded_(
+					result.old_account_session,
+					account_id,
+					char_id,
+					sid,
+					serial,
+					kick_reason,
+					(result.has_old_char_session()
+						? DuplicateSessionCause::DuplicateCharAndAccountSession
+						: DuplicateSessionCause::DuplicateAccountSession),
+					(result.has_old_char_session()
+						? SessionKickStatCategory::DuplicateBoth
+						: SessionKickStatCategory::DuplicateAccount));
+			}
+			else {
+				spdlog::info(
+					"BindAuthenticatedWorldSessionForLogin detected shared old char/account session. deduplicated duplicate close enqueue. account_id={} char_id={} old_sid={} old_serial={} new_sid={} new_serial={} stat_category={}",
+					account_id,
+					char_id,
+					result.old_account_session.sid,
+					result.old_account_session.serial,
+					sid,
+					serial,
+					ToString(SessionKickStatCategory::DuplicateDeduplicatedSameSession));
+			}
+		}
 
 		spdlog::info(
-			"World authenticated session bound. bind_kind={} account_id={} char_id={} sid={} serial={} old_char_sid={} old_char_serial={} old_account_sid={} old_account_serial={}",
+			"World authenticated session bound. bind_kind={} duplicate_cause={} account_id={} char_id={} sid={} serial={} old_char_sid={} old_char_serial={} old_account_sid={} old_account_serial={}",
 			ToString(result.kind),
+			ToString(result.duplicate_cause),
 			account_id,
 			char_id,
 			sid,
@@ -779,6 +859,11 @@ namespace svr {
 			auto it = authed_sessions_by_sid_.find(sid);
 			if (it == authed_sessions_by_sid_.end()) {
 				result.kind = UnbindAuthedWorldSessionResultKind::NotFoundBySid;
+				spdlog::info(
+					"World authenticated session unbind skipped. kind={} sid={} serial={}",
+					ToString(result.kind),
+					sid,
+					serial);
 				return result;
 			}
 
@@ -786,6 +871,14 @@ namespace svr {
 
 			if (result.session.serial != serial) {
 				result.kind = UnbindAuthedWorldSessionResultKind::SerialMismatch;
+				spdlog::info(
+					"World authenticated session unbind skipped. kind={} sid={} serial={} bound_account_id={} bound_char_id={} bound_serial={}",
+					ToString(result.kind),
+					sid,
+					serial,
+					result.session.account_id,
+					result.session.char_id,
+					result.session.serial);
 				return result;
 			}
 
@@ -808,7 +901,7 @@ namespace svr {
 		}
 
 		spdlog::info(
-			"World authenticated session unbound. unbind_kind={} account_id={} char_id={} sid={} serial={}",
+			"World authenticated session unbound. kind={} account_id={} char_id={} sid={} serial={}",
 			ToString(result.kind),
 			result.session.account_id,
 			result.session.char_id,
@@ -2135,15 +2228,18 @@ namespace svr {
 	{
 		spdlog::log(
 			level,
-			"[dup_login trace={}] {} char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
+			"[dup_login trace={}] {} account_id={} char_id={} sid={} serial={} new_sid={} new_serial={} packet_kick_reason={} log_cause={} stat_category={}",
 			ctx.trace_id,
 			event_text,
+			ctx.account_id,
 			ctx.char_id,
 			ctx.sid,
 			ctx.serial,
 			ctx.new_sid,
 			ctx.new_serial,
-			ctx.kick_reason);
+			ctx.packet_kick_reason,
+			ToString(ctx.log_cause),
+			ToString(ctx.stat_category));
 	}
 
 	void WorldRuntime::LogDuplicateWorldSessionCloseDecision_(
@@ -2153,49 +2249,104 @@ namespace svr {
 	{
 		spdlog::log(
 			level,
-			"[dup_login trace={}] close decision: {} char_id={} old_sid={} old_serial={} new_sid={} new_serial={} kick_reason={}",
+			"[dup_login trace={}] {} account_id={} char_id={} sid={} serial={} new_sid={} new_serial={} packet_kick_reason={} log_cause={} stat_category={}",
 			ctx.trace_id,
 			decision_text,
+			ctx.account_id,
 			ctx.char_id,
 			ctx.sid,
 			ctx.serial,
 			ctx.new_sid,
 			ctx.new_serial,
-			ctx.kick_reason);
+			ctx.packet_kick_reason,
+			ToString(ctx.log_cause),
+			ToString(ctx.stat_category));
 	}
 
-	const char* WorldRuntime::ToString(BindWorldSessionResultKind kind) noexcept
+	std::optional<WorldAuthedSession> WorldRuntime::FindAuthenticatedWorldSessionBySid_(
+		std::uint32_t sid) const
 	{
-		switch (kind) {
-		case BindWorldSessionResultKind::InvalidInput:
-			return "InvalidInput";
-		case BindWorldSessionResultKind::Inserted:
-			return "Inserted";
-		case BindWorldSessionResultKind::ReplacedOld:
-			return "ReplacedOld";
-		case BindWorldSessionResultKind::AlreadyBoundSameSession:
-			return "AlreadyBoundSameSession";
-		default:
-			return "UnknownBindWorldSessionResult";
+		if (sid == 0) {
+			return std::nullopt;
 		}
+
+		std::lock_guard lk(world_session_mtx_);
+
+		auto it = authed_sessions_by_sid_.find(sid);
+		if (it == authed_sessions_by_sid_.end()) {
+			return std::nullopt;
+		}
+
+		return it->second;
 	}
 
-	const char* WorldRuntime::ToString(UnbindWorldSessionResultKind kind) noexcept
+	std::optional<WorldAuthedSession> WorldRuntime::FindAuthenticatedWorldSessionByCharId_(
+		std::uint64_t char_id) const
 	{
-		switch (kind) {
-		case UnbindWorldSessionResultKind::InvalidInput:
-			return "InvalidInput";
-		case UnbindWorldSessionResultKind::NotFoundBySid:
-			return "NotFoundBySid";
-		case UnbindWorldSessionResultKind::CharBindingMissing:
-			return "CharBindingMissing";
-		case UnbindWorldSessionResultKind::SerialMismatch:
-			return "SerialMismatch";
-		case UnbindWorldSessionResultKind::Removed:
-			return "Removed";
-		default:
-			return "UnknownUnbindWorldSessionResult";
+		if (char_id == 0) {
+			return std::nullopt;
 		}
+
+		std::lock_guard lk(world_session_mtx_);
+
+		auto sid_it = authed_sid_by_char_id_.find(char_id);
+		if (sid_it == authed_sid_by_char_id_.end()) {
+			return std::nullopt;
+		}
+
+		auto session_it = authed_sessions_by_sid_.find(sid_it->second);
+		if (session_it == authed_sessions_by_sid_.end()) {
+			return std::nullopt;
+		}
+
+		return session_it->second;
+	}
+
+	WorldRuntime::SessionCloseLogContext
+		WorldRuntime::MakeSessionCloseLogContext_(
+			const ClosedAuthedSessionContext& closed_ctx,
+			std::uint64_t trace_id,
+			std::uint64_t fallback_char_id) noexcept
+	{
+		SessionCloseLogContext ctx{};
+		ctx.trace_id = trace_id;
+		ctx.char_id =
+			(closed_ctx.char_id != 0)
+			? closed_ctx.char_id
+			: fallback_char_id;
+		ctx.sid = closed_ctx.sid;
+		ctx.serial = closed_ctx.serial;
+		return ctx;
+	}
+
+	WorldRuntime::ClosedAuthedSessionContext
+		WorldRuntime::MakeClosedAuthedSessionContext_(
+			const UnbindAuthedWorldSessionResult& unbind_result,
+			std::uint32_t sid,
+			std::uint32_t serial) noexcept
+	{
+		ClosedAuthedSessionContext ctx{};
+		ctx.unbind_kind = unbind_result.kind;
+		ctx.account_id = unbind_result.session.account_id;
+		ctx.char_id = unbind_result.session.char_id;
+		ctx.sid = sid;
+		ctx.serial = serial;
+		return ctx;
+	}
+
+	WorldRuntime::SessionCloseLogContext
+		WorldRuntime::ResolveWorldSessionCloseLogContext_(
+			const ClosedAuthedSessionContext& closed_ctx,
+			const DelayedCloseEntry* released_entry) noexcept
+	{
+		if (released_entry != nullptr) {
+			return MakeSessionCloseLogContext_(
+				closed_ctx,
+				released_entry->log_ctx.trace_id,
+				released_entry->log_ctx.char_id);
+		}
+
+		return MakeSessionCloseLogContext_(closed_ctx);
 	}
 
 	const char* WorldRuntime::ToString(BindAuthedWorldSessionResultKind kind) noexcept
@@ -2234,110 +2385,40 @@ namespace svr {
 		}
 	}
 
-	WorldRuntime::BindWorldSessionResult WorldRuntime::BindWorldSessionByChar_(
-		std::uint64_t char_id,
-		std::uint32_t sid,
-		std::uint32_t serial)
+	const char* WorldRuntime::ToString(DuplicateSessionCause cause) noexcept
 	{
-		BindWorldSessionResult result{};
-
-		if (char_id == 0 || sid == 0 || serial == 0) {
-			result.kind = BindWorldSessionResultKind::InvalidInput;
-			return result;
+		switch (cause) {
+		case DuplicateSessionCause::None:
+			return "None";
+		case DuplicateSessionCause::DuplicateCharSession:
+			return "DuplicateCharSession";
+		case DuplicateSessionCause::DuplicateAccountSession:
+			return "DuplicateAccountSession";
+		case DuplicateSessionCause::DuplicateCharAndAccountSession:
+			return "DuplicateCharAndAccountSession";
+		default:
+			return "UnknownDuplicateSessionCause";
 		}
-
-		std::lock_guard lk(world_session_mtx_);
-
-		auto it = world_sessions_by_char_.find(char_id);
-		if (it != world_sessions_by_char_.end()) {
-			if (it->second.sid == sid && it->second.serial == serial) {
-				result.kind = BindWorldSessionResultKind::AlreadyBoundSameSession;
-				return result;
-			}
-
-			result.old_session = it->second;
-			if (result.old_session.sid != 0) {
-				world_char_ids_by_sid_.erase(it->second.sid);
-			}
-
-			world_sessions_by_char_[char_id] = WorldSessionRef{ sid, serial };
-			world_char_ids_by_sid_[sid] = char_id;
-
-			result.kind = BindWorldSessionResultKind::ReplacedOld;
-			return result;
-		}
-
-		world_sessions_by_char_[char_id] = WorldSessionRef{ sid, serial };
-		world_char_ids_by_sid_[sid] = char_id;
-
-		result.kind = BindWorldSessionResultKind::Inserted;
-		return result;
 	}
 
-	WorldRuntime::UnbindWorldSessionResult WorldRuntime::UnbindWorldSessionBySid_(
-		std::uint32_t sid,
-		std::uint32_t serial)
+	const char* WorldRuntime::ToString(SessionKickStatCategory category) noexcept
 	{
-		UnbindWorldSessionResult result{};
-
-		if (sid == 0 || serial == 0) {
-			result.kind = UnbindWorldSessionResultKind::InvalidInput;
-			return result;
+		switch (category) {
+		case SessionKickStatCategory::None:
+			return "None";
+		case SessionKickStatCategory::DuplicateChar:
+			return "DuplicateChar";
+		case SessionKickStatCategory::DuplicateAccount:
+			return "DuplicateAccount";
+		case SessionKickStatCategory::DuplicateBoth:
+			return "DuplicateBoth";
+		case SessionKickStatCategory::DuplicateDeduplicatedSameSession:
+			return "DuplicateDeduplicatedSameSession";
+		case SessionKickStatCategory::Other:
+			return "Other";
+		default:
+			return "UnknownSessionKickStatCategory";
 		}
-
-		std::lock_guard lk(world_session_mtx_);
-
-		auto sid_it = world_char_ids_by_sid_.find(sid);
-		if (sid_it == world_char_ids_by_sid_.end()) {
-			result.kind = UnbindWorldSessionResultKind::NotFoundBySid;
-			return result;
-		}
-
-		result.char_id = sid_it->second;
-
-		auto char_it = world_sessions_by_char_.find(result.char_id);
-		if (char_it == world_sessions_by_char_.end()) {
-			world_char_ids_by_sid_.erase(sid_it);
-			result.kind = UnbindWorldSessionResultKind::CharBindingMissing;
-			return result;
-		}
-
-		if (char_it->second.sid != sid || char_it->second.serial != serial) {
-			result.kind = UnbindWorldSessionResultKind::SerialMismatch;
-			return result;
-		}
-
-		world_sessions_by_char_.erase(char_it);
-		world_char_ids_by_sid_.erase(sid_it);
-		result.kind = UnbindWorldSessionResultKind::Removed;
-		return result;
-	}
-
-	bool WorldRuntime::UpdateWorldSessionBindingForLogin_(
-		std::uint64_t char_id,
-		std::uint32_t new_sid,
-		std::uint32_t new_serial,
-		WorldSessionRef& old_session)
-	{
-		const auto bind_result = BindWorldSessionByChar_(
-			char_id,
-			new_sid,
-			new_serial);
-
-		old_session = bind_result.old_session;
-		const bool has_old = bind_result.has_old_session();
-
-		spdlog::info(
-			"World session binding updated for login. char_id={} new_sid={} new_serial={} bind_kind={} had_old={} old_sid={} old_serial={}",
-			char_id,
-			new_sid,
-			new_serial,
-			ToString(bind_result.kind),
-			static_cast<int>(has_old),
-			old_session.sid,
-			old_session.serial);
-
-		return has_old;
 	}
 
 	void WorldRuntime::EnqueueDuplicateWorldSessionKickClose_(
@@ -2357,6 +2438,63 @@ namespace svr {
 			[this, ctx]() {
 			ProcessDuplicateWorldSessionKickOnIo_(ctx);
 		});
+	}
+
+	void WorldRuntime::EnqueueDuplicateAuthedSessionCloseIfNeeded_(
+		const WorldAuthedSession& victim,
+		std::uint64_t fallback_account_id,
+		std::uint64_t fallback_char_id,
+		std::uint32_t new_sid,
+		std::uint32_t new_serial,
+		std::uint16_t packet_kick_reason,
+		DuplicateSessionCause log_cause,
+		SessionKickStatCategory stat_category)
+	{
+		if (victim.sid == 0 || victim.serial == 0) {
+			return;
+		}
+
+		if (victim.sid == new_sid && victim.serial == new_serial) {
+			spdlog::info(
+				"Skip duplicate authenticated session close enqueue. log_cause={} stat_category={} victim is same as new session. account_id={} char_id={} sid={} serial={}",
+				ToString(log_cause),
+				ToString(stat_category),
+				victim.account_id,
+				victim.char_id,
+				victim.sid,
+				victim.serial);
+			return;
+		}
+
+		// TODO:
+		// stat_category 기준 운영 카운터/메트릭 집계를 여기에 연결한다.
+		// 예: duplicate_char / duplicate_account / duplicate_both / deduplicated_same_session
+		DuplicateLoginLogContext ctx{};
+		ctx.trace_id = duplicate_login_trace_seq_.fetch_add(1, std::memory_order_relaxed);
+		ctx.account_id = victim.account_id != 0 ? victim.account_id : fallback_account_id;
+		ctx.char_id = victim.char_id != 0 ? victim.char_id : fallback_char_id;
+		ctx.sid = victim.sid;
+		ctx.serial = victim.serial;
+		ctx.new_sid = new_sid;
+		ctx.new_serial = new_serial;
+		ctx.packet_kick_reason = packet_kick_reason;
+		ctx.log_cause = log_cause;
+		ctx.stat_category = stat_category;
+
+		spdlog::info(
+			"Enqueue duplicate authenticated session close. log_cause={} stat_category={} packet_kick_reason={} trace_id={} victim_account_id={} victim_char_id={} victim_sid={} victim_serial={} new_sid={} new_serial={}",
+			ToString(ctx.log_cause),
+			ToString(ctx.stat_category),
+			ctx.packet_kick_reason,
+			ctx.trace_id,
+			ctx.account_id,
+			ctx.char_id,
+			ctx.sid,
+			ctx.serial,
+			ctx.new_sid,
+			ctx.new_serial);
+
+		EnqueueDuplicateWorldSessionKickClose_(ctx);
 	}
 
 	bool WorldRuntime::TryBeginDuplicateWorldSessionKickClose_(
@@ -2384,7 +2522,7 @@ namespace svr {
 		HandlerT& world_handler)
 	{
 		proto::S2C_kick_notify kick{};
-		kick.reason = ctx.kick_reason;
+		kick.reason = ctx.packet_kick_reason;
 		kick.char_id = ctx.char_id;
 
 		const auto h = proto::make_header(
@@ -2422,40 +2560,6 @@ namespace svr {
 			ctx.serial);
 	}
 
-	bool WorldRuntime::ReplaceWorldSessionForCharWithKick(
-		std::uint64_t char_id,
-		std::uint32_t new_sid,
-		std::uint32_t new_serial,
-		std::uint16_t kick_reason)
-	{
-		if (char_id == 0 || new_sid == 0 || new_serial == 0) {
-			return false;
-		}
-
-		WorldSessionRef old_session{};
-		const bool has_old = UpdateWorldSessionBindingForLogin_(
-			char_id,
-			new_sid,
-			new_serial,
-			old_session);
-
-		if (has_old) {
-			DuplicateLoginLogContext ctx{};
-			ctx.trace_id = duplicate_login_trace_seq_.fetch_add(1, std::memory_order_relaxed);
-			ctx.char_id = char_id;
-			ctx.sid = old_session.sid;
-			ctx.serial = old_session.serial;
-			ctx.new_sid = new_sid;
-			ctx.new_serial = new_serial;
-			ctx.kick_reason = kick_reason;
-
-			EnqueueDuplicateWorldSessionKickClose_(
-				ctx);
-		}
-
-		return true;
-	}
-
 	bool WorldRuntime::CancelDelayedWorldCloseTimer_(
 		std::uint32_t sid,
 		std::uint32_t serial) noexcept
@@ -2486,22 +2590,4 @@ namespace svr {
 		return true;
 	}
 
-	void WorldRuntime::RemoveWorldSessionBinding(
-		std::uint64_t char_id,
-		std::uint32_t sid,
-		std::uint32_t serial)
-	{
-		if (char_id == 0) {
-			return;
-		}
-
-		const auto unbind_result = UnbindWorldSessionBySid_(sid, serial);
-		if (!unbind_result.removed() || unbind_result.char_id != char_id) {
-			return;
-		}
-
-		spdlog::info(
-			"World session binding removed. char_id={} sid={} serial={}",
-			char_id, sid, serial);
-	}
 }

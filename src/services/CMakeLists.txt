@@ -1,5 +1,6 @@
 add_subdirectory(runtime)
 add_subdirectory(login)
+add_subdirectory(account)
 add_subdirectory(world)
 add_subdirectory(control)
 add_subdirectory(community)

@@ -12,6 +12,7 @@ option(BUILD_WORLD_SERVER "Build world server" ON)
 option(BUILD_CHANNEL_SERVER_LEGACY "Build legacy channel_server wrapper" OFF)
 option(BUILD_CONTROL_SERVER "Build control server" ON)
 option(BUILD_COMMUNITY_SERVER "Build community server" ON)
+option(BUILD_ACCOUNT_SERVER "Build account server" ON)
 
 # Debug일 때만 postfix 붙이기 (Release는 postfix 없음)
 set(CMAKE_DEBUG_POSTFIX "_d")
@@ -50,6 +51,10 @@ endif()
 
 if(BUILD_COMMUNITY_SERVER)
     add_subdirectory(apps/community_server)
+endif()
+
+if(BUILD_ACCOUNT_SERVER)
+    add_subdirectory(apps/account_server)
 endif()
 
 if(BUILD_SAMPLES)

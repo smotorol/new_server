@@ -36,6 +36,42 @@ namespace {
 		std::memcpy(&out, blob.data(), sizeof(out));
 		return true;
 	}
+
+	const char* ToString(svr::DuplicateSessionCause cause) noexcept
+	{
+		switch (cause) {
+		case svr::DuplicateSessionCause::None:
+			return "None";
+		case svr::DuplicateSessionCause::DuplicateCharSession:
+			return "DuplicateCharSession";
+		case svr::DuplicateSessionCause::DuplicateAccountSession:
+			return "DuplicateAccountSession";
+		case svr::DuplicateSessionCause::DuplicateCharAndAccountSession:
+			return "DuplicateCharAndAccountSession";
+		default:
+			return "UnknownDuplicateSessionCause";
+		}
+	}
+
+	const char* ToString(svr::BindAuthedWorldSessionResultKind kind) noexcept
+	{
+		switch (kind) {
+		case svr::BindAuthedWorldSessionResultKind::InvalidInput:
+			return "InvalidInput";
+		case svr::BindAuthedWorldSessionResultKind::Inserted:
+			return "Inserted";
+		case svr::BindAuthedWorldSessionResultKind::ReplacedCharSession:
+			return "ReplacedCharSession";
+		case svr::BindAuthedWorldSessionResultKind::ReplacedAccountSession:
+			return "ReplacedAccountSession";
+		case svr::BindAuthedWorldSessionResultKind::ReplacedBoth:
+			return "ReplacedBoth";
+		case svr::BindAuthedWorldSessionResultKind::AlreadyBoundSameSession:
+			return "AlreadyBoundSameSession";
+		default:
+			return "UnknownBindAuthedWorldSessionResultKind";
+		}
+	}
 } // namespace
 
 void WorldHandler::OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
@@ -99,9 +135,14 @@ bool WorldHandler::HandleEnterWorldWithToken(
 			static_cast<std::uint16_t>(sizeof(res)));
 		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
 
-		spdlog::warn(
-			"HandleEnterWorldWithToken bind denied sid={} serial={} account_id={} char_id={}",
-			n, serial, req->account_id, req->char_id);
+		spdlog::info(
+			"HandleEnterWorldWithToken bind success. account_id={} char_id={} sid={} serial={} bind_kind={} duplicate_cause={}",
+			req->account_id,
+			char_id,
+			n,
+			serial,
+			ToString(bind_result.kind),
+			ToString(bind_result.duplicate_cause));
 		return true;
 	}
 
@@ -192,25 +233,12 @@ void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, st
 
 	const auto authed_unbind = runtime().UnbindAuthenticatedWorldSessionBySid(dwIndex, dwSerial);
 
-	runtime().HandleWorldSessionClosed(dwIndex, dwSerial);
-
-	const auto registry_char_id = runtime().UnbindSessionCharId(dwIndex);
-
-	std::uint64_t close_char_id = registry_char_id;
 	std::uint64_t close_account_id = 0;
+	std::uint64_t close_char_id = 0;
 
 	if (authed_unbind.removed()) {
-		close_char_id = authed_unbind.session.char_id;
 		close_account_id = authed_unbind.session.account_id;
-
-		if (registry_char_id != 0 && registry_char_id != close_char_id) {
-			spdlog::warn(
-				"WorldHandler::OnWorldDisconnected char_id mismatch. sid={} serial={} authed_char_id={} registry_char_id={}",
-				dwIndex,
-				dwSerial,
-				close_char_id,
-				registry_char_id);
-		}
+		close_char_id = authed_unbind.session.char_id;
 	}
 
 	if (close_char_id != 0) {
@@ -231,8 +259,10 @@ void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, st
 		});
 	}
 
+	runtime().HandleWorldSessionClosed(dwIndex, dwSerial);
+
 	spdlog::info(
-		"WorldHandler::OnWorldDisconnected index={} serial={} account_id={} char_id={}",
+		"WorldHandler::OnLineClosed processed. sid={} serial={} account_id={} char_id={}",
 		dwIndex,
 		dwSerial,
 		close_account_id,

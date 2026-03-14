@@ -14,6 +14,7 @@
 #include "server_common/runtime/line_registry.h"
 #include "services/login/handler/login_handler.h"
 #include "services/login/handler/login_world_handler.h"
+#include "services/login/handler/login_account_handler.h"
 #include "services/runtime/login_auth_types.h"
 #include "services/runtime/server_runtime_base.h"
 
@@ -21,15 +22,21 @@ namespace dc {
 
     class LoginLineRuntime final : public ServerRuntimeBase {
     public:
-        LoginLineRuntime(std::uint16_t port, std::string world_host, std::uint16_t world_port);
+        LoginLineRuntime(
+            std::uint16_t port,
+            std::string world_host,
+            std::uint16_t world_port,
+            std::string account_host,
+            std::uint16_t account_port);
         ~LoginLineRuntime() override = default;
 
         bool IsWorldReady() const noexcept;
 
-        bool IssueLoginSuccess(
+        bool IssueLoginRequest(
             std::uint32_t sid,
             std::uint32_t serial,
             std::string_view login_id,
+            std::string_view password,
             std::uint64_t selected_char_id);
 
         void RemoveLoginSession(std::uint32_t sid, std::uint32_t serial);
@@ -42,6 +49,61 @@ namespace dc {
             std::uint64_t account_id = 0;
             std::uint64_t char_id = 0;
         };
+
+    private:
+    struct PendingLoginRequest
+    {
+        std::uint64_t request_id = 0;
+        std::uint32_t client_sid = 0;
+        std::uint32_t client_serial = 0;
+        std::string login_id;
+        std::string password;
+        std::uint64_t selected_char_id = 0;
+        std::chrono::steady_clock::time_point issued_at{};
+    };
+
+    void MarkAccountRegistered(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint32_t server_id,
+        std::string_view server_name,
+        std::uint16_t listen_port);
+
+    void MarkAccountDisconnected(
+        std::uint32_t sid,
+        std::uint32_t serial);
+
+    bool IsAccountReady() const noexcept;
+
+    bool SendAccountAuthRequest_(const PendingLoginRequest& pending);
+
+    void OnAccountAuthResult(
+        std::uint64_t request_id,
+        bool ok,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view fail_reason);
+
+    void CompleteLoginRequest_(
+        const PendingLoginRequest& pending,
+        bool ok,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view fail_reason);
+
+    void ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now);
+
+    bool SendLoginResultFail_(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        const char* reason);
+
+    bool SendLoginResultSuccess_(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view token);
 
     private:
         bool OnRuntimeInit() override;
@@ -83,6 +145,8 @@ namespace dc {
         std::uint16_t port_ = 0;
         std::string world_host_ = "127.0.0.1";
         std::uint16_t world_port_ = 0;
+        std::string account_host_ = "127.0.0.1";
+        std::uint16_t account_port_ = 0;
 
         std::atomic<bool> world_ready_{ false };
         std::atomic<std::uint32_t> world_sid_{ 0 };
@@ -90,15 +154,26 @@ namespace dc {
         std::atomic<std::uint32_t> world_server_id_{ 0 };
 
         std::mutex login_sessions_mtx_;
+        std::mutex pending_login_mtx_;
         std::unordered_map<std::uint32_t, LoginSessionAuthState> login_sessions_;
         std::unordered_map<std::uint64_t, std::uint32_t> account_session_index_;
         std::unordered_map<std::uint64_t, std::uint32_t> char_session_index_;
+        std::unordered_map<std::uint64_t, PendingLoginRequest> pending_login_requests_;
 
         HostedLineEntry client_line_{};
         OutboundLineEntry world_line_{};
+        OutboundLineEntry account_line_{};
 
         std::shared_ptr<LoginHandler> login_handler_;
         std::shared_ptr<LoginWorldHandler> world_handler_;
+        std::shared_ptr<LoginAccountHandler> account_handler_;
+
+        std::atomic<bool> account_ready_{ false };
+        std::atomic<std::uint32_t> account_sid_{ 0 };
+        std::atomic<std::uint32_t> account_serial_{ 0 };
+        std::atomic<std::uint32_t> account_server_id_{ 0 };
+
+        std::atomic<std::uint64_t> next_login_request_id_{ 1 };
     };
 
 } // namespace dc
