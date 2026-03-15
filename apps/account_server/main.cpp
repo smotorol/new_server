@@ -11,9 +11,10 @@ int main()
 #endif
     common::init_logging();
 
-    constexpr std::uint16_t kAccountPort = 27780;
+    constexpr std::uint16_t kAccountLoginPort = 27780;
+    constexpr std::uint16_t kAccountWorldPort = 27781;
 
-    dc::AccountLineRuntime runtime(kAccountPort);
+    dc::AccountLineRuntime runtime(kAccountLoginPort, kAccountWorldPort);
     if (!runtime.InitMainThread()) {
         spdlog::error("AccountLineRuntime InitMainThread failed.");
         return 1;

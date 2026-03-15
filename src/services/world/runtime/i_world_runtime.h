@@ -103,12 +103,14 @@ namespace svr {
 		virtual bool UpsertPendingWorldAuthTicket(
 			std::uint64_t account_id,
 			std::uint64_t char_id,
+			std::string_view login_session,
 			std::string token,
 			std::uint64_t expire_at_unix_sec) = 0;
 
 		virtual bool ConsumePendingWorldAuthTicket(
 			std::uint64_t account_id,
 			std::uint64_t char_id,
+			std::string_view login_session,
 			std::string_view token) = 0;
 
 		virtual BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(

@@ -6,19 +6,23 @@
 #include <atomic>
 #include <mutex>
 #include <condition_variable>
+#include <string>
 
 #include "app/runtime/networkex_base.h"
 
 class CNetworkEX : public dc::NetworkEXBase
 {
 public:
-	explicit CNetworkEX(std::uint32_t pro_id = 0);
-	~CNetworkEX() override = default;
-
-	// ✅ 서버가 알려준 ActorId(char_id)
-	std::uint64_t actor_id() const noexcept { return actor_id_.load(std::memory_order_relaxed); }
-	bool is_ready() const noexcept { return ready_.load(std::memory_order_relaxed); }
-	void wait_ready();
+	struct LoginResultState
+	{
+		bool ok = false;
+		std::uint64_t account_id = 0;
+		std::uint64_t char_id = 0;
+		std::uint16_t world_port = 0;
+		std::string world_host;
+		std::string login_session;
+		std::string world_token;
+	};
 
 	// ---- bench stats ----
 	struct BenchSnapshot {
@@ -34,6 +38,17 @@ public:
 		double rtt_min_ms = 0.0;
 		double rtt_max_ms = 0.0;
 	};
+public:
+	explicit CNetworkEX(std::uint32_t pro_id = 0);
+	~CNetworkEX() override = default;
+
+	// ✅ 서버가 알려준 ActorId(char_id)
+	std::uint64_t actor_id() const noexcept { return actor_id_.load(std::memory_order_relaxed); }
+	bool is_ready() const noexcept { return ready_.load(std::memory_order_relaxed); }
+	void wait_ready();
+	bool has_login_result() const;
+	LoginResultState login_result() const;
+	void clear_login_result();
 
 	static void SetBenchQuiet(bool on) noexcept;
 	void BenchReset() noexcept;
@@ -44,6 +59,10 @@ private:
 	std::atomic<bool> ready_{ false };
 	mutable std::mutex ready_mtx_;
 	std::condition_variable ready_cv_;
+
+	mutable std::mutex login_result_mtx_;
+	LoginResultState login_result_{};
+	bool has_login_result_ = false;
 
 	// ready 이전(ActorId 바인딩 전) 분산용 fallback actor id
 	std::uint64_t fallback_actor_id_ = 0;

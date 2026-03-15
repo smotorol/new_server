@@ -16,6 +16,7 @@ namespace dc {
         std::uint64_t account_id = 0;
         std::uint64_t char_id = 0;
 
+        std::string login_session;
         std::string world_token;
         std::chrono::steady_clock::time_point issued_at{};
         std::chrono::steady_clock::time_point expires_at{};

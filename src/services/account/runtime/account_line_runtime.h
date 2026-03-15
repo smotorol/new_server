@@ -16,14 +16,15 @@
 #include "db/core/dqs_payloads.h"
 #include "db/core/dqs_results.h"
 #include "db/core/dqs_types.h"
-#include "db/shard/db_shard_manager.h"
 #include "db/odbc/odbc_wrapper.h"
+#include "db/shard/db_shard_manager.h"
+#include "services/account/handler/account_world_handler.h"
 
 namespace dc {
 
     class AccountLineRuntime final : public ServerRuntimeBase {
     public:
-        explicit AccountLineRuntime(std::uint16_t port);
+        explicit AccountLineRuntime(std::uint16_t login_port, std::uint16_t world_port);
         ~AccountLineRuntime() override = default;
 
     private:
@@ -54,6 +55,22 @@ namespace dc {
             std::string_view password,
             std::uint64_t selected_char_id);
 
+        void MarkWorldRegistered(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint32_t server_id,
+            std::string_view server_name,
+            std::string_view public_host,
+            std::uint16_t public_port);
+
+        void MarkWorldDisconnected(
+            std::uint32_t sid,
+            std::uint32_t serial);
+
+        bool TryGetWorldEndpoint_(
+            std::string& out_host,
+            std::uint16_t& out_port) const;
+
     private:
         bool InitDbWorkers_();
         void ShutdownDbWorkers_();
@@ -70,14 +87,26 @@ namespace dc {
         void HandleDqsResult_(const svr::dqs_result::AccountAuthResult& rr);
 
     private:
-        std::uint16_t port_ = 0;
+        std::uint16_t login_port_ = 0;
+        std::uint16_t world_port_ = 0;
 
         std::atomic<std::uint32_t> login_sid_{ 0 };
         std::atomic<std::uint32_t> login_serial_{ 0 };
         std::atomic<bool> login_ready_{ false };
 
+        std::atomic<std::uint32_t> world_sid_{ 0 };
+        std::atomic<std::uint32_t> world_serial_{ 0 };
+        std::atomic<bool> world_ready_{ false };
+
+        mutable std::mutex world_endpoint_mtx_;
+        std::string world_public_host_ = "127.0.0.1";
+        std::uint16_t world_public_port_ = 0;
+
         HostedLineEntry login_line_{};
+        HostedLineEntry world_line_{};
+
         std::shared_ptr<AccountLoginHandler> login_handler_;
+        std::shared_ptr<AccountWorldHandler> world_handler_;
 
     private:
         std::string db_conn_str_ =

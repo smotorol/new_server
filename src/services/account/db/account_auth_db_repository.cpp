@@ -1,255 +1,319 @@
 #include "services/account/db/account_auth_db_repository.h"
 
+#include <algorithm>
+#include <cctype>
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <string_view>
+#include <vector>
 
 #include <spdlog/spdlog.h>
 
-// 네 현재 AccountLineRuntime 코드가 이 헤더를 쓰고 있으므로 그대로 맞춤
-#include "db/odbc/statement.h"
+#include "core/crypto/sha256.h"
 
 namespace dc::account {
 
-    namespace {
+	namespace {
 
-        struct AccountRow final {
-            std::uint64_t account_id = 0;
-            std::string login_id;
-            std::uint8_t account_state = 0;
-            std::string password_hash_hex;
-            std::string password_salt_hex;
-        };
+		struct AccountRow final {
+			std::uint64_t account_id = 0;
+			std::string login_id;
+			int account_state = 0;
+			std::string password_hash_hex;
+			std::string password_salt_hex;
+		};
 
-        struct CharacterRow final {
-            std::uint64_t char_id = 0;
-            std::uint64_t account_id = 0;
-        };
+		struct CharacterRow final {
+			std::uint64_t char_id = 0;
+			std::uint64_t account_id = 0;
+		};
 
-        template <typename DbConnT>
-        std::optional<AccountRow> QueryAccountRow_(
-            DbConnT& conn,
-            std::string_view login_id)
-        {
-            dc::db::OdbcStatement stmt(conn);
+		std::optional<AccountRow> QueryAccountRow_(
+			db::OdbcConnection& conn,
+			std::string_view login_id)
+		{
+			db::OdbcStatement stmt(conn);
 
-            if (!stmt.Prepare(
-                "SELECT TOP (1) "
-                "    [account_id], "
-                "    [login_id], "
-                "    [account_state], "
-                "    CONVERT(VARCHAR(512), [password_hash], 2) AS [password_hash_hex], "
-                "    CONVERT(VARCHAR(256), [password_salt], 2) AS [password_salt_hex] "
-                "FROM [auth].[account] "
-                "WHERE [login_id] = ? "
-                "  AND [is_deleted] = 0"))
-            {
-                spdlog::error("QueryAccountRow_ prepare failed.");
-                return std::nullopt;
-            }
+			stmt.prepare(
+				"SELECT TOP (1) "
+				"    [account_id], "
+				"    [login_id], "
+				"    [account_state], "
+				"    CONVERT(VARCHAR(512), [password_hash], 2), "
+				"    CONVERT(VARCHAR(256), [password_salt], 2) "
+				"FROM [auth].[account] "
+				"WHERE [login_id] = ? "
+				"  AND [is_deleted] = 0"
+			);
 
-            if (!stmt.BindInputString(1, std::string(login_id))) {
-                spdlog::error("QueryAccountRow_ bind failed.");
-                return std::nullopt;
-            }
+			stmt.bind_input_string(1, std::string(login_id));
+			stmt.execute();
 
-            if (!stmt.Execute()) {
-                spdlog::error("QueryAccountRow_ execute failed. login_id={}", login_id);
-                return std::nullopt;
-            }
+			if (!stmt.fetch()) {
+				return std::nullopt;
+			}
 
-            if (!stmt.Fetch()) {
-                return std::nullopt;
-            }
+			AccountRow row{};
+			row.account_id = stmt.get_uint64(1);
+			row.login_id = stmt.get_string(2);
+			row.account_state = stmt.get_int(3);
+			row.password_hash_hex = stmt.get_string(4);
+			row.password_salt_hex = stmt.get_string(5);
+			return row;
+		}
 
-            AccountRow row{};
-            row.account_id = stmt.GetUInt64(1);
-            row.login_id = stmt.GetString(2);
-            row.account_state = static_cast<std::uint8_t>(stmt.GetInt(3));
-            row.password_hash_hex = stmt.GetString(4);
-            row.password_salt_hex = stmt.GetString(5);
-            return row;
-        }
+		std::optional<CharacterRow> QueryCharacterById_(
+			db::OdbcConnection& conn,
+			std::uint64_t char_id)
+		{
+			db::OdbcStatement stmt(conn);
 
-        template <typename DbConnT>
-        std::optional<CharacterRow> QueryCharacterById_(
-            DbConnT& conn,
-            std::uint64_t char_id)
-        {
-            dc::db::OdbcStatement stmt(conn);
+			stmt.prepare(
+				"SELECT TOP (1) [char_id], [account_id] "
+				"FROM [NFX_GAME].[game].[character] "
+				"WHERE [char_id] = ? "
+				"  AND [char_state] = 1");
 
-            if (!stmt.Prepare(
-                "SELECT TOP (1) [char_id], [account_id] "
-                "FROM [NFX_GAME].[game].[character] "
-                "WHERE [char_id] = ? "
-                "  AND [char_state] = 1"))
-            {
-                spdlog::error("QueryCharacterById_ prepare failed.");
-                return std::nullopt;
-            }
+			stmt.bind_input_uint64(1, char_id);
+			stmt.execute();
 
-            if (!stmt.BindInputUInt64(1, char_id)) {
-                spdlog::error("QueryCharacterById_ bind failed.");
-                return std::nullopt;
-            }
+			if (!stmt.fetch()) {
+				return std::nullopt;
+			}
 
-            if (!stmt.Execute()) {
-                spdlog::error("QueryCharacterById_ execute failed. char_id={}", char_id);
-                return std::nullopt;
-            }
+			CharacterRow row{};
+			row.char_id = stmt.get_uint64(1);
+			row.account_id = stmt.get_uint64(2);
+			return row;
+		}
 
-            if (!stmt.Fetch()) {
-                return std::nullopt;
-            }
+		std::optional<CharacterRow> QueryDefaultCharacterByAccountId_(
+			db::OdbcConnection& conn,
+			std::uint64_t account_id)
+		{
+			db::OdbcStatement stmt(conn);
 
-            CharacterRow row{};
-            row.char_id = stmt.GetUInt64(1);
-            row.account_id = stmt.GetUInt64(2);
-            return row;
-        }
+			stmt.prepare(
+				"SELECT TOP (1) [char_id], [account_id] "
+				"FROM [NFX_GAME].[game].[character] "
+				"WHERE [account_id] = ? "
+				"  AND [char_state] = 1 "
+				"ORDER BY [char_id] ASC");
 
-        template <typename DbConnT>
-        std::optional<CharacterRow> QueryDefaultCharacterByAccountId_(
-            DbConnT& conn,
-            std::uint64_t account_id)
-        {
-            dc::db::OdbcStatement stmt(conn);
+			stmt.bind_input_uint64(1, account_id);
+			stmt.execute();
 
-            if (!stmt.Prepare(
-                "SELECT TOP (1) [char_id], [account_id] "
-                "FROM [NFX_GAME].[game].[character] "
-                "WHERE [account_id] = ? "
-                "  AND [char_state] = 1 "
-                "ORDER BY [char_id] ASC"))
-            {
-                spdlog::error("QueryDefaultCharacterByAccountId_ prepare failed.");
-                return std::nullopt;
-            }
+			if (!stmt.fetch()) {
+				return std::nullopt;
+			}
 
-            if (!stmt.BindInputUInt64(1, account_id)) {
-                spdlog::error("QueryDefaultCharacterByAccountId_ bind failed.");
-                return std::nullopt;
-            }
+			CharacterRow row{};
+			row.char_id = stmt.get_uint64(1);
+			row.account_id = stmt.get_uint64(2);
+			return row;
+		}
 
-            if (!stmt.Execute()) {
-                spdlog::error(
-                    "QueryDefaultCharacterByAccountId_ execute failed. account_id={}",
-                    account_id);
-                return std::nullopt;
-            }
+		int HexNibble_(char ch)
+		{
+			if (ch >= '0' && ch <= '9') {
+				return ch - '0';
+			}
+			if (ch >= 'a' && ch <= 'f') {
+				return 10 + (ch - 'a');
+			}
+			if (ch >= 'A' && ch <= 'F') {
+				return 10 + (ch - 'A');
+			}
+			return -1;
+		}
 
-            if (!stmt.Fetch()) {
-                return std::nullopt;
-            }
+		bool HexToBytes_(std::string_view hex, std::vector<std::uint8_t>& out)
+		{
+			if (hex.empty()) {
+				out.clear();
+				return true;
+			}
 
-            CharacterRow row{};
-            row.char_id = stmt.GetUInt64(1);
-            row.account_id = stmt.GetUInt64(2);
-            return row;
-        }
+			if ((hex.size() % 2) != 0) {
+				return false;
+			}
 
-    } // namespace
+			out.clear();
+			out.reserve(hex.size() / 2);
 
-    bool AccountAuthDbRepository::VerifyPasswordHex_(
-        std::string_view password,
-        std::string_view password_hash_hex,
-        std::string_view password_salt_hex)
-    {
-        // TODO:
-        // 여기 반드시 네 실제 해시 로직으로 연결해야 한다.
-        //
-        // 현재 최신 스키마는 password_hash/password_salt를 쓰므로,
-        // 기존처럼 평문 비교는 더 이상 맞지 않는다.
-        //
-        // 임시 규칙:
-        // - hash/salt가 비어 있으면 실패 처리
-        // - 실제 해시 함수 연결 전까지는 통과시키지 않음
-        //
-        if (password.empty()) {
-            return false;
-        }
+			for (std::size_t i = 0; i < hex.size(); i += 2) {
+				const int hi = HexNibble_(hex[i]);
+				const int lo = HexNibble_(hex[i + 1]);
+				if (hi < 0 || lo < 0) {
+					out.clear();
+					return false;
+				}
 
-        if (password_hash_hex.empty()) {
-            return false;
-        }
+				out.push_back(static_cast<std::uint8_t>((hi << 4) | lo));
+			}
 
-        // 예:
-        // return VerifyPasswordWithSalt(password, password_hash_hex, password_salt_hex);
-        (void)password_salt_hex;
-        return false;
-    }
+			return true;
+		}
 
-    template <typename DbConnT>
-    AccountAuthRequestResult AccountAuthDbRepository::ExecuteAuth(
-        DbConnT& conn,
-        const AccountAuthRequestJob& job)
-    {
-        AccountAuthRequestResult out{};
-        out.sid = job.sid;
-        out.serial = job.serial;
-        out.request_id = job.request_id;
+		std::string ToUpperAscii_(std::string_view s)
+		{
+			std::string out(s.begin(), s.end());
+			std::transform(out.begin(), out.end(), out.begin(),
+				[](unsigned char ch) { return static_cast<char>(std::toupper(ch)); });
+			return out;
+		}
 
-        const auto account = QueryAccountRow_(conn, job.login_id);
-        if (!account.has_value()) {
-            out.ok = false;
-            out.fail_reason = "account_not_found";
-            return out;
-        }
+		bool MatchSha256SaltPassword_(
+			std::string_view password,
+			const std::vector<std::uint8_t>& salt_bytes,
+			std::string_view expected_hash_hex)
+		{
+			std::vector<std::uint8_t> input;
+			input.reserve(salt_bytes.size() + password.size());
+			input.insert(input.end(), salt_bytes.begin(), salt_bytes.end());
+			input.insert(input.end(), password.begin(), password.end());
 
-        // 스키마 주석 기준:
-        // 0:잠금, 1:정상, 2:휴면, 9:탈퇴
-        if (account->account_state != 1) {
-            out.ok = false;
-            out.fail_reason = "account_not_active";
-            return out;
-        }
+			const auto digest = dc::crypto::Sha256(input);
+			const auto digest_hex = dc::crypto::ToUpperHex(digest);
+			return digest_hex == ToUpperAscii_(expected_hash_hex);
+		}
 
-        if (!VerifyPasswordHex_(
-            job.password,
-            account->password_hash_hex,
-            account->password_salt_hex))
-        {
-            out.ok = false;
-            out.fail_reason = "invalid_password";
-            return out;
-        }
+		bool MatchSha256PasswordSalt_(
+			std::string_view password,
+			const std::vector<std::uint8_t>& salt_bytes,
+			std::string_view expected_hash_hex)
+		{
+			std::vector<std::uint8_t> input;
+			input.reserve(password.size() + salt_bytes.size());
+			input.insert(input.end(), password.begin(), password.end());
+			input.insert(input.end(), salt_bytes.begin(), salt_bytes.end());
 
-        std::optional<CharacterRow> ch;
+			const auto digest = dc::crypto::Sha256(input);
+			const auto digest_hex = dc::crypto::ToUpperHex(digest);
+			return digest_hex == ToUpperAscii_(expected_hash_hex);
+		}
 
-        if (job.selected_char_id != 0) {
-            ch = QueryCharacterById_(conn, job.selected_char_id);
-            if (!ch.has_value()) {
-                out.ok = false;
-                out.fail_reason = "character_not_found";
-                return out;
-            }
+	} // namespace
 
-            if (ch->account_id != account->account_id) {
-                out.ok = false;
-                out.fail_reason = "character_account_mismatch";
-                return out;
-            }
-        }
-        else {
-            ch = QueryDefaultCharacterByAccountId_(conn, account->account_id);
-            if (!ch.has_value()) {
-                out.ok = false;
-                out.fail_reason = "character_not_found";
-                return out;
-            }
-        }
+	bool AccountAuthDbRepository::VerifyPasswordHex_(
+		std::string_view password,
+		std::string_view password_hash_hex,
+		std::string_view password_salt_hex)
+	{
+		if (password.empty()) {
+			return false;
+		}
+		if (password_hash_hex.empty()) {
+			return false;
+		}
 
-        out.ok = true;
-        out.account_id = account->account_id;
-        out.char_id = ch->char_id;
-        out.fail_reason.clear();
-        return out;
-    }
+		std::vector<std::uint8_t> salt_bytes;
+		if (!HexToBytes_(password_salt_hex, salt_bytes)) {
+			spdlog::warn("AccountAuth VerifyPasswordHex_: invalid salt hex");
+			return false;
+		}
 
-    // 네 실제 connection 타입에 맞춰 explicit instantiation
-    template AccountAuthRequestResult
-        AccountAuthDbRepository::ExecuteAuth<dc::db::OdbcConnection>(
-            dc::db::OdbcConnection& conn,
-            const AccountAuthRequestJob& job);
+		// 1차: SHA256(salt + password)
+		if (MatchSha256SaltPassword_(password, salt_bytes, password_hash_hex)) {
+			return true;
+		}
 
+		// 2차: SHA256(password + salt)
+		if (MatchSha256PasswordSalt_(password, salt_bytes, password_hash_hex)) {
+			return true;
+		}
+
+		return false;
+	}
+
+	AccountAuthRequestResult AccountAuthDbRepository::ExecuteAuth(
+		db::OdbcConnection& conn,
+		const AccountAuthRequestJob& job)
+	{
+		AccountAuthRequestResult out{};
+		out.sid = job.sid;
+		out.serial = job.serial;
+		out.request_id = job.request_id;
+
+		try {
+			const auto account = QueryAccountRow_(conn, job.login_id);
+			if (!account.has_value()) {
+				out.ok = false;
+				out.fail_reason = "account_not_found";
+				return out;
+			}
+
+			if (account->account_state != 1) {
+				out.ok = false;
+				out.fail_reason = "account_not_active";
+				return out;
+			}
+
+			if (!VerifyPasswordHex_(
+				job.password,
+				account->password_hash_hex,
+				account->password_salt_hex))
+			{
+				out.ok = false;
+				out.fail_reason = "invalid_password";
+				return out;
+			}
+
+			std::optional<CharacterRow> ch;
+
+			if (job.selected_char_id != 0) {
+				ch = QueryCharacterById_(conn, job.selected_char_id);
+				if (!ch.has_value()) {
+					out.ok = false;
+					out.fail_reason = "character_not_found";
+					return out;
+				}
+
+				if (ch->account_id != account->account_id) {
+					out.ok = false;
+					out.fail_reason = "character_account_mismatch";
+					return out;
+				}
+			}
+			else {
+				ch = QueryDefaultCharacterByAccountId_(conn, account->account_id);
+				if (!ch.has_value()) {
+					out.ok = false;
+					out.fail_reason = "character_not_found";
+					return out;
+				}
+			}
+
+			out.ok = true;
+			out.account_id = account->account_id;
+			out.char_id = ch->char_id;
+			out.should_update_last_login_at_utc = true;
+			out.fail_reason.clear();
+			return out;
+		}
+		catch (const std::exception& e) {
+			spdlog::error("AccountAuth ExecuteAuth exception: {}", e.what());
+			out.ok = false;
+			out.fail_reason = "db_error";
+			return out;
+		}
+	}
+
+	bool AccountAuthDbRepository::UpdateLastLoginAtUtc(
+		db::OdbcConnection& conn,
+		std::uint64_t account_id)
+	{
+		static constexpr const char* kSql = R"SQL(
+UPDATE auth.account
+SET last_login_at_utc = SYSUTCDATETIME()
+WHERE account_id = ?
+  AND is_deleted = 0
+)SQL";
+		db::OdbcStatement stmt(conn);
+		stmt.prepare(kSql);
+		stmt.bind_input_uint64(1, account_id);
+
+		return stmt.execute();
+	}
 } // namespace dc::account

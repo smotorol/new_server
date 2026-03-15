@@ -6,6 +6,8 @@
 #include "db/core/dqs_types.h"
 #include "proto/internal/login_account_proto.h"
 
+namespace pt_la = proto::internal::login_account;
+
 namespace svr::dqs_result {
 
 	// 1) 클라 요청 기반 결과(예: open_world_notice)
@@ -45,7 +47,8 @@ namespace svr::dqs_result {
 		std::uint8_t ok = 0;
 		std::uint64_t account_id = 0;
 		std::uint64_t char_id = 0;
-		char fail_reason[proto::internal::k_auth_fail_reason_max_len + 1]{};
+		char login_session[pt_la::k_login_session_max_len + 1]{};
+		char fail_reason[pt_la::k_auth_fail_reason_max_len + 1]{};
 		svr::dqs::ResultCode result = svr::dqs::ResultCode::success;
 	};
 

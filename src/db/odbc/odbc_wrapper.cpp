@@ -2,6 +2,7 @@
 
 #include <array>
 #include <sstream>
+#include <string>
 #include <utility>
 
 namespace db {
@@ -11,6 +12,34 @@ namespace db {
 		{
 			if (handle != nullptr) {
 				SQLFreeHandle(handle_type, handle);
+			}
+		}
+
+		void append_char_chunk(std::string& out, const char* buf, SQLLEN indicator)
+		{
+			if (buf == nullptr || indicator == SQL_NULL_DATA) {
+				return;
+			}
+
+			if (indicator == SQL_NO_TOTAL) {
+				out.append(buf);
+				return;
+			}
+
+			if (indicator <= 0) {
+				return;
+			}
+
+			const std::size_t byte_count = static_cast<std::size_t>(indicator);
+			if (byte_count == 0) {
+				return;
+			}
+
+			if (buf[byte_count - 1] == '\0') {
+				out.append(buf, byte_count - 1);
+			}
+			else {
+				out.append(buf, byte_count);
 			}
 		}
 
@@ -45,7 +74,12 @@ namespace db {
 			throw OdbcError("SQLAllocHandle(SQL_HANDLE_ENV) failed");
 		}
 
-		const auto rc_env = SQLSetEnvAttr(env_, SQL_ATTR_ODBC_VERSION, reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3), 0);
+		const auto rc_env = SQLSetEnvAttr(
+			env_,
+			SQL_ATTR_ODBC_VERSION,
+			reinterpret_cast<SQLPOINTER>(SQL_OV_ODBC3),
+			0);
+
 		if (!SQL_SUCCEEDED(rc_env)) {
 			ThrowDiagnostics(SQL_HANDLE_ENV, env_, "SQLSetEnvAttr(SQL_ATTR_ODBC_VERSION)");
 		}
@@ -57,6 +91,7 @@ namespace db {
 
 		std::array<SQLCHAR, 1024> out_conn{};
 		SQLSMALLINT out_len = 0;
+
 		const auto rc_connect = SQLDriverConnectA(
 			dbc_,
 			nullptr,
@@ -97,10 +132,11 @@ namespace db {
 			ThrowDiagnostics(SQL_HANDLE_DBC, dbc_, "SQLAllocHandle(SQL_HANDLE_STMT)");
 		}
 
-		std::string sql_buf(sql);
-		const auto rc_exec = SQLExecDirectA(stmt,
-			reinterpret_cast<SQLCHAR*>(sql_buf.data()),
-			SQL_NTS);
+		const auto rc_exec = SQLExecDirectA(
+			stmt,
+			reinterpret_cast<SQLCHAR*>(const_cast<char*>(sql.data())),
+			static_cast<SQLINTEGER>(sql.size()));
+
 		if (!SQL_SUCCEEDED(rc_exec)) {
 			std::string msg = CollectDiagnostics(SQL_HANDLE_STMT, stmt, "SQLExecDirectA");
 			SQLFreeHandle(SQL_HANDLE_STMT, stmt);
@@ -122,10 +158,11 @@ namespace db {
 			ThrowDiagnostics(SQL_HANDLE_DBC, dbc_, "SQLAllocHandle(SQL_HANDLE_STMT)");
 		}
 
-		std::string sql_buf(sql);
-		const auto rc_exec = SQLExecDirectA(stmt,
-			reinterpret_cast<SQLCHAR*>(sql_buf.data()),
-			SQL_NTS);
+		const auto rc_exec = SQLExecDirectA(
+			stmt,
+			reinterpret_cast<SQLCHAR*>(const_cast<char*>(sql.data())),
+			static_cast<SQLINTEGER>(sql.size()));
+
 		if (!SQL_SUCCEEDED(rc_exec)) {
 			std::string msg = CollectDiagnostics(SQL_HANDLE_STMT, stmt, "SQLExecDirectA");
 			SQLFreeHandle(SQL_HANDLE_STMT, stmt);
@@ -145,7 +182,7 @@ namespace db {
 
 		SQLINTEGER value = 0;
 		SQLLEN indicator = 0;
-		const auto rc_get = SQLGetData(stmt, 1, SQL_C_SLONG, &value, 0, &indicator);
+		const auto rc_get = SQLGetData(stmt, 1, SQL_C_SLONG, &value, sizeof(value), &indicator);
 		if (!SQL_SUCCEEDED(rc_get) || indicator == SQL_NULL_DATA) {
 			std::string msg = CollectDiagnostics(SQL_HANDLE_STMT, stmt, "SQLGetData(col=1)");
 			SQLFreeHandle(SQL_HANDLE_STMT, stmt);
@@ -156,7 +193,10 @@ namespace db {
 		return static_cast<int>(value);
 	}
 
-	std::string OdbcConnection::CollectDiagnostics(SQLSMALLINT handle_type, SQLHANDLE handle, std::string_view where)
+	std::string OdbcConnection::CollectDiagnostics(
+		SQLSMALLINT handle_type,
+		SQLHANDLE handle,
+		std::string_view where)
 	{
 		std::ostringstream oss;
 		oss << where;
@@ -173,8 +213,16 @@ namespace db {
 			SQLCHAR text[1024] = {};
 			SQLSMALLINT text_len = 0;
 
-			const auto rc = SQLGetDiagRecA(handle_type, handle, record_no,
-				state, &native_error, text, static_cast<SQLSMALLINT>(sizeof(text)), &text_len);
+			const auto rc = SQLGetDiagRecA(
+				handle_type,
+				handle,
+				record_no,
+				state,
+				&native_error,
+				text,
+				static_cast<SQLSMALLINT>(sizeof(text)),
+				&text_len);
+
 			if (rc == SQL_NO_DATA) {
 				break;
 			}
@@ -183,9 +231,11 @@ namespace db {
 			}
 
 			has_diag = true;
+
 			oss << " | state=" << reinterpret_cast<const char*>(state)
 				<< ", native=" << native_error
 				<< ", msg=" << reinterpret_cast<const char*>(text);
+
 			++record_no;
 		}
 
@@ -195,7 +245,10 @@ namespace db {
 		return oss.str();
 	}
 
-	[[noreturn]] void OdbcConnection::ThrowDiagnostics(SQLSMALLINT handle_type, SQLHANDLE handle, std::string_view where)
+	[[noreturn]] void OdbcConnection::ThrowDiagnostics(
+		SQLSMALLINT handle_type,
+		SQLHANDLE handle,
+		std::string_view where)
 	{
 		throw OdbcError(CollectDiagnostics(handle_type, handle, where));
 	}
@@ -217,6 +270,297 @@ namespace db {
 		(void)char_id;
 		(void)blob;
 		(void)conn.execute_scalar_int("SELECT 1");
+	}
+
+	OdbcStatement::OdbcStatement(OdbcConnection& conn)
+	{
+		if (!conn.connected()) {
+			throw OdbcError("OdbcStatement created with disconnected connection");
+		}
+
+		const auto rc_alloc = SQLAllocHandle(
+			SQL_HANDLE_STMT,
+			conn.native_handle(),
+			&stmt_);
+
+		if (!SQL_SUCCEEDED(rc_alloc)) {
+			OdbcConnection::ThrowDiagnostics(
+				SQL_HANDLE_DBC,
+				conn.native_handle(),
+				"SQLAllocHandle(SQL_HANDLE_STMT)");
+		}
+	}
+
+	OdbcStatement::~OdbcStatement()
+	{
+		if (stmt_ != nullptr) {
+			SQLFreeHandle(SQL_HANDLE_STMT, stmt_);
+			stmt_ = nullptr;
+		}
+	}
+
+	bool OdbcStatement::prepare(std::string_view sql)
+	{
+		const auto rc = SQLPrepareA(
+			stmt_,
+			reinterpret_cast<SQLCHAR*>(const_cast<char*>(sql.data())),
+			static_cast<SQLINTEGER>(sql.size()));
+
+		if (!SQL_SUCCEEDED(rc)) {
+			throw OdbcError(
+				OdbcConnection::CollectDiagnostics(
+					SQL_HANDLE_STMT,
+					stmt_,
+					"SQLPrepareA"));
+		}
+
+		SQLSMALLINT param_count = 0;
+		const auto rc_num = SQLNumParams(stmt_, &param_count);
+		if (!SQL_SUCCEEDED(rc_num)) {
+			throw OdbcError(
+				OdbcConnection::CollectDiagnostics(
+					SQL_HANDLE_STMT,
+					stmt_,
+					"SQLNumParams"));
+		}
+
+		bound_strings_.clear();
+		bound_string_inds_.clear();
+		bound_u64s_.clear();
+		bound_u64_inds_.clear();
+
+		bound_strings_.resize(static_cast<std::size_t>(param_count));
+		bound_string_inds_.resize(static_cast<std::size_t>(param_count));
+		bound_u64s_.resize(static_cast<std::size_t>(param_count));
+		bound_u64_inds_.resize(static_cast<std::size_t>(param_count));
+
+		return true;
+	}
+
+	bool OdbcStatement::bind_input_string(SQLUSMALLINT param_index, const std::string& value)
+	{
+		return bind_input_string(param_index, value, static_cast<SQLULEN>(value.size()));
+	}
+
+	bool OdbcStatement::bind_input_string(
+		SQLUSMALLINT param_index,
+		const std::string& value,
+		SQLULEN column_size)
+	{
+		if (param_index == 0) {
+			throw OdbcError("bind_input_string: param_index must start from 1");
+		}
+
+		const auto index = static_cast<std::size_t>(param_index - 1);
+
+		if (index >= bound_strings_.size() || index >= bound_string_inds_.size()) {
+			throw OdbcError("bind_input_string: parameter index out of range; call prepare() first");
+		}
+
+		bound_strings_[index] = value;
+
+		auto& buf = bound_strings_[index];
+		auto& ind = bound_string_inds_[index];
+
+		ind = SQL_NTS;
+
+		if (column_size == 0) {
+			column_size = static_cast<SQLULEN>(buf.size());
+		}
+
+		const auto rc = SQLBindParameter(
+			stmt_,
+			param_index,
+			SQL_PARAM_INPUT,
+			SQL_C_CHAR,
+			SQL_VARCHAR,
+			column_size,
+			0,
+			const_cast<char*>(buf.c_str()),
+			static_cast<SQLLEN>(buf.size() + 1),
+			&ind);
+
+		if (!SQL_SUCCEEDED(rc)) {
+			throw OdbcError(
+				OdbcConnection::CollectDiagnostics(
+					SQL_HANDLE_STMT,
+					stmt_,
+					"SQLBindParameter(string/utf8)"));
+		}
+
+		return true;
+	}
+
+	bool OdbcStatement::bind_input_uint64(SQLUSMALLINT param_index, std::uint64_t value)
+	{
+		if (param_index == 0) {
+			throw OdbcError("bind_input_uint64: param_index must start from 1");
+		}
+
+		const auto index = static_cast<std::size_t>(param_index - 1);
+
+		if (index >= bound_u64s_.size() || index >= bound_u64_inds_.size()) {
+			throw OdbcError("bind_input_uint64: parameter index out of range; call prepare() first");
+		}
+
+		bound_u64s_[index] = value;
+		bound_u64_inds_[index] = 0;
+
+		auto& v = bound_u64s_[index];
+		auto& ind = bound_u64_inds_[index];
+
+		const auto rc = SQLBindParameter(
+			stmt_,
+			param_index,
+			SQL_PARAM_INPUT,
+			SQL_C_UBIGINT,
+			SQL_BIGINT,
+			0,
+			0,
+			&v,
+			0,
+			&ind);
+
+		if (!SQL_SUCCEEDED(rc)) {
+			throw OdbcError(
+				OdbcConnection::CollectDiagnostics(
+					SQL_HANDLE_STMT,
+					stmt_,
+					"SQLBindParameter(uint64)"));
+		}
+
+		return true;
+	}
+
+	bool OdbcStatement::execute()
+	{
+		const auto rc = SQLExecute(stmt_);
+
+		if (!SQL_SUCCEEDED(rc)) {
+			throw OdbcError(
+				OdbcConnection::CollectDiagnostics(
+					SQL_HANDLE_STMT,
+					stmt_,
+					"SQLExecute"));
+		}
+
+		return true;
+	}
+
+	bool OdbcStatement::fetch()
+	{
+		const auto rc = SQLFetch(stmt_);
+
+		if (rc == SQL_NO_DATA) {
+			return false;
+		}
+
+		if (!SQL_SUCCEEDED(rc)) {
+			throw OdbcError(
+				OdbcConnection::CollectDiagnostics(
+					SQL_HANDLE_STMT,
+					stmt_,
+					"SQLFetch"));
+		}
+
+		return true;
+	}
+
+	std::string OdbcStatement::get_string(SQLUSMALLINT col)
+	{
+		std::string result;
+		std::array<char, 1024> buf{};
+		SQLLEN indicator = 0;
+
+		while (true) {
+			const auto rc = SQLGetData(
+				stmt_,
+				col,
+				SQL_C_CHAR,
+				buf.data(),
+				static_cast<SQLLEN>(buf.size()),
+				&indicator);
+
+			if (rc == SQL_NO_DATA) {
+				break;
+			}
+
+			if (!SQL_SUCCEEDED(rc) && rc != SQL_SUCCESS_WITH_INFO) {
+				throw OdbcError(
+					OdbcConnection::CollectDiagnostics(
+						SQL_HANDLE_STMT,
+						stmt_,
+						"SQLGetData(string/utf8)"));
+			}
+
+			if (indicator == SQL_NULL_DATA) {
+				return {};
+			}
+
+			append_char_chunk(result, buf.data(), indicator);
+
+			if (rc == SQL_SUCCESS) {
+				break;
+			}
+		}
+
+		return result;
+	}
+
+	std::uint64_t OdbcStatement::get_uint64(SQLUSMALLINT col)
+	{
+		std::uint64_t value = 0;
+		SQLLEN indicator = 0;
+
+		const auto rc = SQLGetData(
+			stmt_,
+			col,
+			SQL_C_UBIGINT,
+			&value,
+			sizeof(value),
+			&indicator);
+
+		if (!SQL_SUCCEEDED(rc)) {
+			throw OdbcError(
+				OdbcConnection::CollectDiagnostics(
+					SQL_HANDLE_STMT,
+					stmt_,
+					"SQLGetData(uint64)"));
+		}
+
+		if (indicator == SQL_NULL_DATA) {
+			return 0;
+		}
+
+		return value;
+	}
+
+	int OdbcStatement::get_int(SQLUSMALLINT col)
+	{
+		int value = 0;
+		SQLLEN indicator = 0;
+
+		const auto rc = SQLGetData(
+			stmt_,
+			col,
+			SQL_C_SLONG,
+			&value,
+			sizeof(value),
+			&indicator);
+
+		if (!SQL_SUCCEEDED(rc)) {
+			throw OdbcError(
+				OdbcConnection::CollectDiagnostics(
+					SQL_HANDLE_STMT,
+					stmt_,
+					"SQLGetData(int)"));
+		}
+
+		if (indicator == SQL_NULL_DATA) {
+			return 0;
+		}
+
+		return value;
 	}
 
 } // namespace db

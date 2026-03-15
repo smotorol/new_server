@@ -3,10 +3,9 @@
 #include <cstdint>
 
 #include "proto/common/types.h"
+#include "proto/common/proto_base.h"
 
-namespace proto::internal {
-
-    inline constexpr std::size_t k_service_name_max_len = 32;
+namespace proto::internal::control_world {
 
     enum class ControlWorldMsg : std::uint16_t
     {
@@ -19,7 +18,7 @@ namespace proto::internal {
     {
         std::uint32_t server_id = 0;
         std::uint16_t listen_port = 0;
-        char server_name[k_service_name_max_len + 1]{};
+        char server_name[proto::k_service_name_max_len + 1]{};
     };
 
     struct ControlServerRegisterAck
@@ -27,10 +26,10 @@ namespace proto::internal {
         std::uint8_t accepted = 0;
         std::uint32_t server_id = 0;
         std::uint16_t listen_port = 0;
-        char server_name[k_service_name_max_len + 1]{};
+        char server_name[proto::k_service_name_max_len + 1]{};
     };
 #pragma pack(pop)
 
-    static_assert(sizeof(ControlServerHello) == 4 + 2 + (k_service_name_max_len + 1));
-    static_assert(sizeof(ControlServerRegisterAck) == 1 + 4 + 2 + (k_service_name_max_len + 1));
+    static_assert(sizeof(ControlServerHello) == 4 + 2 + (proto::k_service_name_max_len + 1));
+    static_assert(sizeof(ControlServerRegisterAck) == 1 + 4 + 2 + (proto::k_service_name_max_len + 1));
 }

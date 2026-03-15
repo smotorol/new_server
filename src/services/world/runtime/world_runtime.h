@@ -24,16 +24,22 @@
 #include "db/core/dqs_results.h"
 #include "db/odbc/odbc_wrapper.h"
 #include "db/shard/db_shard_manager.h"
+
 #include "cache/redis/redis_cache.h"
+
+#include "server_common/registry/session_char_registry.h"
+#include "server_common/runtime/line_registry.h"
+#include "server_common/runtime/line_client_start_helper.h"
+
 #include "services/world/handler/world_handler.h"
 #include "services/world/handler/world_login_handler.h"
 #include "services/world/handler/world_control_handler.h"
 #include "services/world/actors/world_actors.h"
-#include "server_common/registry/session_char_registry.h"
-#include "server_common/runtime/line_registry.h"
 #include "services/runtime/server_runtime_base.h"
 #include "services/world/runtime/i_world_runtime.h"
 #include "services/world/runtime/world_line_id.h"
+#include "services/world/handler/world_account_handler.h"
+
 #include "proto/client/world_proto.h"
 #include "proto/common/packet_util.h"
 
@@ -77,8 +83,19 @@ namespace svr {
 		{
 			std::uint64_t account_id = 0;
 			std::uint64_t char_id = 0;
+			std::string login_session;
 			std::string token;
 			std::uint64_t expire_at_unix_sec = 0;
+		};
+
+		struct ConsumedWorldAuthTicket
+		{
+			std::uint64_t account_id = 0;
+			std::uint64_t char_id = 0;
+			std::string login_session;
+			std::string token;
+			std::uint64_t consumed_at_unix_sec = 0;
+			std::uint64_t original_expire_at_unix_sec = 0;
 		};
 
 		struct DuplicateLoginLogContext
@@ -181,12 +198,14 @@ namespace svr {
 		bool UpsertPendingWorldAuthTicket(
 			std::uint64_t account_id,
 			std::uint64_t char_id,
+			std::string_view login_session,
 			std::string token,
 			std::uint64_t expire_at_unix_sec);
 
 		bool ConsumePendingWorldAuthTicket(
 			std::uint64_t account_id,
 			std::uint64_t char_id,
+			std::string_view login_session,
 			std::string_view token);
 
 		BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
@@ -219,6 +238,10 @@ namespace svr {
 		bool DatabaseInit();
 		bool NetworkInit();
 		void InitHostedLineDescriptors_() noexcept;
+		void SweepExpiredPendingWorldAuthTickets_();
+		void SweepOldConsumedWorldAuthTickets_();
+		void RememberConsumedWorldAuthTicket_(const PendingWorldAuthTicket& ticket);
+
 		bool TryReserveDelayedWorldClose_(
 			std::uint32_t sid,
 			std::uint32_t serial) noexcept;
@@ -329,6 +352,18 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial) noexcept;
 
+		void MarkAccountRegistered_(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::string_view server_name,
+			std::string_view public_host,
+			std::uint16_t public_port);
+
+		void MarkAccountDisconnected_(
+			std::uint32_t sid,
+			std::uint32_t serial);
+
 		bool InitRedis();
 		void ScheduleFlush_();
 		void EnqueueFlushDirty_(bool immediate);
@@ -375,6 +410,7 @@ namespace svr {
 
 		mutable std::mutex auth_ticket_mtx_;
 		std::unordered_map<std::string, PendingWorldAuthTicket> pending_world_auth_tickets_;
+		std::unordered_map<std::string, ConsumedWorldAuthTicket> consumed_world_auth_tickets_;
 
 		mutable std::mutex world_session_mtx_;
 
@@ -465,6 +501,16 @@ namespace svr {
 
 		std::vector<std::unique_ptr<DbPool>> world_pools_;
 		int db_pool_size_per_world_ = 2;
+
+		dc::OutboundLineEntry account_line_{};
+		std::shared_ptr<WorldAccountHandler> world_account_handler_;
+
+		std::atomic<bool> account_ready_{ false };
+		std::atomic<std::uint32_t> account_sid_{ 0 };
+		std::atomic<std::uint32_t> account_serial_{ 0 };
+
+		std::string account_host_ = "127.0.0.1";
+		std::uint16_t account_port_ = 27781;
 	};
 
 	extern WorldRuntime g_Main;

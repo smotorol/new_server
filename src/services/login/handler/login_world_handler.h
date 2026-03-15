@@ -37,6 +37,7 @@ public:
         std::uint32_t dwSerial,
         std::uint64_t account_id,
         std::uint64_t char_id,
+        std::string_view login_session,
         std::string_view token,
         std::uint64_t expire_at_unix_sec);
 

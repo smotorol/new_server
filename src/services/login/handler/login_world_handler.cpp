@@ -8,6 +8,8 @@
 #include "proto/common/packet_util.h"
 #include "proto/internal/login_world_proto.h"
 
+namespace pt_lw = proto::internal::login_world;
+
 LoginWorldHandler::LoginWorldHandler(
     RegisterAckCallback on_register_ack,
     DisconnectCallback on_disconnect)
@@ -31,7 +33,7 @@ bool LoginWorldHandler::SendHelloRegister(
     std::uint32_t dwIndex,
     std::uint32_t dwSerial)
 {
-    proto::internal::LoginServerHello pkt{};
+    pt_lw::LoginServerHello pkt{};
     pkt.server_id = server_id_;
     pkt.listen_port = listen_port_;
     std::snprintf(
@@ -41,7 +43,7 @@ bool LoginWorldHandler::SendHelloRegister(
         server_name_.c_str());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(proto::internal::LoginWorldMsg::login_server_hello),
+        static_cast<std::uint16_t>(pt_lw::LoginWorldMsg::login_server_hello),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     spdlog::info(
@@ -57,14 +59,16 @@ bool LoginWorldHandler::SendAuthTicketUpsert(
     std::uint32_t dwSerial,
     std::uint64_t account_id,
     std::uint64_t char_id,
+    std::string_view login_session,
     std::string_view token,
     std::uint64_t expire_at_unix_sec)
 {
-    proto::internal::LoginAuthTicketUpsert pkt{};
+    pt_lw::LoginAuthTicketUpsert pkt{};
     pkt.account_id = account_id;
     pkt.char_id = char_id;
     pkt.expire_at_unix_sec = expire_at_unix_sec;
-
+	std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
+		static_cast<int>(login_session.size()), login_session.data());
     std::snprintf(
         pkt.world_token,
         sizeof(pkt.world_token),
@@ -73,12 +77,12 @@ bool LoginWorldHandler::SendAuthTicketUpsert(
         token.data());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(proto::internal::LoginWorldMsg::login_auth_ticket_upsert),
+        static_cast<std::uint16_t>(pt_lw::LoginWorldMsg::login_auth_ticket_upsert),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     spdlog::info(
-        "LoginWorldHandler::SendAuthTicketUpsert idx={} serial={} account_id={} char_id={} token={}",
-        dwIndex, dwSerial, account_id, char_id, token);
+        "LoginWorldHandler::SendAuthTicketUpsert idx={} serial={} account_id={} char_id={} login_session={} token={}",
+        dwIndex, dwSerial, account_id, char_id, login_session, token);
 
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
@@ -96,10 +100,10 @@ bool LoginWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
     const std::size_t body_len =
         (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
 
-    switch (static_cast<proto::internal::LoginWorldMsg>(msg_type)) {
-    case proto::internal::LoginWorldMsg::login_server_register_ack:
+    switch (static_cast<pt_lw::LoginWorldMsg>(msg_type)) {
+    case pt_lw::LoginWorldMsg::login_server_register_ack:
         {
-            const auto* ack = proto::as<proto::internal::LoginServerRegisterAck>(pMsg, body_len);
+            const auto* ack = proto::as<pt_lw::LoginServerRegisterAck>(pMsg, body_len);
             if (!ack) {
                 spdlog::error("LoginWorldHandler invalid login_server_register_ack packet. sid={}", n);
                 return false;
@@ -122,9 +126,9 @@ bool LoginWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
             return true;
         }
 
-    case proto::internal::LoginWorldMsg::login_auth_ticket_upsert_ack:
+    case pt_lw::LoginWorldMsg::login_auth_ticket_upsert_ack:
         {
-            const auto* ack = proto::as<proto::internal::LoginAuthTicketUpsertAck>(pMsg, body_len);
+            const auto* ack = proto::as<pt_lw::LoginAuthTicketUpsertAck>(pMsg, body_len);
             if (!ack) {
                 spdlog::error("LoginWorldHandler invalid login_auth_ticket_upsert_ack packet. sid={}", n);
                 return false;

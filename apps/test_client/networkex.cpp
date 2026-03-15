@@ -2,12 +2,17 @@
 #include <iostream>
 #include <cstring>
 #include "proto/common/proto_base.h"
+#include "proto/client/login_proto.h"
+#include "proto/client/world_proto.h"
 #include "core/util/string_utils.h"
 #include "proto/common/packet_util.h"
 #include "net/tcp/tcp_client.h"
 #include "net/tcp/tcp_session.h"
 #include "define.h"
 #include "GlobalClients.h"
+
+namespace pt_login = proto::login;
+namespace pt_world = proto::world;
 
 std::atomic<bool> CNetworkEX::bench_quiet_{ false };
 std::atomic<std::uint64_t> CNetworkEX::s_fallback_seq_{ 1 };
@@ -72,11 +77,31 @@ void CNetworkEX::wait_ready()
 	ready_cv_.wait(lk, [&] { return ready_.load(std::memory_order_relaxed); });
 }
 
+bool CNetworkEX::has_login_result() const
+{
+	std::lock_guard lk(login_result_mtx_);
+	return has_login_result_;
+}
+
+CNetworkEX::LoginResultState CNetworkEX::login_result() const
+{
+	std::lock_guard lk(login_result_mtx_);
+	return login_result_;
+}
+
+void CNetworkEX::clear_login_result()
+{
+	std::lock_guard lk(login_result_mtx_);
+	login_result_ = LoginResultState{};
+	has_login_result_ = false;
+}
+
 bool CNetworkEX::DataAnalysis(std::uint32_t dwProID, std::uint32_t dwClientIndex, _MSG_HEADER* pMsgHeader, char* pMsg)
 {
 	switch (static_cast<eLine>(dwProID))
 	{
-	case eLine::sample_server:
+	case eLine::login_server:
+	case eLine::world_server:
 		{
 			return LineAnalysis(dwClientIndex, pMsgHeader, pMsg);
 		}
@@ -87,18 +112,18 @@ bool CNetworkEX::DataAnalysis(std::uint32_t dwProID, std::uint32_t dwClientIndex
 
 void CNetworkEX::AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
-	// 연결되면 open_world_notice 전송
-	proto::C2S_open_world_notice req{};
-
-	std::cout << "[client] connected sid=" << dwIndex << "\n";
-	copy_cstr(req.szWorldName, "world");
-
-	auto h = proto::make_header((std::uint16_t)proto::C2SMsg::open_world_notice,
-		+(std::uint16_t)sizeof(req));
-
-	auto client = GlobalLineClients().client((std::uint8_t)eLine::sample_server);
-	auto s = client->session();
-	if (s) s->async_send(h, reinterpret_cast<const char*>(&req));
+	switch (static_cast<eLine>(dwProID))
+	{
+	case eLine::login_server:
+		std::cout << "[Login] connected sid=" << dwIndex << "\n";
+		break;
+	case eLine::world_server:
+		std::cout << "[World] connected sid=" << dwIndex << "\n";
+		break;
+	default:
+		std::cout << "[Client] connected sid=" << dwIndex << "\n";
+		break;
+	}
 
 	spdlog::info("CNetworkEX::AcceptClientCheck pro={} index={} serial={}", dwProID, dwIndex, dwSerial);
 }
@@ -112,9 +137,75 @@ bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pM
 {
 	const std::uint16_t type = proto::get_type_u16(*pMsgHeader);
 	const std::size_t body_len = pMsgHeader->m_wSize - MSG_HEADER_SIZE;
+	const auto line = static_cast<eLine>(pro_id());
+
+	if (line == eLine::login_server)
+	{
+		switch (static_cast<pt_login::LoginS2CMsg>(type))
+		{
+		case pt_login::LoginS2CMsg::login_result:
+			{
+				auto* res = proto::as<pt_login::S2C_login_result>(pMsg, body_len);
+				if (!res) return false;
+
+				LoginResultState st{};
+				st.ok = (res->ok != 0);
+				st.account_id = res->account_id;
+				st.char_id = res->char_id;
+				st.world_port = res->world_port;
+				st.world_host = res->world_host;
+				st.login_session = res->login_session;
+				st.world_token = res->world_token;
+
+				{
+					std::lock_guard lk(login_result_mtx_);
+					login_result_ = std::move(st);
+					has_login_result_ = true;
+				}
+
+				std::cout
+					<< "[Login] login_result sid=" << n
+					<< " ok=" << static_cast<int>(res->ok)
+					<< " account_id=" << res->account_id
+					<< " char_id=" << res->char_id
+					<< " world_host=" << res->world_host
+					<< " world_port=" << res->world_port
+					<< " login_session=" << res->login_session
+					<< " world_token=" << res->world_token
+					<< "\n";
+			}
+			return true;
+		default:
+			std::cout << "[Login] unknown type=" << type << "\n";
+			return true;
+		}
+	}
 
 	switch (type)
 	{
+	case static_cast<std::uint16_t>(pt_world::WorldS2CMsg::enter_world_result):
+		{
+			auto* res = proto::as<pt_world::S2C_enter_world_result>(pMsg, body_len);
+			if (!res) return false;
+
+			std::cout << "[World] enter_world_result sid=" << n
+				<< " ok=" << static_cast<int>(res->ok)
+				<< " account_id=" << res->account_id
+				<< " char_id=" << res->char_id
+				<< "\n";
+		}
+		return true;
+	case static_cast<std::uint16_t>(pt_world::WorldS2CMsg::kick_notify):
+		{
+			auto* res = proto::as<pt_world::S2C_kick_notify>(pMsg, body_len);
+			if (!res) return false;
+
+			std::cout << "[World] kick_notify sid=" << n
+				<< " reason=" << res->reason
+				<< " char_id=" << res->char_id
+				<< "\n";
+		}
+		return true;
 	case proto::S2CMsg::open_world_success:
 		{
 			auto* req = proto::as < proto::S2C_open_world_success>(pMsg, body_len);

@@ -14,6 +14,8 @@
 #include "db/core/dqs_payloads.h"
 #include "services/world/actors/world_actors.h"
 
+namespace pt_w = proto::world;
+
 namespace {
 #pragma pack(push, 1)
 	struct DemoCharState
@@ -89,32 +91,42 @@ bool WorldHandler::HandleEnterWorldWithToken(
 	const char* body,
 	std::size_t body_len)
 {
-	auto* req = proto::as<proto::C2S_enter_world_with_token>(body, body_len);
+	auto* req = proto::as<pt_w::C2S_enter_world_with_token>(body, body_len);
 	if (!req) {
 		spdlog::error("HandleEnterWorldWithToken invalid packet sid={}", n);
 		return false;
 	}
 
-	proto::S2C_enter_world_result res{};
+	pt_w::S2C_enter_world_result res{};
 	res.account_id = req->account_id;
 	res.char_id = req->char_id;
 
 	const auto serial = GetLatestSerial(n);
 
+	spdlog::info(
+		"HandleEnterWorldWithToken request sid={} serial={} account_id={} char_id={} login_session={} token={}",
+		n,
+		serial,
+		req->account_id,
+		req->char_id,
+		req->login_session,
+		req->world_token);
+
 	if (!runtime().ConsumePendingWorldAuthTicket(
 		req->account_id,
 		req->char_id,
+		req->login_session,
 		req->world_token))
 	{
 		res.ok = 0;
 		const auto h = proto::make_header(
-			static_cast<std::uint16_t>(proto::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
 			static_cast<std::uint16_t>(sizeof(res)));
 		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
 
 		spdlog::warn(
-			"HandleEnterWorldWithToken denied sid={} serial={} account_id={} char_id={}",
-			n, serial, req->account_id, req->char_id);
+			"HandleEnterWorldWithToken denied sid={} serial={} account_id={} char_id={} login_session={} token={}",
+			n, serial, req->account_id, req->char_id, req->login_session, req->world_token);
 		return true;
 	}
 
@@ -126,17 +138,17 @@ bool WorldHandler::HandleEnterWorldWithToken(
 		char_id,
 		n,
 		serial,
-		static_cast<std::uint16_t>(proto::WorldKickReason::duplicate_login));
+		static_cast<std::uint16_t>(pt_w::WorldKickReason::duplicate_login));
 
 	if (bind_result.kind == svr::BindAuthedWorldSessionResultKind::InvalidInput) {
 		res.ok = 0;
 		const auto h = proto::make_header(
-			static_cast<std::uint16_t>(proto::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
 			static_cast<std::uint16_t>(sizeof(res)));
 		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
 
-		spdlog::info(
-			"HandleEnterWorldWithToken bind success. account_id={} char_id={} sid={} serial={} bind_kind={} duplicate_cause={}",
+		spdlog::warn(
+			"HandleEnterWorldWithToken bind failed. account_id={} char_id={} sid={} serial={} bind_kind={} duplicate_cause={}",
 			req->account_id,
 			char_id,
 			n,
@@ -204,14 +216,21 @@ bool WorldHandler::HandleEnterWorldWithToken(
 	{
 		res.ok = 1;
 		auto h = proto::make_header(
-			static_cast<std::uint16_t>(proto::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
 			static_cast<std::uint16_t>(sizeof(res)));
 		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
 	}
 
 	spdlog::info(
-		"HandleEnterWorldWithToken success sid={} serial={} account_id={} char_id={}",
-		n, serial, req->account_id, req->char_id);
+		"HandleEnterWorldWithToken success sid={} serial={} account_id={} char_id={} login_session={} token={} bind_kind={} duplicate_cause={}",
+		n,
+		serial,
+		req->account_id,
+		char_id,
+		req->login_session,
+		req->world_token,
+		ToString(bind_result.kind),
+		ToString(bind_result.duplicate_cause));
 
 	return true;
 }

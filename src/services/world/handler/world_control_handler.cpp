@@ -7,6 +7,8 @@
 #include "proto/common/packet_util.h"
 #include "proto/internal/control_proto.h"
 
+namespace pt_cw = proto::internal::control_world;
+
 WorldControlHandler::WorldControlHandler(RegisterCallback on_register, UnregisterCallback on_unregister)
     : on_register_(std::move(on_register))
     , on_unregister_(std::move(on_unregister))
@@ -22,7 +24,7 @@ bool WorldControlHandler::SendRegisterAck(
     std::uint16_t listen_port,
     bool accepted)
 {
-    proto::internal::ControlServerRegisterAck ack{};
+    pt_cw::ControlServerRegisterAck ack{};
     ack.accepted = accepted ? 1 : 0;
     ack.server_id = server_id;
     ack.listen_port = listen_port;
@@ -30,7 +32,7 @@ bool WorldControlHandler::SendRegisterAck(
         static_cast<int>(server_name.size()), server_name.data());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(proto::internal::ControlWorldMsg::control_server_register_ack),
+        static_cast<std::uint16_t>(pt_cw::ControlWorldMsg::control_server_register_ack),
         static_cast<std::uint16_t>(sizeof(ack)));
 
     return Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&ack));
@@ -47,10 +49,10 @@ bool WorldControlHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
     const std::size_t body_len =
         (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
 
-    switch (static_cast<proto::internal::ControlWorldMsg>(msg_type)) {
-    case proto::internal::ControlWorldMsg::control_server_hello:
+    switch (static_cast<pt_cw::ControlWorldMsg>(msg_type)) {
+    case pt_cw::ControlWorldMsg::control_server_hello:
         {
-            const auto* req = proto::as<proto::internal::ControlServerHello>(pMsg, body_len);
+            const auto* req = proto::as<pt_cw::ControlServerHello>(pMsg, body_len);
             if (!req) {
                 spdlog::error("WorldControlHandler invalid control_server_hello packet. sid={}", n);
                 return false;

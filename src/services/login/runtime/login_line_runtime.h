@@ -60,6 +60,9 @@ namespace dc {
         std::string password;
         std::uint64_t selected_char_id = 0;
         std::chrono::steady_clock::time_point issued_at{};
+
+        std::string world_host;
+        std::uint16_t world_port = 0;
     };
 
     void MarkAccountRegistered(
@@ -82,14 +85,28 @@ namespace dc {
         bool ok,
         std::uint64_t account_id,
         std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view world_host,
+        std::uint16_t world_port,
         std::string_view fail_reason);
 
     void CompleteLoginRequest_(
-        const PendingLoginRequest& pending,
+        PendingLoginRequest pending,
         bool ok,
         std::uint64_t account_id,
         std::uint64_t char_id,
+        std::string_view login_session,
         std::string_view fail_reason);
+
+    bool SendLoginResultSuccess_(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view token,
+        std::string_view world_host,
+        std::uint16_t world_port);
 
     void ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now);
 
@@ -97,13 +114,6 @@ namespace dc {
         std::uint32_t sid,
         std::uint32_t serial,
         const char* reason);
-
-    bool SendLoginResultSuccess_(
-        std::uint32_t sid,
-        std::uint32_t serial,
-        std::uint64_t account_id,
-        std::uint64_t char_id,
-        std::string_view token);
 
     private:
         bool OnRuntimeInit() override;

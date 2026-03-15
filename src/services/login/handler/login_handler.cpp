@@ -6,6 +6,8 @@
 #include "proto/common/packet_util.h"
 #include "services/login/runtime/login_line_runtime.h"
 
+namespace pt_l = proto::login;
+
 LoginHandler::LoginHandler(dc::LoginLineRuntime& runtime)
     : runtime_(runtime)
 {
@@ -24,10 +26,10 @@ bool LoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
     const std::size_t body_len =
         (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
 
-    switch (static_cast<proto::LoginC2SMsg>(msg_type)) {
-    case proto::LoginC2SMsg::login_request:
+    switch (static_cast<pt_l::LoginC2SMsg>(msg_type)) {
+    case pt_l::LoginC2SMsg::login_request:
         {
-            const auto* req = proto::as<proto::C2S_login_request>(pMsg, body_len);
+            const auto* req = proto::as<pt_l::C2S_login_request>(pMsg, body_len);
             if (!req) {
                 spdlog::error("LoginHandler invalid login_request packet sid={}", n);
                 return false;
@@ -40,11 +42,11 @@ bool LoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
                 req->password,
                 req->selected_char_id))
             {
-                proto::S2C_login_result res{};
+                pt_l::S2C_login_result res{};
                 res.ok = 0;
 
                 const auto h = proto::make_header(
-                    static_cast<std::uint16_t>(proto::LoginS2CMsg::login_result),
+                    static_cast<std::uint16_t>(pt_l::LoginS2CMsg::login_result),
                     static_cast<std::uint16_t>(sizeof(res)));
 
                 Send(0, n, GetLatestSerial(n), h, reinterpret_cast<const char*>(&res));

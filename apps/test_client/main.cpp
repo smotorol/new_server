@@ -15,6 +15,8 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "proto/client/login_proto.h"
+#include "proto/client/world_proto.h"
 #include "core/log/common.h"
 
 #include "networkex.h"  // ✅ test_client 전용 NetworkEX 사용
@@ -22,6 +24,8 @@
 #include "bench_controller.h"
 
 namespace asio = boost::asio;
+namespace pt_login = proto::login;
+namespace pt_world = proto::world;
 
 struct BenchConn {
 	std::shared_ptr<CNetworkEX> handler;
@@ -35,7 +39,7 @@ static std::vector<BenchConn> spawn_bench_clients(asio::io_context& io, net::Act
 	out.reserve((std::size_t)std::max(0, count));
 	for (int i = 0; i < count; ++i) {
 		BenchConn c;
-		c.handler = std::make_shared<CNetworkEX>((std::uint32_t)eLine::sample_server);
+		c.handler = std::make_shared<CNetworkEX>((std::uint32_t)eLine::world_server);
 		c.client = std::make_shared<net::TcpClient>(io, c.handler);
 		c.handler->AttachClient(c.client);
 		c.handler->AttachDispatcher([&actors](std::uint64_t actor_id, std::function<void()> fn) {
@@ -66,11 +70,14 @@ int main()
 	LineManager& mgr = GlobalLineClients();
 
 	// 라인별로 설정 + 자동 start
-	mgr.setup((std::uint8_t)eLine::sample_server, "127.0.0.1", 27787, true);
+	mgr.setup((std::uint8_t)eLine::login_server, "127.0.0.1", 26788, true);
 
 	std::thread net_thread([&] { io.run(); });
 
 	std::cout << "Commands:\n"
+		<< "  login <id> <pw> [char_id]\n"
+		<< "  status\n"
+		<< "  enterworld\n"
 		<< "  send <type_u16> <text>\n"
 		<< "  gold <amount_u32>   (send C2S_add_gold)\n"
 		<< "  stats               (C2S_get_stats)\n"
@@ -99,6 +106,124 @@ int main()
 	{
 		if (line == "quit") break;
 
+		if (line.rfind("login ", 0) == 0)
+		{
+			std::istringstream iss(line);
+			std::string cmd;
+			std::string id;
+			std::string pw;
+			std::uint64_t selected_char_id = 0;
+			iss >> cmd >> id >> pw;
+			if (!(iss >> selected_char_id)) {
+				selected_char_id = 0;
+			}
+
+			auto client = mgr.client((std::uint8_t)eLine::login_server);
+			if (!client) { std::cout << "login client not setup\n"; continue; }
+
+			auto s = client->session();
+			if (!s) { std::cout << "login server not connected yet\n"; continue; }
+
+			auto hnd = mgr.handler((std::uint8_t)eLine::login_server);
+			if (hnd) {
+				hnd->clear_login_result();
+			}
+
+			pt_login::C2S_login_request req{};
+			std::snprintf(req.login_id, sizeof(req.login_id), "%s", id.c_str());
+			std::snprintf(req.password, sizeof(req.password), "%s", pw.c_str());
+			req.selected_char_id = selected_char_id;
+
+			auto h = proto::make_header(
+				static_cast<std::uint16_t>(pt_login::LoginC2SMsg::login_request),
+				static_cast<std::uint16_t>(sizeof(req)));
+
+			s->async_send(h, reinterpret_cast<const char*>(&req));
+			std::cout << "[Login] sent login_request id=" << id
+				<< " selected_char_id=" << selected_char_id << "\n";
+			continue;
+		}
+
+		if (line == "status")
+		{
+			auto h = mgr.handler((std::uint8_t)eLine::login_server);
+			if (!h || !h->has_login_result()) {
+				std::cout << "[client] no login_result yet\n";
+				continue;
+			}
+
+			const auto st = h->login_result();
+			std::cout
+				<< "[client] login_result"
+				<< " ok=" << st.ok
+				<< " account_id=" << st.account_id
+				<< " char_id=" << st.char_id
+				<< " world_host=" << st.world_host
+				<< " world_port=" << st.world_port
+				<< " login_session=" << st.login_session
+				<< " world_token=" << st.world_token
+				<< "\n";
+			continue;
+		}
+
+		if (line == "enterworld")
+		{
+			auto login_h = mgr.handler((std::uint8_t)eLine::login_server);
+			if (!login_h || !login_h->has_login_result()) {
+				std::cout << "login_result not ready\n";
+				continue;
+			}
+
+			const auto st = login_h->login_result();
+			if (!st.ok) {
+				std::cout << "last login failed\n";
+				continue;
+			}
+
+			if (st.world_host.empty() || st.world_port == 0) {
+				std::cout << "invalid world endpoint from login_result\n";
+				continue;
+			}
+
+			// login 서버와는 연결 종료 후 world 서버로 이동
+			if (auto login_client = mgr.client((std::uint8_t)eLine::login_server)) {
+				login_client->stop();
+			}
+
+			mgr.setup((std::uint8_t)eLine::world_server, st.world_host, st.world_port, true);
+			std::this_thread::sleep_for(std::chrono::milliseconds(300));
+
+			auto world_client = mgr.client((std::uint8_t)eLine::world_server);
+			if (!world_client) {
+				std::cout << "world client setup failed\n";
+				continue;
+			}
+
+			auto s = world_client->session();
+			if (!s) {
+				std::cout << "world server not connected yet\n";
+				continue;
+			}
+
+			pt_world::C2S_enter_world_with_token req{};
+			req.account_id = st.account_id;
+			req.char_id = st.char_id;
+			std::snprintf(req.login_session, sizeof(req.login_session), "%s", st.login_session.c_str());
+			std::snprintf(req.world_token, sizeof(req.world_token), "%s", st.world_token.c_str());
+
+			auto h = proto::make_header(
+				static_cast<std::uint16_t>(pt_world::WorldC2SMsg::enter_world_with_token),
+				static_cast<std::uint16_t>(sizeof(req)));
+
+			s->async_send(h, reinterpret_cast<const char*>(&req));
+
+			std::cout << "[World] sent enter_world_with_token"
+				<< " account_id=" << st.account_id
+				<< " char_id=" << st.char_id
+				<< "\n";
+			continue;
+		}
+
 		if (line.rfind("send ", 0) == 0)
 		{
 			// parse: send <type> <text>
@@ -114,7 +239,7 @@ int main()
 			const auto text = line.substr(p2 + 1);
 			const std::uint16_t type = static_cast<std::uint16_t>(std::stoi(type_str));
 
-			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			auto client = mgr.client((std::uint8_t)eLine::world_server);
 			if (!client) { std::cout << "client not setup\n"; continue; }
 
 			auto s = client->session();
@@ -140,7 +265,7 @@ int main()
 			std::uint32_t amount = 0;
 			iss >> cmd >> amount;
 
-			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			auto client = mgr.client((std::uint8_t)eLine::world_server);
 			if (!client) { std::cout << "client not setup\n"; continue; }
 
 			auto s = client->session();
@@ -161,7 +286,7 @@ int main()
 		// myid
 		if (line == "myid")
 		{
-			auto h = mgr.handler((std::uint8_t)eLine::sample_server);
+			auto h = mgr.handler((std::uint8_t)eLine::world_server);
 			if (!h) { std::cout << "handler not ready\n"; continue; }
 			std::cout << "[client] my char_id(actor_id)=" << h->actor_id() << "\n";
 			continue;
@@ -170,7 +295,7 @@ int main()
 		// stats
 		if (line == "stats")
 		{
-			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			auto client = mgr.client((std::uint8_t)eLine::world_server);
 			if (!client) { std::cout << "client not setup\n"; continue; }
 			auto s = client->session();
 			if (!s) { std::cout << "not connected yet\n"; continue; }
@@ -191,7 +316,7 @@ int main()
 			iss >> cmd;
 			if (!(iss >> amount)) amount = 0;
 
-			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			auto client = mgr.client((std::uint8_t)eLine::world_server);
 			if (!client) { std::cout << "client not setup\n"; continue; }
 			auto s = client->session();
 			if (!s) { std::cout << "not connected yet\n"; continue; }
@@ -213,7 +338,7 @@ int main()
 			int y = 0;
 			iss >> cmd >> x >> y;
 
-			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			auto client = mgr.client((std::uint8_t)eLine::world_server);
 			if (!client) { std::cout << "client not setup"; continue; }
 			auto s = client->session();
 			if (!s) { std::cout << "not connected yet"; continue; }
@@ -237,7 +362,7 @@ int main()
 			iss >> cmd;
 			if (!(iss >> tid)) tid = 0;
 
-			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			auto client = mgr.client((std::uint8_t)eLine::world_server);
 			if (!client) { std::cout << "client not setup\n"; continue; }
 			auto s = client->session();
 			if (!s) { std::cout << "not connected yet\n"; continue; }
@@ -258,7 +383,7 @@ int main()
 			std::uint64_t mid = 0;
 			iss >> cmd >> mid;
 
-			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			auto client = mgr.client((std::uint8_t)eLine::world_server);
 			if (!client) { std::cout << "client not setup\n"; continue; }
 			auto s = client->session();
 			if (!s) { std::cout << "not connected yet\n"; continue; }
@@ -279,7 +404,7 @@ int main()
 			std::uint64_t target = 0;
 			iss >> cmd >> target;
 
-			auto client = mgr.client((std::uint8_t)eLine::sample_server);
+			auto client = mgr.client((std::uint8_t)eLine::world_server);
 			if (!client) { std::cout << "client not setup\n"; continue; }
 			auto s = client->session();
 			if (!s) { std::cout << "not connected yet\n"; continue; }

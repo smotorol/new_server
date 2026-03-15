@@ -2,19 +2,119 @@
 
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <memory>
-#include <string>
+#include <string_view>
+#include <type_traits>
 #include <utility>
 
 #include <spdlog/spdlog.h>
 
+#include "services/account/db/account_auth_job.h"
 #include "server_common/runtime/line_start_helper.h"
 #include "services/account/db/account_auth_db_repository.h"
+#include "services/account/security/login_session_token.h"
+#include "services/account/handler/account_world_handler.h"
+#include <iostream>
+
+void test_korean_odbc(db::OdbcConnection& conn)
+{
+    {
+        db::OdbcStatement stmt(conn);
+
+        stmt.prepare(
+            R"SQL(
+INSERT INTO dbo.odbc_korean_test
+(
+    nick_name,
+    memo_text
+)
+VALUES
+(?, ?),
+(?, ?),
+(?, ?),
+(?, ?),
+(?, ?),
+(?, ?);
+)SQL");
+
+        stmt.bind_input_string(1, "홍길동", 100);
+        stmt.bind_input_string(2, "한글", 200);
+        stmt.bind_input_string(3, "테스트유저", 100);
+        stmt.bind_input_string(4, "띄어쓰기 포함 테스트", 200);
+        stmt.bind_input_string(5, "가나다ABC123", 100);
+        stmt.bind_input_string(6, "영문 숫자 혼합", 200);
+        stmt.bind_input_string(7, "한글!@#", 100);
+        stmt.bind_input_string(8, "특수문자 포함", 200);
+        stmt.bind_input_string(9, "대만어", 100);
+        stmt.bind_input_string(10, "中文測試", 200);
+        stmt.bind_input_string(11, "일본어", 100);
+        stmt.bind_input_string(12, "こんにちは", 200);
+        stmt.execute();
+    }
+
+    {
+        db::OdbcStatement stmt(conn);
+
+        stmt.prepare(
+            R"SQL(
+SELECT
+    test_id,
+    nick_name,
+    memo_text
+FROM dbo.odbc_korean_test
+WHERE nick_name = ?
+)SQL");
+
+        stmt.bind_input_string(1, "홍길동");
+        stmt.execute();
+
+        while (stmt.fetch()) {
+            const auto id = stmt.get_uint64(1);
+            const auto nick = stmt.get_string(2);
+            const auto memo = stmt.get_string(3);
+
+            std::cout << "id=" << id
+                << ", nick=" << nick
+                << ", memo=" << memo << '\n';
+        }
+    }
+
+    {
+        db::OdbcStatement stmt(conn);
+
+        stmt.prepare(
+            R"SQL(
+SELECT
+    test_id,
+    nick_name,
+    memo_text
+FROM dbo.odbc_korean_test
+WHERE memo_text LIKE ?
+)SQL");
+
+        stmt.bind_input_string(1, "%한글%");
+        stmt.execute();
+
+        while (stmt.fetch()) {
+            const auto id = stmt.get_uint64(1);
+            const auto nick = stmt.get_string(2);
+            const auto memo = stmt.get_string(3);
+
+            std::cout << "LIKE id=" << id
+                << ", nick=" << nick
+                << ", memo=" << memo << '\n';
+        }
+    }
+}
 
 namespace dc {
 
-    AccountLineRuntime::AccountLineRuntime(std::uint16_t port)
-        : port_(port)
+    AccountLineRuntime::AccountLineRuntime(
+        std::uint16_t login_port,
+        std::uint16_t world_port)
+        : login_port_(login_port)
+        , world_port_(world_port)
     {
     }
 
@@ -34,7 +134,7 @@ namespace dc {
             sid, serial, server_id, server_name, listen_port);
 
         if (login_handler_) {
-            login_handler_->SendRegisterAck(0, sid, serial, 1, 10, "account", port_);
+            login_handler_->SendRegisterAck(0, sid, serial, 1, 10, "account", login_port_);
         }
     }
 
@@ -54,6 +154,81 @@ namespace dc {
         login_serial_.store(0, std::memory_order_relaxed);
     }
 
+    void AccountLineRuntime::MarkWorldRegistered(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint32_t server_id,
+        std::string_view server_name,
+        std::string_view public_host,
+        std::uint16_t public_port)
+    {
+        world_sid_.store(sid, std::memory_order_relaxed);
+        world_serial_.store(serial, std::memory_order_relaxed);
+        world_ready_.store(true, std::memory_order_release);
+
+        {
+            std::lock_guard lk(world_endpoint_mtx_);
+            world_public_host_.assign(public_host.data(), public_host.size());
+            world_public_port_ = public_port;
+        }
+
+        spdlog::info(
+            "AccountLineRuntime world ready sid={} serial={} server_id={} server_name={} public_host={} public_port={}",
+            sid, serial, server_id, server_name, public_host, public_port);
+
+        if (world_handler_) {
+            world_handler_->SendRegisterAck(
+                0,
+                sid,
+                serial,
+                1,
+                20,
+                "account",
+                public_host,
+                public_port);
+        }
+    }
+
+    void AccountLineRuntime::MarkWorldDisconnected(
+        std::uint32_t sid,
+        std::uint32_t serial)
+    {
+        const auto cur_sid = world_sid_.load(std::memory_order_relaxed);
+        const auto cur_serial = world_serial_.load(std::memory_order_relaxed);
+
+        if (cur_sid != sid || cur_serial != serial) {
+            return;
+        }
+
+        world_ready_.store(false, std::memory_order_release);
+        world_sid_.store(0, std::memory_order_relaxed);
+        world_serial_.store(0, std::memory_order_relaxed);
+
+        {
+            std::lock_guard lk(world_endpoint_mtx_);
+            world_public_host_.clear();
+            world_public_port_ = 0;
+        }
+    }
+
+    bool AccountLineRuntime::TryGetWorldEndpoint_(
+        std::string& out_host,
+        std::uint16_t& out_port) const
+    {
+        if (!world_ready_.load(std::memory_order_acquire)) {
+            return false;
+        }
+
+        std::lock_guard lk(world_endpoint_mtx_);
+        if (world_public_host_.empty() || world_public_port_ == 0) {
+            return false;
+        }
+
+        out_host = world_public_host_;
+        out_port = world_public_port_;
+        return true;
+    }
+
     bool AccountLineRuntime::InitDqs_()
     {
         std::lock_guard lk(dqs_mtx_);
@@ -64,8 +239,8 @@ namespace dc {
             dqs_empty_.push_back(i);
         }
 
-        dqs_push_count_ = 0;
-        dqs_drop_count_ = 0;
+        dqs_push_count_.store(0, std::memory_order_relaxed);
+        dqs_drop_count_.store(0, std::memory_order_relaxed);
         return true;
     }
 
@@ -89,13 +264,14 @@ namespace dc {
     bool AccountLineRuntime::PushAccountAuthDqs_(
         const svr::dqs_payload::AccountAuthRequest& payload)
     {
-        static_assert(sizeof(payload) <= svr::dqs::DqsSlot::max_data_size);
+        static_assert(sizeof(svr::dqs_payload::AccountAuthRequest) <= svr::dqs::DqsSlot::max_data_size);
 
         std::uint32_t idx = 0;
         {
             std::lock_guard lk(dqs_mtx_);
+
             if (dqs_empty_.empty()) {
-                ++dqs_drop_count_;
+                dqs_drop_count_.fetch_add(1, std::memory_order_relaxed);
                 spdlog::warn("AccountLineRuntime DQS drop: no empty slot.");
                 return false;
             }
@@ -114,15 +290,15 @@ namespace dc {
             std::memcpy(slot.data.data(), &payload, sizeof(payload));
         }
 
-        const auto shard = RouteAccountShard_(payload);
         if (!db_shards_) {
             RecycleDqsSlot_(idx);
-            ++dqs_drop_count_;
+            dqs_drop_count_.fetch_add(1, std::memory_order_relaxed);
             spdlog::error("AccountLineRuntime DQS drop: db_shards_ is null.");
             return false;
         }
 
-        ++dqs_push_count_;
+        const auto shard = RouteAccountShard_(payload);
+        dqs_push_count_.fetch_add(1, std::memory_order_relaxed);
         db_shards_->push(shard, idx);
         return true;
     }
@@ -135,15 +311,13 @@ namespace dc {
         try {
             for (std::uint32_t i = 0; i < db_shard_count_; ++i) {
                 auto conn = std::make_unique<db::OdbcConnection>();
-                if (!conn->Connect(db_conn_str_)) {
-                    spdlog::error("AccountLineRuntime DB connect failed. shard={}", i);
-                    return false;
-                }
+                conn->connect(db_conn_str_);
                 db_worker_conns_.push_back(std::move(conn));
             }
         }
         catch (const std::exception& e) {
             spdlog::error("AccountLineRuntime DB worker init exception: {}", e.what());
+            db_worker_conns_.clear();
             return false;
         }
 
@@ -200,63 +374,33 @@ namespace dc {
         svr::dqs_payload::AccountAuthRequest payload{};
         std::memcpy(&payload, slot.data.data(), sizeof(payload));
 
-        svr::dqs_result::AccountAuthResult rr{};
-        rr.sid = payload.sid;
-        rr.serial = payload.serial;
-        rr.request_id = payload.request_id;
-        rr.ok = 0;
-        rr.account_id = 0;
-        rr.char_id = 0;
-        rr.result = svr::dqs::ResultCode::success;
+        auto rr = dc::account::MakePendingAccountAuthResult(payload);
 
         try {
             const auto shard = RouteAccountShard_(payload);
             if (shard >= db_worker_conns_.size() || !db_worker_conns_[shard]) {
-                rr.result = svr::dqs::ResultCode::db_error;
-                std::snprintf(rr.fail_reason, sizeof(rr.fail_reason), "%s", "db_conn_not_ready");
+                dc::account::SetAccountAuthDbError(rr, "db_conn_not_ready");
                 PostDqsResult_(rr);
                 return;
             }
 
-            dc::account::AccountAuthRequestJob job{};
-            job.sid = payload.sid;
-            job.serial = payload.serial;
-            job.request_id = payload.request_id;
-            job.selected_char_id = payload.selected_char_id;
-            job.login_id = payload.login_id;
-            job.password = payload.password;
+            const auto job = dc::account::MakeAccountAuthRequestJob(payload);
 
             const auto db_result =
                 dc::account::AccountAuthDbRepository::ExecuteAuth(
                     *db_worker_conns_[shard],
                     job);
 
-            rr.ok = db_result.ok ? 1 : 0;
-            rr.account_id = db_result.account_id;
-            rr.char_id = db_result.char_id;
-
-            std::snprintf(
-                rr.fail_reason,
-                sizeof(rr.fail_reason),
-                "%.*s",
-                static_cast<int>(db_result.fail_reason.size()),
-                db_result.fail_reason.c_str());
+            dc::account::ApplyAccountAuthRequestResult(db_result, rr);
 
             PostDqsResult_(rr);
         }
         catch (const std::exception& e) {
-            rr.result = svr::dqs::ResultCode::db_error;
-            std::snprintf(
-                rr.fail_reason,
-                sizeof(rr.fail_reason),
-                "%.*s",
-                static_cast<int>(std::strlen(e.what())),
-                e.what());
+            dc::account::SetAccountAuthDbError(rr, e.what());
             PostDqsResult_(rr);
         }
         catch (...) {
-            rr.result = svr::dqs::ResultCode::db_error;
-            std::snprintf(rr.fail_reason, sizeof(rr.fail_reason), "%s", "unknown_db_exception");
+            dc::account::SetAccountAuthDbError(rr, "unknown_db_exception");
             PostDqsResult_(rr);
         }
     }
@@ -279,32 +423,71 @@ namespace dc {
         dqs_results_.push_back(std::move(result));
     }
 
-    void AccountLineRuntime::HandleDqsResult_(const svr::dqs_result::AccountAuthResult& rr)
+    void AccountLineRuntime::HandleDqsResult_(
+        const svr::dqs_result::AccountAuthResult& rr)
     {
         if (!login_handler_) {
             return;
         }
 
-        const bool ok =
+        const bool auth_ok =
             (rr.ok != 0) &&
             (rr.result == svr::dqs::ResultCode::success);
+
+        if (!auth_ok) {
+            login_handler_->SendAccountAuthResult(
+                0,
+                rr.sid,
+                rr.serial,
+                rr.request_id,
+                false,
+                0,
+                0,
+                "",
+                "",
+                rr.fail_reason,
+                0);
+            return;
+        }
+
+        std::string world_host;
+        std::uint16_t world_port = 0;
+        if (!TryGetWorldEndpoint_(world_host, world_port)) {
+            login_handler_->SendAccountAuthResult(
+                0,
+                rr.sid,
+                rr.serial,
+                rr.request_id,
+                false,
+                0,
+                0,
+                "",
+                "",
+                "world_not_ready",
+                0);
+            return;
+        }
 
         login_handler_->SendAccountAuthResult(
             0,
             rr.sid,
             rr.serial,
             rr.request_id,
-            ok,
+            true,
             rr.account_id,
             rr.char_id,
-            rr.fail_reason);
+            rr.login_session,
+            world_host,
+            "",
+            world_port);
 
-        if (ok) {
+        if (auth_ok) {
             spdlog::info(
-                "Account auth success request_id={} account_id={} char_id={} sid={} serial={}",
+                "Account auth success request_id={} account_id={} char_id={} login_session={} sid={} serial={}",
                 rr.request_id,
                 rr.account_id,
                 rr.char_id,
+                rr.login_session,
                 rr.sid,
                 rr.serial);
         }
@@ -352,14 +535,14 @@ namespace dc {
         if (login_id.empty()) {
             login_handler_->SendAccountAuthResult(
                 0, sid, serial, request_id,
-                false, 0, 0, "empty_login_id");
+                false, 0, 0, "", "", "empty_login_id", 0);
             return;
         }
 
         if (password.empty()) {
             login_handler_->SendAccountAuthResult(
                 0, sid, serial, request_id,
-                false, 0, 0, "empty_password");
+                false, 0, 0, "", "", "empty_password", 0);
             return;
         }
 
@@ -386,7 +569,7 @@ namespace dc {
         if (!PushAccountAuthDqs_(payload)) {
             login_handler_->SendAccountAuthResult(
                 0, sid, serial, request_id,
-                false, 0, 0, "db_queue_full");
+                false, 0, 0, "", "", "db_queue_full", 0);
             return;
         }
     }
@@ -407,7 +590,15 @@ namespace dc {
             login_line_,
             0,
             "account-login",
-            port_,
+            login_port_,
+            false,
+            0);
+
+        dc::InitHostedLineEntry(
+            world_line_,
+            1,
+            "account-world",
+            world_port_,
             false,
             0);
 
@@ -427,14 +618,41 @@ namespace dc {
             io_,
             login_handler_,
             [](std::uint64_t, std::function<void()> fn) {
-            if (fn) fn();
+            if (fn) {
+                fn();
+            }
         }))
         {
-            spdlog::error("AccountLineRuntime failed to start hosted line. port={}", port_);
+            spdlog::error("AccountLineRuntime failed to start hosted line. port={}", login_port_);
+            ShutdownDbWorkers_();
             return false;
         }
 
-        spdlog::info("AccountLineRuntime started. login_port={}", port_);
+        world_handler_ = std::make_shared<AccountWorldHandler>(
+            [this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
+                std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
+            MarkWorldRegistered(sid, serial, server_id, server_name, public_host, public_port);
+        },
+            [this](std::uint32_t sid, std::uint32_t serial) {
+            MarkWorldDisconnected(sid, serial);
+        });
+
+        if (!dc::StartHostedLine(
+            world_line_,
+            io_,
+            world_handler_,
+            [](std::uint64_t, std::function<void()> fn) {
+            if (fn) {
+                fn();
+            }
+        }))
+        {
+            spdlog::error("AccountLineRuntime failed to start world hosted line. port={}", world_port_);
+            ShutdownDbWorkers_();
+            return false;
+        }
+
+        spdlog::info("AccountLineRuntime started. login_port={}, world_port={}", login_port_, world_port_);
         return true;
     }
 
@@ -451,6 +669,12 @@ namespace dc {
         login_ready_.store(false, std::memory_order_release);
         login_sid_.store(0, std::memory_order_relaxed);
         login_serial_.store(0, std::memory_order_relaxed);
+
+        {
+            std::lock_guard lk(world_endpoint_mtx_);
+            world_public_host_.clear();
+            world_public_port_ = 0;
+        }
 
         ShutdownDbWorkers_();
     }

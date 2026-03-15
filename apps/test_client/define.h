@@ -5,7 +5,8 @@
 
 enum class eLine : std::uint32_t
 {
-    sample_server = 0,
+    login_server = 0,
+    world_server = 1,
     count,
 };
 

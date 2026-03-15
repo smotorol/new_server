@@ -8,6 +8,8 @@
 #include "proto/common/packet_util.h"
 #include "proto/internal/login_account_proto.h"
 
+namespace pt_la = proto::internal::login_account;
+
 LoginAccountHandler::LoginAccountHandler(
     RegisterAckCallback on_register_ack,
     DisconnectCallback on_disconnect,
@@ -33,13 +35,13 @@ bool LoginAccountHandler::SendHelloRegister(
     std::uint32_t dwIndex,
     std::uint32_t dwSerial)
 {
-    proto::internal::LoginServerHello pkt{};
+    pt_la::LoginServerHello pkt{};
     pkt.server_id = server_id_;
     pkt.listen_port = listen_port_;
     std::snprintf(pkt.server_name, sizeof(pkt.server_name), "%s", server_name_.c_str());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(proto::internal::LoginAccountMsg::login_server_hello),
+        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::login_server_hello),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -54,7 +56,7 @@ bool LoginAccountHandler::SendAccountAuthRequest(
     std::string_view password,
     std::uint64_t selected_char_id)
 {
-    proto::internal::AccountAuthRequest pkt{};
+    pt_la::AccountAuthRequest pkt{};
     pkt.request_id = request_id;
     pkt.selected_char_id = selected_char_id;
 
@@ -64,7 +66,7 @@ bool LoginAccountHandler::SendAccountAuthRequest(
         static_cast<int>(password.size()), password.data());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(proto::internal::LoginAccountMsg::account_auth_request),
+        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::account_auth_request),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -86,10 +88,10 @@ bool LoginAccountHandler::DataAnalysis(
     const std::size_t body_len =
         (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
 
-    switch (static_cast<proto::internal::LoginAccountMsg>(msg_type)) {
-    case proto::internal::LoginAccountMsg::login_server_register_ack:
+    switch (static_cast<pt_la::LoginAccountMsg>(msg_type)) {
+    case pt_la::LoginAccountMsg::login_server_register_ack:
         {
-            const auto* ack = proto::as<proto::internal::LoginServerRegisterAck>(pMsg, body_len);
+            const auto* ack = proto::as<pt_la::LoginServerRegisterAck>(pMsg, body_len);
             if (!ack) {
                 spdlog::error("LoginAccountHandler invalid register_ack sid={}", n);
                 return false;
@@ -106,9 +108,9 @@ bool LoginAccountHandler::DataAnalysis(
             return true;
         }
 
-    case proto::internal::LoginAccountMsg::account_auth_result:
+    case pt_la::LoginAccountMsg::account_auth_result:
         {
-            const auto* res = proto::as<proto::internal::AccountAuthResult>(pMsg, body_len);
+            const auto* res = proto::as<pt_la::AccountAuthResult>(pMsg, body_len);
             if (!res) {
                 spdlog::error("LoginAccountHandler invalid account_auth_result sid={}", n);
                 return false;
@@ -120,6 +122,9 @@ bool LoginAccountHandler::DataAnalysis(
                     res->ok != 0,
                     res->account_id,
                     res->char_id,
+                    res->login_session,
+                    res->world_host,
+                    res->world_port,
                     res->fail_reason);
             }
             return true;

@@ -8,6 +8,8 @@
 #include "proto/common/packet_util.h"
 #include "proto/internal/control_proto.h"
 
+namespace pt_cw = proto::internal::control_world;
+
 ControlWorldHandler::ControlWorldHandler(
     RegisterAckCallback on_register_ack,
     DisconnectCallback on_disconnect)
@@ -31,7 +33,7 @@ bool ControlWorldHandler::SendHelloRegister(
     std::uint32_t dwIndex,
     std::uint32_t dwSerial)
 {
-    proto::internal::ControlServerHello pkt{};
+    pt_cw::ControlServerHello pkt{};
     pkt.server_id = server_id_;
     pkt.listen_port = listen_port_;
     std::snprintf(
@@ -41,7 +43,7 @@ bool ControlWorldHandler::SendHelloRegister(
         server_name_.c_str());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(proto::internal::ControlWorldMsg::control_server_hello),
+        static_cast<std::uint16_t>(pt_cw::ControlWorldMsg::control_server_hello),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     spdlog::info(
@@ -64,10 +66,10 @@ bool ControlWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
     const std::size_t body_len =
         (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
 
-    switch (static_cast<proto::internal::ControlWorldMsg>(msg_type)) {
-    case proto::internal::ControlWorldMsg::control_server_register_ack:
+    switch (static_cast<pt_cw::ControlWorldMsg>(msg_type)) {
+    case pt_cw::ControlWorldMsg::control_server_register_ack:
         {
-            const auto* ack = proto::as<proto::internal::ControlServerRegisterAck>(pMsg, body_len);
+            const auto* ack = proto::as<pt_cw::ControlServerRegisterAck>(pMsg, body_len);
             if (!ack) {
                 spdlog::error("ControlWorldHandler invalid control_server_register_ack packet. sid={}", n);
                 return false;

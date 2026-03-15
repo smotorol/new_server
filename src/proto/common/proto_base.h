@@ -4,6 +4,7 @@
 namespace proto {
 
 	constexpr int max_world_name_len = 32;
+	constexpr std::size_t k_service_name_max_len = 32;
 
 	enum C2SMsg : u16 {
 		open_world_notice = 1,

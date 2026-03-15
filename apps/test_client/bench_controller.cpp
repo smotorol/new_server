@@ -52,7 +52,7 @@ std::vector<BenchController::BenchConn> BenchController::spawn_clients_(const st
 	out.reserve((std::size_t)std::max(0, count));
 	for (int i = 0; i < count; ++i) {
 		BenchConn c;
-		c.handler = std::make_shared<CNetworkEX>((std::uint32_t)eLine::sample_server);
+		c.handler = std::make_shared<CNetworkEX>((std::uint32_t)eLine::world_server);
 		c.client = std::make_shared<net::TcpClient>(io_, c.handler);
 		c.handler->AttachClient(c.client);
 		c.handler->AttachDispatcher([this](std::uint64_t actor_id, std::function<void()> fn) {

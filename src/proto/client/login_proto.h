@@ -2,7 +2,13 @@
 
 #include <cstdint>
 
-namespace proto {
+namespace proto::login {
+
+    inline constexpr std::size_t k_login_session_max_len = 64;
+    inline constexpr std::size_t k_world_token_max_len = 32;
+    inline constexpr std::size_t k_login_id_max_len = 32;
+    inline constexpr std::size_t k_login_pw_max_len = 64;
+    inline constexpr std::size_t k_world_host_max_len = 64;
 
     enum class LoginC2SMsg : std::uint16_t
     {
@@ -13,10 +19,6 @@ namespace proto {
     {
         login_result = 1101,
     };
-
-    inline constexpr std::size_t k_login_id_max_len = 32;
-    inline constexpr std::size_t k_login_pw_max_len = 64;
-    inline constexpr std::size_t k_world_host_max_len = 64;
 
 #pragma pack(push, 1)
     struct C2S_login_request
@@ -32,8 +34,9 @@ namespace proto {
         std::uint64_t account_id = 0;
         std::uint64_t char_id = 0;
         std::uint16_t world_port = 0;
+        char login_session[k_login_session_max_len + 1]{};
         char world_host[k_world_host_max_len + 1]{};
-        char world_token[33]{};
+        char world_token[k_world_token_max_len + 1]{};
     };
 #pragma pack(pop)
 

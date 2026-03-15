@@ -29,6 +29,7 @@ namespace dc {
 		~NetworkEXBase() override = default;
 
 		void SetProId(std::uint32_t pro_id) { pro_id_ = pro_id; }
+		std::uint32_t pro_id() { return pro_id_; }
 
 		// ✅ Actor 모델용 dispatcher
 		// - actor_id(= char_id 등) 단위로 "순서 + 단일 실행" 보장
