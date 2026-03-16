@@ -84,6 +84,19 @@ namespace dc {
 		world_serial_.store(0, std::memory_order_relaxed);
 		world_server_id_.store(0, std::memory_order_relaxed);
 
+		std::vector<PendingWorldTicketUpsert> failed;
+		{
+			std::lock_guard lk(pending_world_upsert_mtx_);
+			for (auto& [token, item] : pending_world_ticket_upserts_) {
+				failed.push_back(std::move(item));
+			}
+			pending_world_ticket_upserts_.clear();
+		}
+
+		for (const auto& item : failed) {
+			SendLoginResultFail_(item.pending.client_sid, item.pending.client_serial, "world_disconnected");
+		}
+
 		spdlog::warn("LoginLineRuntime world not ready. sid={} serial={}", sid, serial);
 	}
 
@@ -296,6 +309,9 @@ namespace dc {
 		},
 			[this](std::uint32_t sid, std::uint32_t serial) {
 			MarkWorldDisconnected(sid, serial);
+		},
+			[this](bool accepted, std::uint64_t account_id, std::uint64_t char_id, std::string_view world_token) {
+			OnWorldAuthTicketUpsertAck(accepted, account_id, char_id, world_token);
 		});
 
 		world_handler_->SetServerIdentity(
@@ -416,6 +432,11 @@ namespace dc {
 			pending_login_requests_.clear();
 		}
 
+		{
+			std::lock_guard lk(pending_world_upsert_mtx_);
+			pending_world_ticket_upserts_.clear();
+		}
+
 		account_handler_.reset();
 		world_handler_.reset();
 		login_handler_.reset();
@@ -518,6 +539,7 @@ namespace dc {
 
 		CompleteLoginRequest_(std::move(pending), ok, account_id, char_id, login_session, fail_reason);
 	}
+
 	void LoginLineRuntime::CompleteLoginRequest_(
 		PendingLoginRequest pending,
 		bool ok,
@@ -539,9 +561,27 @@ namespace dc {
 			return;
 		}
 
-		const auto token = GenerateWorldToken_();
+		if (!world_ready_.load(std::memory_order_acquire)) {
+			SendLoginResultFail_(pending.client_sid, pending.client_serial, "world_not_ready");
+			return;
+		}
 
-		// 기존 duplicate 처리 / world ticket upsert 로직은 그대로
+		const auto token = GenerateWorldToken_();
+		const auto expire_at = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+
+		{
+			std::lock_guard lk(pending_world_upsert_mtx_);
+
+			PendingWorldTicketUpsert item{};
+			item.pending = std::move(pending);
+			item.account_id = account_id;
+			item.char_id = char_id;
+			item.login_session.assign(login_session.data(), login_session.size());
+			item.world_token = token;
+			item.issued_at = std::chrono::steady_clock::now();
+
+			pending_world_ticket_upserts_[item.world_token] = std::move(item);
+		}
 
 		if (!world_handler_ ||
 			!world_handler_->SendAuthTicketUpsert(
@@ -554,39 +594,21 @@ namespace dc {
 				token,
 				static_cast<std::uint64_t>(std::time(nullptr) + 30)))
 		{
-			SendLoginResultFail_(pending.client_sid, pending.client_serial, "world_ticket_upsert_failed");
+			std::lock_guard lk(pending_world_upsert_mtx_);
+			pending_world_ticket_upserts_.erase(token);
+
+			SendLoginResultFail_(
+				pending.client_sid,
+				pending.client_serial,
+				"world_ticket_upsert_failed");
 			return;
 		}
 
-		{
-			std::lock_guard lk(login_sessions_mtx_);
-
-			RemoveLoginSession_NoLock_(pending.client_sid, pending.client_serial);
-
-			auto& st = login_sessions_[pending.client_sid];
-			st.sid = pending.client_sid;
-			st.serial = pending.client_serial;
-			st.logged_in = true;
-			st.account_id = account_id;
-			st.char_id = char_id;
-			st.login_session.assign(login_session.data(), login_session.size());
-			st.world_token = token;
-			st.issued_at = std::chrono::steady_clock::now();
-			st.expires_at = st.issued_at + std::chrono::seconds(30);
-
-			account_session_index_[account_id] = pending.client_sid;
-			char_session_index_[char_id] = pending.client_sid;
-		}
-
-		SendLoginResultSuccess_(
-			pending.client_sid,
-			pending.client_serial,
+		spdlog::info(
+			"LoginLineRuntime waiting world upsert ack. account_id={} char_id={} token={}",
 			account_id,
 			char_id,
-			login_session,
-			token,
-			pending.world_host,
-			pending.world_port);
+			token);
 	}
 
 	void LoginLineRuntime::ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now)
@@ -680,9 +702,112 @@ namespace dc {
 		return login_handler_->Send(0, sid, serial, h, reinterpret_cast<const char*>(&res));
 	}
 
+	void LoginLineRuntime::OnWorldAuthTicketUpsertAck(
+		bool accepted,
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::string_view world_token)
+	{
+		PendingWorldTicketUpsert item{};
+
+		{
+			std::lock_guard lk(pending_world_upsert_mtx_);
+			const auto it = pending_world_ticket_upserts_.find(std::string(world_token));
+			if (it == pending_world_ticket_upserts_.end()) {
+				spdlog::warn(
+					"OnWorldAuthTicketUpsertAck dropped: token={} not found",
+					world_token);
+				return;
+			}
+
+			item = std::move(it->second);
+			pending_world_ticket_upserts_.erase(it);
+		}
+
+		if (!accepted) {
+			SendLoginResultFail_(
+				item.pending.client_sid,
+				item.pending.client_serial,
+				"world_ticket_rejected");
+			return;
+		}
+
+		if (item.account_id != account_id || item.char_id != char_id) {
+			spdlog::warn(
+				"OnWorldAuthTicketUpsertAck mismatch: token={} ack_account_id={} ack_char_id={} stored_account_id={} stored_char_id={}",
+				world_token,
+				account_id,
+				char_id,
+				item.account_id,
+				item.char_id);
+
+			SendLoginResultFail_(
+				item.pending.client_sid,
+				item.pending.client_serial,
+				"world_ticket_ack_mismatch");
+			return;
+		}
+
+		{
+			std::lock_guard lk(login_sessions_mtx_);
+
+			RemoveLoginSession_NoLock_(item.pending.client_sid, item.pending.client_serial);
+
+			auto& st = login_sessions_[item.pending.client_sid];
+			st.sid = item.pending.client_sid;
+			st.serial = item.pending.client_serial;
+			st.logged_in = true;
+			st.account_id = item.account_id;
+			st.char_id = item.char_id;
+			st.login_session = item.login_session;
+			st.world_token = item.world_token;
+			st.issued_at = std::chrono::steady_clock::now();
+			st.expires_at = st.issued_at + std::chrono::seconds(30);
+
+			account_session_index_[item.account_id] = item.pending.client_sid;
+			char_session_index_[item.char_id] = item.pending.client_sid;
+		}
+
+		SendLoginResultSuccess_(
+			item.pending.client_sid,
+			item.pending.client_serial,
+			item.account_id,
+			item.char_id,
+			item.login_session,
+			item.world_token,
+			item.pending.world_host,
+			item.pending.world_port);
+	}
+
+	void LoginLineRuntime::ExpirePendingWorldTicketUpserts_(std::chrono::steady_clock::time_point now)
+	{
+		std::vector<PendingWorldTicketUpsert> expired;
+
+		{
+			std::lock_guard lk(pending_world_upsert_mtx_);
+			for (auto it = pending_world_ticket_upserts_.begin(); it != pending_world_ticket_upserts_.end();) {
+				if (now - it->second.issued_at >= std::chrono::seconds(5)) {
+					expired.push_back(std::move(it->second));
+					it = pending_world_ticket_upserts_.erase(it);
+				}
+				else {
+					++it;
+				}
+			}
+		}
+
+		for (const auto& item : expired) {
+			SendLoginResultFail_(
+				item.pending.client_sid,
+				item.pending.client_serial,
+				"world_ticket_ack_timeout");
+		}
+	}
+
 	void LoginLineRuntime::OnMainLoopTick(std::chrono::steady_clock::time_point now)
 	{
 		ExpirePendingLoginRequests_(now);
+		ExpirePendingWorldTicketUpserts_(now);
 	}
 
 } // namespace dc

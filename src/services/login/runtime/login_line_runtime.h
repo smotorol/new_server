@@ -50,70 +50,85 @@ namespace dc {
             std::uint64_t char_id = 0;
         };
 
-    private:
-    struct PendingLoginRequest
-    {
-        std::uint64_t request_id = 0;
-        std::uint32_t client_sid = 0;
-        std::uint32_t client_serial = 0;
-        std::string login_id;
-        std::string password;
-        std::uint64_t selected_char_id = 0;
-        std::chrono::steady_clock::time_point issued_at{};
+        struct PendingLoginRequest
+        {
+            std::uint64_t request_id = 0;
+            std::uint32_t client_sid = 0;
+            std::uint32_t client_serial = 0;
+            std::string login_id;
+            std::string password;
+            std::uint64_t selected_char_id = 0;
+            std::chrono::steady_clock::time_point issued_at{};
 
-        std::string world_host;
-        std::uint16_t world_port = 0;
-    };
+            std::string world_host;
+            std::uint16_t world_port = 0;
+        };
 
-    void MarkAccountRegistered(
-        std::uint32_t sid,
-        std::uint32_t serial,
-        std::uint32_t server_id,
-        std::string_view server_name,
-        std::uint16_t listen_port);
+        struct PendingWorldTicketUpsert
+        {
+            PendingLoginRequest pending{};
+            std::uint64_t account_id = 0;
+            std::uint64_t char_id = 0;
+            std::string login_session;
+            std::string world_token;
+            std::chrono::steady_clock::time_point issued_at{};
+        };
 
-    void MarkAccountDisconnected(
-        std::uint32_t sid,
-        std::uint32_t serial);
+        void MarkAccountRegistered(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint32_t server_id,
+            std::string_view server_name,
+            std::uint16_t listen_port);
 
-    bool IsAccountReady() const noexcept;
+        void MarkAccountDisconnected(
+            std::uint32_t sid,
+            std::uint32_t serial);
 
-    bool SendAccountAuthRequest_(const PendingLoginRequest& pending);
+        bool IsAccountReady() const noexcept;
+        bool SendAccountAuthRequest_(const PendingLoginRequest& pending);
 
-    void OnAccountAuthResult(
-        std::uint64_t request_id,
-        bool ok,
-        std::uint64_t account_id,
-        std::uint64_t char_id,
-        std::string_view login_session,
-        std::string_view world_host,
-        std::uint16_t world_port,
-        std::string_view fail_reason);
+        void OnAccountAuthResult(
+            std::uint64_t request_id,
+            bool ok,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view world_host,
+            std::uint16_t world_port,
+            std::string_view fail_reason);
 
-    void CompleteLoginRequest_(
-        PendingLoginRequest pending,
-        bool ok,
-        std::uint64_t account_id,
-        std::uint64_t char_id,
-        std::string_view login_session,
-        std::string_view fail_reason);
+        void OnWorldAuthTicketUpsertAck(
+            bool accepted,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view world_token);
 
-    bool SendLoginResultSuccess_(
-        std::uint32_t sid,
-        std::uint32_t serial,
-        std::uint64_t account_id,
-        std::uint64_t char_id,
-        std::string_view login_session,
-        std::string_view token,
-        std::string_view world_host,
-        std::uint16_t world_port);
+        void CompleteLoginRequest_(
+            PendingLoginRequest pending,
+            bool ok,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view fail_reason);
 
-    void ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now);
+        bool SendLoginResultSuccess_(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view token,
+            std::string_view world_host,
+            std::uint16_t world_port);
 
-    bool SendLoginResultFail_(
-        std::uint32_t sid,
-        std::uint32_t serial,
-        const char* reason);
+        void ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now);
+        void ExpirePendingWorldTicketUpserts_(std::chrono::steady_clock::time_point now);
+
+        bool SendLoginResultFail_(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            const char* reason);
 
     private:
         bool OnRuntimeInit() override;
@@ -169,6 +184,9 @@ namespace dc {
         std::unordered_map<std::uint64_t, std::uint32_t> account_session_index_;
         std::unordered_map<std::uint64_t, std::uint32_t> char_session_index_;
         std::unordered_map<std::uint64_t, PendingLoginRequest> pending_login_requests_;
+
+        std::mutex pending_world_upsert_mtx_;
+        std::unordered_map<std::string, PendingWorldTicketUpsert> pending_world_ticket_upserts_;
 
         HostedLineEntry client_line_{};
         OutboundLineEntry world_line_{};

@@ -12,9 +12,11 @@ namespace pt_lw = proto::internal::login_world;
 
 LoginWorldHandler::LoginWorldHandler(
     RegisterAckCallback on_register_ack,
-    DisconnectCallback on_disconnect)
+    DisconnectCallback on_disconnect,
+    UpsertAckCallback on_upsert_ack)
     : on_register_ack_(std::move(on_register_ack))
     , on_disconnect_(std::move(on_disconnect))
+    , on_upsert_ack_(std::move(on_upsert_ack))
 {
 }
 
@@ -67,8 +69,14 @@ bool LoginWorldHandler::SendAuthTicketUpsert(
     pkt.account_id = account_id;
     pkt.char_id = char_id;
     pkt.expire_at_unix_sec = expire_at_unix_sec;
-	std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
-		static_cast<int>(login_session.size()), login_session.data());
+
+    std::snprintf(
+        pkt.login_session,
+        sizeof(pkt.login_session),
+        "%.*s",
+        static_cast<int>(login_session.size()),
+        login_session.data());
+
     std::snprintf(
         pkt.world_token,
         sizeof(pkt.world_token),
@@ -87,8 +95,11 @@ bool LoginWorldHandler::SendAuthTicketUpsert(
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
-bool LoginWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
-    _MSG_HEADER* pMsgHeader, char* pMsg)
+bool LoginWorldHandler::DataAnalysis(
+    std::uint32_t dwProID,
+    std::uint32_t n,
+    _MSG_HEADER* pMsgHeader,
+    char* pMsg)
 {
     (void)dwProID;
 
@@ -136,7 +147,20 @@ bool LoginWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
 
             spdlog::info(
                 "LoginWorldHandler auth ticket ack. sid={} serial={} accepted={} account_id={} char_id={} token={}",
-                n, GetLatestSerial(n), static_cast<int>(ack->accepted), ack->account_id, ack->char_id, ack->world_token);
+                n,
+                GetLatestSerial(n),
+                static_cast<int>(ack->accepted),
+                ack->account_id,
+                ack->char_id,
+                ack->world_token);
+
+            if (on_upsert_ack_) {
+                on_upsert_ack_(
+                    ack->accepted != 0,
+                    ack->account_id,
+                    ack->char_id,
+                    ack->world_token);
+            }
             return true;
         }
 
@@ -146,10 +170,13 @@ bool LoginWorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
     }
 }
 
-void LoginWorldHandler::OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex,
+void LoginWorldHandler::OnLineAccepted(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
     std::uint32_t dwSerial)
 {
     (void)dwProID;
+
     spdlog::info(
         "LoginWorldHandler::OnWorldConnected index={} serial={}",
         dwIndex,
@@ -174,7 +201,9 @@ bool LoginWorldHandler::ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t d
     return true;
 }
 
-void LoginWorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex,
+void LoginWorldHandler::OnLineClosed(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
     std::uint32_t dwSerial)
 {
     (void)dwProID;

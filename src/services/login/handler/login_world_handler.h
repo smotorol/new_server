@@ -21,8 +21,18 @@ public:
         std::uint32_t sid,
         std::uint32_t serial)>;
 
+    using UpsertAckCallback = std::function<void(
+        bool accepted,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view world_token)>;
+
 public:
-    LoginWorldHandler(RegisterAckCallback on_register_ack, DisconnectCallback on_disconnect);
+    LoginWorldHandler(
+        RegisterAckCallback on_register_ack,
+        DisconnectCallback on_disconnect,
+        UpsertAckCallback on_upsert_ack);
+
     ~LoginWorldHandler() override = default;
 
 public:
@@ -41,19 +51,31 @@ public:
         std::string_view token,
         std::uint64_t expire_at_unix_sec);
 
-    void SetServerIdentity(std::uint32_t server_id, std::string server_name, std::uint16_t listen_port);
+    void SetServerIdentity(
+        std::uint32_t server_id,
+        std::string server_name,
+        std::uint16_t listen_port);
 
 protected:
-    bool DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
-        _MSG_HEADER* pMsgHeader, char* pMsg) override;
+    bool DataAnalysis(
+        std::uint32_t dwProID,
+        std::uint32_t n,
+        _MSG_HEADER* pMsgHeader,
+        char* pMsg) override;
 
-    void OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex,
+    void OnLineAccepted(
+        std::uint32_t dwProID,
+        std::uint32_t dwIndex,
         std::uint32_t dwSerial) override;
 
-    void OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex,
+    void OnLineClosed(
+        std::uint32_t dwProID,
+        std::uint32_t dwIndex,
         std::uint32_t dwSerial) override;
 
-    bool ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t dwSerial) override;
+    bool ShouldHandleClose(
+        std::uint32_t dwIndex,
+        std::uint32_t dwSerial) override;
 
 private:
     std::uint32_t server_id_ = 0;
@@ -62,4 +84,5 @@ private:
 
     RegisterAckCallback on_register_ack_;
     DisconnectCallback on_disconnect_;
+    UpsertAckCallback on_upsert_ack_;
 };
