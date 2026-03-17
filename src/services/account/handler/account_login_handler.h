@@ -56,9 +56,19 @@ public:
         std::uint64_t account_id,
         std::uint64_t char_id,
         std::string_view login_session,
+        std::string_view world_token,
         std::string_view world_host,
         std::string_view fail_reason,
         std::uint16_t world_port);
+    
+    bool SendWorldEnterSuccessNotify(
+        std::uint32_t dwProID,
+        std::uint32_t dwIndex,
+        std::uint32_t dwSerial,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view world_token);
 
 protected:
     bool DataAnalysis(

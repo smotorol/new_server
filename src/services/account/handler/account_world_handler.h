@@ -21,10 +21,26 @@ public:
         std::uint32_t sid,
         std::uint32_t serial)>;
 
+    using ConsumeRequestCallback = std::function<void(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint64_t request_id,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view world_token)>;
+
+    using EnterWorldSuccessCallback = std::function<void(
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view world_token)>;
 public:
     AccountWorldHandler(
         RegisterHelloCallback on_register_hello,
-        DisconnectCallback on_disconnect);
+        DisconnectCallback on_disconnect,
+        ConsumeRequestCallback on_consume_request,
+        EnterWorldSuccessCallback on_enter_world_success);
 
     ~AccountWorldHandler() override = default;
 
@@ -39,6 +55,16 @@ public:
         std::string_view public_host,
         std::uint16_t public_port);
 
+    bool SendWorldAuthTicketConsumeResponse(
+        std::uint32_t dwProID,
+        std::uint32_t dwIndex,
+        std::uint32_t dwSerial,
+        std::uint64_t request_id,
+        std::uint16_t result_code,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view world_token);
 protected:
     bool DataAnalysis(
         std::uint32_t dwProID,
@@ -63,4 +89,6 @@ protected:
 private:
     RegisterHelloCallback on_register_hello_;
     DisconnectCallback on_disconnect_;
+    ConsumeRequestCallback on_consume_request_;
+    EnterWorldSuccessCallback on_enter_world_success_;
 };

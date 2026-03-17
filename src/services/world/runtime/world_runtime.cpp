@@ -26,6 +26,7 @@
 #include "db/odbc/odbc_wrapper.h"
 
 #include "server_common/runtime/line_start_helper.h"
+#include "services/world/common/demo_char_state.h"
 
 namespace pt_w = proto::world;
 
@@ -135,8 +136,8 @@ namespace svr {
 		last_move_pkts_ = 0;
 		last_move_items_ = 0;
 
-		spdlog::info("WorldServer initialized. ports: world={}, login={}, control={}",
-			port_world_, port_login_, port_control_);
+		spdlog::info("WorldServer initialized. ports: world={}, control={}",
+			port_world_, port_control_);
 		return true;
 	}
 
@@ -166,14 +167,6 @@ namespace svr {
 	0
 		};
 
-		lines_.desc(svr::WorldLineId::Login) = dc::LineDescriptor{
-			static_cast<std::uint32_t>(svr::WorldLineId::Login),
-			"login",
-			port_login_,
-			true,
-			0
-		};
-
 		lines_.desc(svr::WorldLineId::Control) = dc::LineDescriptor{
 			static_cast<std::uint32_t>(svr::WorldLineId::Control),
 			"control",
@@ -187,9 +180,8 @@ namespace svr {
 		lines_.stop_all_reverse();
 
 		{
-			std::lock_guard lk(auth_ticket_mtx_);
-			pending_world_auth_tickets_.clear();
-			consumed_world_auth_tickets_.clear();
+			std::lock_guard lk(pending_enter_world_consume_mtx_);
+			pending_enter_world_consume_.clear();
 		}
 
 		{
@@ -454,6 +446,27 @@ namespace svr {
 
 		ClosedAuthedSessionContext closed_ctx =
 			MakeClosedAuthedSessionContext_(unbind_result, sid, serial);
+
+		if (closed_ctx.removed() && closed_ctx.char_id != 0) {
+			PostActor(closed_ctx.char_id, [this,
+				close_char_id = closed_ctx.char_id,
+				close_sid = closed_ctx.sid,
+				close_serial = closed_ctx.serial]() {
+				auto& a = GetOrCreatePlayerActor(close_char_id);
+
+				if (a.sid == close_sid && a.serial == close_serial) {
+					a.bind_session(0, 0);
+				}
+
+				if (a.zone_id != 0) {
+					const auto zone_id = a.zone_id;
+					PostActor(svr::MakeZoneActorId(zone_id), [this, close_char_id, zone_id]() {
+						auto& z = GetOrCreateZoneActor(zone_id);
+						z.Leave(close_char_id);
+					});
+				}
+			});
+		}
 
 		if (released && released_entry.log_ctx.trace_id != 0) {
 			if (closed_ctx.char_id == 0) {
@@ -1036,46 +1049,6 @@ namespace svr {
 
 	}
 
-	void WorldRuntime::RegisterLoginLine(
-		std::uint32_t sid, std::uint32_t serial,
-		std::uint32_t server_id, std::string_view server_name,
-		std::uint16_t listen_port)
-	{
-		std::lock_guard lk(service_line_mtx_);
-
-		login_line_state_.registered = true;
-		login_line_state_.sid = sid;
-		login_line_state_.serial = serial;
-		login_line_state_.server_id = server_id;
-		login_line_state_.server_name = std::string(server_name);
-		login_line_state_.listen_port = listen_port;
-
-		spdlog::info(
-			"WorldRuntime registered login line. sid={} serial={} server_id={} name={} listen_port={}",
-			sid, serial, server_id, server_name, listen_port);
-	}
-
-	void WorldRuntime::UnregisterLoginLine(std::uint32_t sid, std::uint32_t serial)
-	{
-		std::lock_guard lk(service_line_mtx_);
-
-		if (!login_line_state_.registered) {
-			return;
-		}
-		if (login_line_state_.sid != sid || login_line_state_.serial != serial) {
-			return;
-		}
-
-		spdlog::info(
-			"WorldRuntime unregistered login line. sid={} serial={} server_id={} name={}",
-			login_line_state_.sid,
-			login_line_state_.serial,
-			login_line_state_.server_id,
-			login_line_state_.server_name);
-
-		login_line_state_ = {};
-	}
-
 	void WorldRuntime::RegisterControlLine(
 		std::uint32_t sid, std::uint32_t serial,
 		std::uint32_t server_id, std::string_view server_name,
@@ -1525,23 +1498,6 @@ namespace svr {
 		}
 
 		if (!dc::StartHostedLine(
-			lines_.entry(svr::WorldLineId::Login),
-			io_,
-			std::make_shared<WorldLoginHandler>(
-				*this,
-				[this](std::uint32_t sid, std::uint32_t serial,
-					std::uint32_t server_id, std::string_view server_name,
-					std::uint16_t listen_port) {
-			RegisterLoginLine(sid, serial, server_id, server_name, listen_port);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial) {
-			UnregisterLoginLine(sid, serial);
-		}),
-			dispatch)) {
-			return false;
-		}
-
-		if (!dc::StartHostedLine(
 			lines_.entry(svr::WorldLineId::Control),
 			io_,
 			std::make_shared<WorldControlHandler>(
@@ -1558,6 +1514,7 @@ namespace svr {
 		}
 
 		world_account_handler_ = std::make_shared<WorldAccountHandler>(
+			*this,
 			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
 				std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
 			MarkAccountRegistered_(sid, serial, server_id, server_name, public_host, public_port);
@@ -1597,10 +1554,11 @@ namespace svr {
 			return false;
 		}
 
-		spdlog::info("NetworkInit: world={}, login={}, control={} (hosted by WorldRuntime)",
+		spdlog::info("NetworkInit: world={}, control={} account_remote={}:{}",
 			lines_.host(svr::WorldLineId::World).port(),
-			lines_.host(svr::WorldLineId::Login).port(),
-			lines_.host(svr::WorldLineId::Control).port());
+			lines_.host(svr::WorldLineId::Control).port(),
+			account_host_,
+			account_port_);
 
 		return true;
 	}
@@ -2132,22 +2090,15 @@ namespace svr {
 			}
 
 			const auto& world_line = lines_.host(svr::WorldLineId::World);
-			const auto& login_line = lines_.host(svr::WorldLineId::Login);
 			const auto& control_line = lines_.host(svr::WorldLineId::Control);
 
 			spdlog::info(
 				"[linestats] world(cur={}, peak={}, open={}, close={}) "
-				"login(cur={}, peak={}, open={}, close={}) "
 				"control(cur={}, peak={}, open={}, close={})",
 				world_line.stats().current_sessions.load(std::memory_order_relaxed),
 				world_line.stats().peak_sessions.load(std::memory_order_relaxed),
 				world_line.stats().session_open_count.load(std::memory_order_relaxed),
 				world_line.stats().session_close_count.load(std::memory_order_relaxed),
-
-				login_line.stats().current_sessions.load(std::memory_order_relaxed),
-				login_line.stats().peak_sessions.load(std::memory_order_relaxed),
-				login_line.stats().session_open_count.load(std::memory_order_relaxed),
-				login_line.stats().session_close_count.load(std::memory_order_relaxed),
 
 				control_line.stats().current_sessions.load(std::memory_order_relaxed),
 				control_line.stats().peak_sessions.load(std::memory_order_relaxed),
@@ -2155,170 +2106,251 @@ namespace svr {
 				control_line.stats().session_close_count.load(std::memory_order_relaxed));
 		}
 	}
-    void WorldRuntime::SweepExpiredPendingWorldAuthTickets_()
-    {
-        const auto now_unix_sec = static_cast<std::uint64_t>(std::time(nullptr));
 
-        for (auto it = pending_world_auth_tickets_.begin();
-             it != pending_world_auth_tickets_.end();) {
-            if (it->second.expire_at_unix_sec < now_unix_sec) {
-                spdlog::info(
-                    "WorldRuntime pending auth ticket expired and removed. account_id={} char_id={} login_session={} token={} expire_at={}",
-                    it->second.account_id,
-                    it->second.char_id,
-                    it->second.login_session,
-                    it->second.token,
-                    it->second.expire_at_unix_sec);
-                it = pending_world_auth_tickets_.erase(it);
-            }
-            else {
-                ++it;
-            }
-        }
-    }
-
-    void WorldRuntime::SweepOldConsumedWorldAuthTickets_()
-    {
-        const auto now_unix_sec = static_cast<std::uint64_t>(std::time(nullptr));
-
-        for (auto it = consumed_world_auth_tickets_.begin();
-             it != consumed_world_auth_tickets_.end();) {
-            if ((it->second.consumed_at_unix_sec + kConsumedWorldAuthTicketKeepSeconds) < now_unix_sec) {
-                spdlog::debug(
-                    "WorldRuntime consumed auth ticket evicted. token={} account_id={} char_id={}",
-                    it->second.token,
-                    it->second.account_id,
-                    it->second.char_id);
-				it = consumed_world_auth_tickets_.erase(it);
-            }
-            else {
-                ++it;
-            }
-        }
-    }
-
-    void WorldRuntime::RememberConsumedWorldAuthTicket_(const PendingWorldAuthTicket& ticket)
-    {
-        const auto now_unix_sec = static_cast<std::uint64_t>(std::time(nullptr));
-
-        ConsumedWorldAuthTicket consumed{};
-        consumed.account_id = ticket.account_id;
-        consumed.char_id = ticket.char_id;
-        consumed.login_session = ticket.login_session;
-        consumed.token = ticket.token;
-        consumed.consumed_at_unix_sec = now_unix_sec;
-        consumed.original_expire_at_unix_sec = ticket.expire_at_unix_sec;
-
-        consumed_world_auth_tickets_[ticket.token] = std::move(consumed);
-    }
-
-	bool WorldRuntime::UpsertPendingWorldAuthTicket(
-		std::uint64_t account_id,
-		std::uint64_t char_id,
-		std::string_view login_session,
-		std::string token,
-		std::uint64_t expire_at_unix_sec)
-	{
-        SweepExpiredPendingWorldAuthTickets_();
-        SweepOldConsumedWorldAuthTickets_();
-
-		if (token.empty()) {
-			return false;
-		}
-
-		std::lock_guard lk(auth_ticket_mtx_);
-
-		auto& t = pending_world_auth_tickets_[token];
-		t.account_id = account_id;
-		t.char_id = char_id;
-		t.login_session.assign(login_session.data(), login_session.size());
-		t.token = std::move(token);
-		t.expire_at_unix_sec = expire_at_unix_sec;
-
-        consumed_world_auth_tickets_.erase(t.token);
-
-		spdlog::info(
-			"WorldRuntime auth ticket upserted. account_id={} char_id={} login_session={} token={} expire_at={}",
-			account_id, char_id, t.login_session, t.token, expire_at_unix_sec);
- 
-
-		return true;
-	}
-
-	bool WorldRuntime::ConsumePendingWorldAuthTicket(
-		std::uint64_t account_id,
-		std::uint64_t char_id,
-		std::string_view login_session,
+	bool WorldRuntime::RequestConsumeWorldAuthTicket(
+		std::uint32_t sid,
+		std::uint32_t serial,
+ 		std::uint64_t account_id,
+ 		std::uint64_t char_id,
+ 		std::string_view login_session,
 		std::string_view token)
+ 	{
+		if (!account_ready_.load(std::memory_order_acquire) || !world_account_handler_) {
+			return false;
+		}
+
+		const auto request_id = next_world_auth_consume_request_id_.fetch_add(1, std::memory_order_relaxed);
+		{
+			std::lock_guard lk(pending_enter_world_consume_mtx_);
+			pending_enter_world_consume_[request_id] = PendingEnterWorldConsumeRequest{
+				request_id,
+				sid,
+				serial,
+				account_id,
+				char_id,
+				std::string(login_session),
+				std::string(token),
+				std::chrono::steady_clock::now()
+			};
+		}
+
+		return world_account_handler_->SendWorldAuthTicketConsumeRequest(
+			100,
+			account_sid_.load(std::memory_order_relaxed),
+			account_serial_.load(std::memory_order_relaxed),
+			request_id,
+			account_id,
+			char_id,
+			login_session,
+			token);
+ 	}
+
+	void WorldRuntime::OnWorldAuthTicketConsumeResponse(
+		std::uint64_t request_id,
+		ConsumePendingWorldAuthTicketResultKind result_kind,
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::string_view login_session,
+		std::string_view world_token)
 	{
-		if (token.empty()) {
-			return false;
+		PendingEnterWorldConsumeRequest pending{};
+		{
+			std::lock_guard lk(pending_enter_world_consume_mtx_);
+			const auto it = pending_enter_world_consume_.find(request_id);
+			if (it == pending_enter_world_consume_.end()) {
+				spdlog::warn("OnWorldAuthTicketConsumeResponse stale response ignored. request_id={} account_id={} char_id={}",
+					request_id,
+					account_id,
+					char_id);
+				return;
+			}
+			pending = std::move(it->second);
+			pending_enter_world_consume_.erase(it);
 		}
 
-		std::lock_guard lk(auth_ticket_mtx_);
+		auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			return;
+		}
 
-		SweepExpiredPendingWorldAuthTickets_();
-		SweepOldConsumedWorldAuthTickets_();
+		pt_w::S2C_enter_world_result res{};
+		res.account_id = pending.account_id;
+		res.char_id = pending.char_id;
 
-		auto consumed_it = consumed_world_auth_tickets_.find(std::string(token));
-		if (consumed_it != consumed_world_auth_tickets_.end()) {
+		if (pending.account_id != account_id ||
+			pending.char_id != char_id ||
+			pending.login_session != login_session ||
+			pending.world_token != world_token)
+		{
 			spdlog::warn(
-				"WorldRuntime auth ticket replay detected. token={} account_id={} char_id={} login_session={} consumed_at={}",
-				token,
+				"OnWorldAuthTicketConsumeResponse mismatch. request_id={} pending_account_id={} resp_account_id={} pending_char_id={} resp_char_id={}",
+				request_id,
+				pending.account_id,
+				account_id,
+				pending.char_id,
+				char_id);
+
+			res.ok = 0;
+			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_mismatch);
+			const auto h = proto::make_header(
+				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+				static_cast<std::uint16_t>(sizeof(res)));
+			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			return;
+		}
+
+		const std::string final_login_session =
+			login_session.empty() ? pending.login_session : std::string(login_session);
+		const std::string final_world_token =
+			world_token.empty() ? pending.world_token : std::string(world_token);
+
+		if (result_kind != ConsumePendingWorldAuthTicketResultKind::Ok) {
+			res.ok = 0;
+			switch (result_kind) {
+			case ConsumePendingWorldAuthTicketResultKind::Expired:
+				res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_expired);
+				break;
+			case ConsumePendingWorldAuthTicketResultKind::ReplayDetected:
+				res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_replayed);
+				break;
+			case ConsumePendingWorldAuthTicketResultKind::AccountMismatch:
+			case ConsumePendingWorldAuthTicketResultKind::CharMismatch:
+			case ConsumePendingWorldAuthTicketResultKind::LoginSessionMismatch:
+				res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_mismatch);
+				break;
+			case ConsumePendingWorldAuthTicketResultKind::TokenNotFound:
+			default:
+				res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_not_found);
+				break;
+			}
+
+			const auto h = proto::make_header(
+				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+				static_cast<std::uint16_t>(sizeof(res)));
+			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+
+			spdlog::warn(
+				"World enter denied. sid={} serial={} request_id={} pending_account_id={} pending_char_id={} resp_account_id={} resp_char_id={} result_kind={}",
+				pending.sid,
+				pending.serial,
+				request_id,
+				pending.account_id,
+				pending.char_id,
 				account_id,
 				char_id,
-				login_session,
-				consumed_it->second.consumed_at_unix_sec);
-			return false;
+				static_cast<int>(result_kind));
+			return;
 		}
 
-		auto it = pending_world_auth_tickets_.find(std::string(token));
-		if (it == pending_world_auth_tickets_.end()) {
+		const auto bind_result = BindAuthenticatedWorldSessionForLogin(
+			pending.account_id,
+			pending.char_id,
+			pending.sid,
+			pending.serial,
+			static_cast<std::uint16_t>(pt_w::WorldKickReason::duplicate_login));
+
+		if (bind_result.kind == BindAuthedWorldSessionResultKind::InvalidInput) {
+			res.ok = 0;
+			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::bind_invalid_input);
+			const auto h = proto::make_header(
+				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+				static_cast<std::uint16_t>(sizeof(res)));
+			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
 			spdlog::warn(
-				"WorldRuntime auth ticket not found. token={} account_id={} char_id={} login_session={}",
-				token,
+				"OnWorldAuthTicketConsumeResponse bind failed. request_id={} sid={} serial={} account_id={} char_id={} bind_kind={} duplicate_cause={}",
+				request_id,
+				pending.sid,
+				pending.serial,
 				account_id,
 				char_id,
-				login_session);
-			return false;
-		}
+				ToString(bind_result.kind),
+				ToString(bind_result.duplicate_cause));
+			return;
+ 		} else {
+			const std::uint32_t world_code = 0;
+			svr::demo::DemoCharState st{};
+			st.char_id = char_id;
+			st.gold = 1000;
+			st.version = 1;
 
-		const auto now_sec = static_cast<std::uint64_t>(std::time(nullptr));
-		if (it->second.expire_at_unix_sec != 0 && now_sec > it->second.expire_at_unix_sec) {
-			spdlog::warn(
-				"WorldRuntime auth ticket expired. token={} account_id={} char_id={} login_session={}",
-				token, it->second.account_id, it->second.char_id, it->second.login_session);
+			if (auto blob = TryLoadCharacterState(world_code, char_id))
+			{
+				svr::demo::DemoCharState loaded{};
+				if (svr::demo::TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
+				{
+					st = loaded;
+					spdlog::info("[Demo] loaded from redis char_id={} gold={} ver={}", st.char_id, st.gold, st.version);
+				}
+				else
+				{
+					spdlog::warn("[Demo] redis blob invalid, recreate char_id={}", char_id);
+				}
+			}
+			else
+			{
+				spdlog::info("[Demo] no redis state, create new char_id={}", char_id);
+			}
 
-			pending_world_auth_tickets_.erase(it);
-			return false;
-		}
+			st.gold += 10;
+			st.version += 1;
+			const std::string out_blob = svr::demo::SerializeDemo(st);
 
-		if (it->second.login_session != login_session) {
-			spdlog::warn(
-				"WorldRuntime auth ticket login_session mismatch. token={} req_login_session={} stored_login_session={}",
-				token,
-				login_session,
-				it->second.login_session);
-			return false;
-		}
+			PostActor(char_id, [this, char_id, sid = pending.sid, serial = pending.serial]() {
+				auto& a = GetOrCreatePlayerActor(char_id);
+				a.bind_session(sid, serial);
+				a.combat.hp = 100;
+				a.combat.max_hp = 100;
+				a.combat.atk = 20;
+				a.combat.def = 3;
+				a.combat.gold = 1000;
+				a.zone_id = 1;
+				a.pos = { 0,0 };
 
-		if (it->second.account_id != account_id || it->second.char_id != char_id) {
-			spdlog::warn(
-				"WorldRuntime auth ticket mismatch. token={} req_account_id={} req_char_id={} stored_account_id={} stored_char_id={}",
-				token, account_id, char_id, it->second.account_id, it->second.char_id);
-			return false;
-		}
+				PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial]() {
+					auto& z = GetOrCreateZoneActor(1);
+					z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
+				});
+			});
 
-		const auto consumed_ticket = it->second;
-		pending_world_auth_tickets_.erase(it);
-		RememberConsumedWorldAuthTicket_(consumed_ticket);
+			CacheCharacterState(world_code, char_id, out_blob);
+
+			proto::S2C_actor_bound bound{};
+			bound.actor_id = char_id;
+			auto bh = proto::make_header(
+				static_cast<std::uint16_t>(proto::S2CMsg::actor_bound),
+				static_cast<std::uint16_t>(sizeof(bound)));
+			handler->Send(0, pending.sid, pending.serial, bh, reinterpret_cast<const char*>(&bound));
+
+			res.ok = 1;
+			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::success);
+
+			if (!NotifyAccountWorldEnterSuccess(account_id, char_id, pending.login_session, pending.world_token)) {
+				spdlog::warn(
+					"OnWorldAuthTicketConsumeResponse success but account cleanup notify failed. request_id={} sid={} serial={} account_id={} char_id={}",
+					request_id,
+					pending.sid,
+					pending.serial,
+					account_id,
+					char_id);
+			}
+ 		}
+
+		const auto h = proto::make_header(
+			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(sizeof(res)));
+		handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
 
 		spdlog::info(
-			"WorldRuntime auth ticket consumed. account_id={} char_id={} login_session={} token={}",
-			account_id, char_id, login_session, token);
-
-		return true;
+			"OnWorldAuthTicketConsumeResponse success. request_id={} sid={} serial={} account_id={} char_id={} bind_kind={} duplicate_cause={}",
+			request_id,
+			pending.sid,
+			pending.serial,
+			account_id,
+			char_id,
+			ToString(bind_result.kind),
+			ToString(bind_result.duplicate_cause));
 	}
+
 	void WorldRuntime::LogSessionCloseEvent_(
 		spdlog::level::level_enum level,
 		std::string_view event_text,
@@ -2774,6 +2806,38 @@ namespace svr {
 		account_ready_.store(false, std::memory_order_release);
 		account_sid_.store(0, std::memory_order_relaxed);
 		account_serial_.store(0, std::memory_order_relaxed);
+	}
+
+	bool WorldRuntime::NotifyAccountWorldEnterSuccess(
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::string_view login_session,
+		std::string_view world_token)
+	{
+		if (!account_ready_.load(std::memory_order_acquire)) {
+			spdlog::warn(
+				"NotifyAccountWorldEnterSuccess skipped: account line not ready. account_id={} char_id={}",
+				account_id,
+				char_id);
+			return false;
+		}
+
+		if (!world_account_handler_) {
+			spdlog::warn(
+				"NotifyAccountWorldEnterSuccess skipped: world_account_handler_ is null. account_id={} char_id={}",
+				account_id,
+				char_id);
+			return false;
+		}
+
+		return world_account_handler_->SendWorldEnterSuccessNotify(
+			100,
+			account_sid_.load(std::memory_order_relaxed),
+			account_serial_.load(std::memory_order_relaxed),
+			account_id,
+			char_id,
+			login_session,
+			world_token);
 	}
 
 }

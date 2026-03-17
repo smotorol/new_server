@@ -26,6 +26,18 @@ namespace proto::world {
         admin_kick = 3,
     };
 
+    enum class EnterWorldResultCode : std::uint16_t
+    {
+        success = 0,
+        invalid_packet = 1,
+        auth_ticket_not_found = 2,
+        auth_ticket_expired = 3,
+        auth_ticket_replayed = 4,
+        auth_ticket_mismatch = 5,
+        bind_invalid_input = 6,
+        internal_error = 7,
+    };
+
 #pragma pack(push, 1)
     struct C2S_enter_world_with_token
     {
@@ -36,10 +48,11 @@ namespace proto::world {
     };
 
     struct S2C_enter_world_result
-    {
-        std::uint8_t ok = 0;
-        std::uint64_t account_id = 0;
-        std::uint64_t char_id = 0;
+	{
+		std::uint8_t ok = 0;
+		std::uint16_t reason = static_cast<std::uint16_t>(EnterWorldResultCode::success);
+		std::uint64_t account_id = 0;
+		std::uint64_t char_id = 0;
     };
 
     struct S2C_kick_notify

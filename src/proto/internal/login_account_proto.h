@@ -12,6 +12,7 @@ namespace proto::internal::login_account {
 
     inline constexpr std::size_t k_auth_fail_reason_max_len = 64;
     inline constexpr std::size_t k_login_session_max_len = 64;
+    inline constexpr std::size_t k_world_token_max_len = 32;
 
     enum class LoginAccountMsg : std::uint16_t
     {
@@ -20,6 +21,8 @@ namespace proto::internal::login_account {
 
         account_auth_request = 3211,
         account_auth_result = 3212,
+
+        world_enter_success_notify = 3213,
     };
 
 #pragma pack(push, 1)
@@ -55,10 +58,19 @@ namespace proto::internal::login_account {
         std::uint64_t char_id = 0;
         std::uint16_t world_port = 0;
         char login_session[k_login_session_max_len + 1]{};
+        char world_token[k_world_token_max_len + 1]{};
         char fail_reason[k_auth_fail_reason_max_len + 1]{};
         char world_host[pt_l::k_world_host_max_len + 1]{};
     };
 
+    struct WorldEnterSuccessNotify
+    {
+        std::uint64_t account_id = 0;
+        std::uint64_t char_id = 0;
+        char login_session[k_login_session_max_len + 1]{};
+        char world_token[k_world_token_max_len + 1]{};
+    };
+
 #pragma pack(pop)
 
-} // namespace proto::internal
+} // namespace proto::internal::login_account

@@ -8,7 +8,6 @@ namespace svr {
 	enum class WorldLineId : std::uint32_t
 	{
 		World = 0,
-		Login,
 		Control,
 		Count
 	};

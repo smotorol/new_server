@@ -27,15 +27,22 @@ public:
         std::uint64_t account_id,
         std::uint64_t char_id,
         std::string_view login_session,
+        std::string_view world_token,
         std::string_view world_host,
         std::uint16_t world_port,
         std::string_view fail_reason)>;
 
+    using EnterWorldSuccessCallback = std::function<void(
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view world_token)>;
 public:
     LoginAccountHandler(
         RegisterAckCallback on_register_ack,
         DisconnectCallback on_disconnect,
-        AuthResultCallback on_auth_result);
+        AuthResultCallback on_auth_result,
+        EnterWorldSuccessCallback on_enter_world_success);
 
     ~LoginAccountHandler() override = default;
 
@@ -85,4 +92,5 @@ private:
     RegisterAckCallback on_register_ack_;
     DisconnectCallback on_disconnect_;
     AuthResultCallback on_auth_result_;
+    EnterWorldSuccessCallback on_enter_world_success_;
 };

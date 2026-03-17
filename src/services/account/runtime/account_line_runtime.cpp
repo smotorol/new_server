@@ -4,9 +4,13 @@
 #include <cstring>
 #include <functional>
 #include <memory>
+#include <random>
+#include <sstream>
 #include <string_view>
 #include <type_traits>
 #include <utility>
+#include <ctime>
+#include <iostream>
 
 #include <spdlog/spdlog.h>
 
@@ -15,7 +19,9 @@
 #include "services/account/db/account_auth_db_repository.h"
 #include "services/account/security/login_session_token.h"
 #include "services/account/handler/account_world_handler.h"
-#include <iostream>
+#include "services/world/runtime/i_world_runtime.h"
+
+
 
 void test_korean_odbc(db::OdbcConnection& conn)
 {
@@ -105,6 +111,18 @@ WHERE memo_text LIKE ?
                 << ", nick=" << nick
                 << ", memo=" << memo << '\n';
         }
+    }
+}
+
+namespace {
+    std::string ToHexToken_(std::uint64_t a, std::uint64_t b)
+    {
+        std::ostringstream oss;
+        oss << std::hex << a << b;
+        auto s = oss.str();
+        if (s.size() > 32) s.resize(32);
+        if (s.size() < 32) s.append(32 - s.size(), '0');
+        return s;
     }
 }
 
@@ -209,6 +227,10 @@ namespace dc {
             world_public_host_.clear();
             world_public_port_ = 0;
         }
+
+        std::lock_guard lk(pending_world_upsert_mtx_);
+        pending_world_upserts_.clear();
+
     }
 
     bool AccountLineRuntime::TryGetWorldEndpoint_(
@@ -227,6 +249,12 @@ namespace dc {
         out_host = world_public_host_;
         out_port = world_public_port_;
         return true;
+    }
+
+    std::string AccountLineRuntime::GenerateWorldToken_() const
+    {
+        static thread_local std::mt19937_64 rng{ std::random_device{}() };
+        return ToHexToken_(rng(), rng());
     }
 
     bool AccountLineRuntime::InitDqs_()
@@ -445,6 +473,7 @@ namespace dc {
                 0,
                 "",
                 "",
+                "",
                 rr.fail_reason,
                 0);
             return;
@@ -463,9 +492,30 @@ namespace dc {
                 0,
                 "",
                 "",
+                "",
                 "world_not_ready",
                 0);
             return;
+        }
+
+        const std::string login_session = rr.login_session;
+        const std::string world_token = GenerateWorldToken_();
+
+        PendingWorldTicketUpsert pending{};
+        pending.request_id = rr.request_id;
+        pending.login_sid = rr.sid;
+        pending.login_serial = rr.serial;
+        pending.account_id = rr.account_id;
+        pending.char_id = rr.char_id;
+        pending.login_session = login_session;
+        pending.world_token = world_token;
+        pending.world_host = world_host;
+        pending.world_port = world_port;
+        pending.issued_at = std::chrono::steady_clock::now();
+
+        {
+            std::lock_guard lk(pending_world_upsert_mtx_);
+            pending_world_upserts_[pending.world_token] = pending;
         }
 
         login_handler_->SendAccountAuthResult(
@@ -474,33 +524,133 @@ namespace dc {
             rr.serial,
             rr.request_id,
             true,
+            pending.account_id,
+            pending.char_id,
+            pending.login_session,
+            pending.world_token,
+            pending.world_host,
+            "",
+            pending.world_port);
+
+        spdlog::info(
+            "Account auth success brokered world ticket request_id={} account_id={} char_id={} token={}",
+            rr.request_id,
             rr.account_id,
             rr.char_id,
-            rr.login_session,
-            world_host,
-            "",
-            world_port);
-
-        if (auth_ok) {
-            spdlog::info(
-                "Account auth success request_id={} account_id={} char_id={} login_session={} sid={} serial={}",
-                rr.request_id,
-                rr.account_id,
-                rr.char_id,
-                rr.login_session,
-                rr.sid,
-                rr.serial);
-        }
-        else {
-            spdlog::warn(
-                "Account auth failed request_id={} sid={} serial={} reason={} result={}",
-                rr.request_id,
-                rr.sid,
-                rr.serial,
-                rr.fail_reason,
-                static_cast<int>(rr.result));
-        }
+            world_token);
     }
+
+    std::uint16_t AccountLineRuntime::ConsumeWorldAuthTicketBrokered_(
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view world_token,
+        std::uint64_t& out_account_id,
+        std::uint64_t& out_char_id,
+        std::string& out_login_session,
+        std::string& out_world_token)
+    {
+        std::lock_guard lk(pending_world_upsert_mtx_);
+
+        const auto it = pending_world_upserts_.find(std::string(world_token));
+        if (it == pending_world_upserts_.end()) {
+            return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::TokenNotFound);
+        }
+
+        if (std::chrono::steady_clock::now() - it->second.issued_at >= std::chrono::seconds(30)) {
+            pending_world_upserts_.erase(it);
+            return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::Expired);
+        }
+
+        if (it->second.login_session != login_session) {
+            return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::LoginSessionMismatch);
+        }
+        if (it->second.account_id != account_id) {
+            return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::AccountMismatch);
+        }
+        if (it->second.char_id != char_id) {
+            return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::CharMismatch);
+        }
+
+        out_account_id = it->second.account_id;
+        out_char_id = it->second.char_id;
+        out_login_session = it->second.login_session;
+        out_world_token = it->second.world_token;
+        pending_world_upserts_.erase(it);
+        return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::Ok);
+    }
+
+    void AccountLineRuntime::HandleWorldAuthTicketConsume(
+        std::uint32_t sid,
+        std::uint32_t serial,
+         std::uint64_t request_id,
+         std::uint64_t account_id,
+         std::uint64_t char_id,
+        std::string_view login_session,
+         std::string_view world_token)
+     {
+        if (!world_handler_) {
+            return;
+        }
+
+        std::uint64_t out_account_id = 0;
+        std::uint64_t out_char_id = 0;
+        std::string out_login_session;
+        std::string out_world_token;
+
+        const auto result_code = ConsumeWorldAuthTicketBrokered_(
+            account_id,
+            char_id,
+            login_session,
+            world_token,
+            out_account_id,
+            out_char_id,
+            out_login_session,
+            out_world_token);
+
+        world_handler_->SendWorldAuthTicketConsumeResponse(
+            0,
+            sid,
+            serial,
+            request_id,
+            result_code,
+            out_account_id,
+            out_char_id,
+            out_login_session,
+            out_world_token);
+     }
+
+    void AccountLineRuntime::OnWorldEnterSuccessNotify(
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        std::string_view login_session,
+        std::string_view world_token)
+    {
+        if (!login_ready_.load(std::memory_order_acquire) || !login_handler_) {
+            return;
+        }
+
+        login_handler_->SendWorldEnterSuccessNotify(
+            0,
+            login_sid_.load(std::memory_order_relaxed),
+            login_serial_.load(std::memory_order_relaxed),
+            account_id,
+            char_id,
+            login_session,
+            world_token);
+    }
+
+    void AccountLineRuntime::ExpirePendingWorldTickets_(std::chrono::steady_clock::time_point now)
+     {
+        std::lock_guard lk(pending_world_upsert_mtx_);
+        for (auto it = pending_world_upserts_.begin(); it != pending_world_upserts_.end();) {
+            if (now - it->second.issued_at >= std::chrono::seconds(30)) {
+                it = pending_world_upserts_.erase(it);
+            } else {
+                ++it;
+            }
+         }
+     }
 
     void AccountLineRuntime::DrainDqsResults_()
     {
@@ -535,14 +685,14 @@ namespace dc {
         if (login_id.empty()) {
             login_handler_->SendAccountAuthResult(
                 0, sid, serial, request_id,
-                false, 0, 0, "", "", "empty_login_id", 0);
+                false, 0, 0, "", "", "", "empty_login_id", 0);
             return;
         }
 
         if (password.empty()) {
             login_handler_->SendAccountAuthResult(
                 0, sid, serial, request_id,
-                false, 0, 0, "", "", "empty_password", 0);
+                false, 0, 0, "", "", "", "empty_password", 0);
             return;
         }
 
@@ -569,7 +719,7 @@ namespace dc {
         if (!PushAccountAuthDqs_(payload)) {
             login_handler_->SendAccountAuthResult(
                 0, sid, serial, request_id,
-                false, 0, 0, "", "", "db_queue_full", 0);
+                false, 0, 0, "", "", "", "db_queue_full", 0);
             return;
         }
     }
@@ -628,14 +778,30 @@ namespace dc {
             return false;
         }
 
-        world_handler_ = std::make_shared<AccountWorldHandler>(
-            [this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
-                std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
-            MarkWorldRegistered(sid, serial, server_id, server_name, public_host, public_port);
-        },
-            [this](std::uint32_t sid, std::uint32_t serial) {
-            MarkWorldDisconnected(sid, serial);
-        });
+		world_handler_ = std::make_shared<AccountWorldHandler>(
+			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
+				std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
+			MarkWorldRegistered(sid, serial, server_id, server_name, public_host, public_port);
+		},
+			[this](std::uint32_t sid, std::uint32_t serial) {
+			MarkWorldDisconnected(sid, serial);
+		},
+			[this](std::uint32_t sid, std::uint32_t serial, std::uint64_t request_id,
+				std::uint64_t account_id, std::uint64_t char_id,
+				std::string_view login_session, std::string_view world_token) {
+			HandleWorldAuthTicketConsume(
+				sid,
+				serial,
+				request_id,
+				account_id,
+				char_id,
+				login_session,
+				world_token);
+		},
+			[this](std::uint64_t account_id, std::uint64_t char_id,
+				std::string_view login_session, std::string_view world_token) {
+			OnWorldEnterSuccessNotify(account_id, char_id, login_session, world_token);
+		});
 
         if (!dc::StartHostedLine(
             world_line_,
@@ -664,7 +830,9 @@ namespace dc {
     void AccountLineRuntime::OnAfterIoStop()
     {
         login_line_.host.Stop();
+        world_line_.host.Stop();
         login_handler_.reset();
+        world_handler_.reset();
 
         login_ready_.store(false, std::memory_order_release);
         login_sid_.store(0, std::memory_order_relaxed);
@@ -676,12 +844,17 @@ namespace dc {
             world_public_port_ = 0;
         }
 
+        {
+            std::lock_guard lk(pending_world_upsert_mtx_);
+            pending_world_upserts_.clear();
+        }
         ShutdownDbWorkers_();
     }
 
-    void AccountLineRuntime::OnMainLoopTick(std::chrono::steady_clock::time_point)
+    void AccountLineRuntime::OnMainLoopTick(std::chrono::steady_clock::time_point now)
     {
         DrainDqsResults_();
+        ExpirePendingWorldTickets_(now);
     }
 
 } // namespace dc

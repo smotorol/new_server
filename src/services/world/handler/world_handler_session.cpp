@@ -13,31 +13,11 @@
 #include "proto/client/world_proto.h"
 #include "db/core/dqs_payloads.h"
 #include "services/world/actors/world_actors.h"
+#include "services/world/common/demo_char_state.h"
 
 namespace pt_w = proto::world;
 
 namespace {
-#pragma pack(push, 1)
-	struct DemoCharState
-	{
-		std::uint64_t char_id = 0;
-		std::uint32_t gold = 0;
-		std::uint32_t version = 0;
-	};
-#pragma pack(pop)
-	static_assert(sizeof(DemoCharState) == 16);
-
-	std::string SerializeDemo(const DemoCharState& s)
-	{
-		return std::string(reinterpret_cast<const char*>(&s), sizeof(s));
-	}
-
-	bool TryDeserializeDemo(const std::string& blob, DemoCharState& out)
-	{
-		if (blob.size() != sizeof(DemoCharState)) return false;
-		std::memcpy(&out, blob.data(), sizeof(out));
-		return true;
-	}
 
 	const char* ToString(svr::DuplicateSessionCause cause) noexcept
 	{
@@ -72,6 +52,37 @@ namespace {
 			return "AlreadyBoundSameSession";
 		default:
 			return "UnknownBindAuthedWorldSessionResultKind";
+		}
+	}
+
+	pt_w::EnterWorldResultCode MapConsumeFailReason(
+		svr::ConsumePendingWorldAuthTicketResultKind kind) noexcept
+	{
+		using K = svr::ConsumePendingWorldAuthTicketResultKind;
+		switch (kind) {
+		case K::TokenNotFound:
+			return pt_w::EnterWorldResultCode::auth_ticket_not_found;
+		case K::Expired:
+			return pt_w::EnterWorldResultCode::auth_ticket_expired;
+		case K::ReplayDetected:
+			return pt_w::EnterWorldResultCode::auth_ticket_replayed;
+		case K::AccountMismatch:
+		case K::CharMismatch:
+		case K::LoginSessionMismatch:
+			return pt_w::EnterWorldResultCode::auth_ticket_mismatch;
+		default:
+			return pt_w::EnterWorldResultCode::internal_error;
+		}
+	}
+
+	pt_w::EnterWorldResultCode MapBindFailReason(
+		svr::BindAuthedWorldSessionResultKind kind) noexcept
+	{
+		switch (kind) {
+		case svr::BindAuthedWorldSessionResultKind::InvalidInput:
+			return pt_w::EnterWorldResultCode::bind_invalid_input;
+		default:
+			return pt_w::EnterWorldResultCode::internal_error;
 		}
 	}
 } // namespace
@@ -112,125 +123,32 @@ bool WorldHandler::HandleEnterWorldWithToken(
 		req->login_session,
 		req->world_token);
 
-	if (!runtime().ConsumePendingWorldAuthTicket(
+	if (!runtime().RequestConsumeWorldAuthTicket(
+		n,
+		serial,
 		req->account_id,
 		req->char_id,
 		req->login_session,
 		req->world_token))
 	{
 		res.ok = 0;
+		res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::internal_error);
 		const auto h = proto::make_header(
 			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
 			static_cast<std::uint16_t>(sizeof(res)));
 		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
-
-		spdlog::warn(
-			"HandleEnterWorldWithToken denied sid={} serial={} account_id={} char_id={} login_session={} token={}",
-			n, serial, req->account_id, req->char_id, req->login_session, req->world_token);
 		return true;
 	}
 
-	const std::uint32_t world_code = 0;
-	const std::uint64_t char_id = req->char_id;
-
-	const auto bind_result = runtime().BindAuthenticatedWorldSessionForLogin(
-		req->account_id,
-		char_id,
-		n,
-		serial,
-		static_cast<std::uint16_t>(pt_w::WorldKickReason::duplicate_login));
-
-	if (bind_result.kind == svr::BindAuthedWorldSessionResultKind::InvalidInput) {
-		res.ok = 0;
-		const auto h = proto::make_header(
-			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-			static_cast<std::uint16_t>(sizeof(res)));
-		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
-
-		spdlog::warn(
-			"HandleEnterWorldWithToken bind failed. account_id={} char_id={} sid={} serial={} bind_kind={} duplicate_cause={}",
-			req->account_id,
-			char_id,
-			n,
-			serial,
-			ToString(bind_result.kind),
-			ToString(bind_result.duplicate_cause));
-		return true;
-	}
-
-	DemoCharState st{};
-	st.char_id = char_id;
-	st.gold = 1000;
-	st.version = 1;
-
-	if (auto blob = runtime().TryLoadCharacterState(world_code, char_id))
-	{
-		DemoCharState loaded{};
-		if (TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
-		{
-			st = loaded;
-			spdlog::info("[Demo] loaded from redis char_id={} gold={} ver={}", st.char_id, st.gold, st.version);
-		}
-		else
-		{
-			spdlog::warn("[Demo] redis blob invalid, recreate char_id={}", char_id);
-		}
-	}
-	else
-	{
-		spdlog::info("[Demo] no redis state, create new char_id={}", char_id);
-	}
-
-	st.gold += 10;
-	st.version += 1;
-	const std::string out_blob = SerializeDemo(st);
-
-	runtime().PostActor(char_id, [this, char_id, sid = n, serial]() {
-		auto& a = runtime().GetOrCreatePlayerActor(char_id);
-		a.bind_session(sid, serial);
-		a.combat.hp = 100;
-		a.combat.max_hp = 100;
-		a.combat.atk = 20;
-		a.combat.def = 3;
-		a.combat.gold = 1000;
-		a.zone_id = 1;
-		a.pos = { 0,0 };
-
-		runtime().PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial]() {
-			auto& z = runtime().GetOrCreateZoneActor(1);
-			z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
-		});
-	});
-
-	runtime().CacheCharacterState(world_code, char_id, out_blob);
-
-	{
-		proto::S2C_actor_bound bound{};
-		bound.actor_id = char_id;
-		auto h = proto::make_header(
-			static_cast<std::uint16_t>(proto::S2CMsg::actor_bound),
-			static_cast<std::uint16_t>(sizeof(bound)));
-		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&bound));
-	}
-
-	{
-		res.ok = 1;
-		auto h = proto::make_header(
-			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-			static_cast<std::uint16_t>(sizeof(res)));
-		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
-	}
 
 	spdlog::info(
-		"HandleEnterWorldWithToken success sid={} serial={} account_id={} char_id={} login_session={} token={} bind_kind={} duplicate_cause={}",
+		"HandleEnterWorldWithToken consume requested. sid={} serial={} account_id={} char_id={} login_session={} token={}",
 		n,
 		serial,
 		req->account_id,
-		char_id,
+		req->char_id,
 		req->login_session,
-		req->world_token,
-		ToString(bind_result.kind),
-		ToString(bind_result.duplicate_cause));
+		req->world_token);
 
 	return true;
 }
@@ -250,42 +168,12 @@ void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, st
 {
 	(void)dwProID;
 
-	const auto authed_unbind = runtime().UnbindAuthenticatedWorldSessionBySid(dwIndex, dwSerial);
-
-	std::uint64_t close_account_id = 0;
-	std::uint64_t close_char_id = 0;
-
-	if (authed_unbind.removed()) {
-		close_account_id = authed_unbind.session.account_id;
-		close_char_id = authed_unbind.session.char_id;
-	}
-
-	if (close_char_id != 0) {
-		runtime().PostActor(close_char_id, [this, close_char_id, sid = dwIndex, serial = dwSerial]() {
-			auto& a = runtime().GetOrCreatePlayerActor(close_char_id);
-
-			if (a.sid == sid && a.serial == serial) {
-				a.bind_session(0, 0);
-			}
-
-			if (a.zone_id != 0) {
-				const auto zone_id = a.zone_id;
-				runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, close_char_id, zone_id]() {
-					auto& z = runtime().GetOrCreateZoneActor(zone_id);
-					z.Leave(close_char_id);
-				});
-			}
-		});
-	}
-
 	runtime().HandleWorldSessionClosed(dwIndex, dwSerial);
 
-	spdlog::info(
-		"WorldHandler::OnLineClosed processed. sid={} serial={} account_id={} char_id={}",
-		dwIndex,
-		dwSerial,
-		close_account_id,
-		close_char_id);
+ 	spdlog::info(
+		"WorldHandler::OnLineClosed forwarded to runtime. sid={} serial={}",
+ 		dwIndex,
+		dwSerial);
 }
 bool WorldHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
@@ -342,21 +230,22 @@ bool WorldHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid, 
 	a.combat.gold += req->add;
 	const std::uint32_t combat_gold = a.combat.gold;
 
-	DemoCharState st{};
+	svr::demo::DemoCharState st{};
 	st.char_id = char_id;
 	st.gold = 1000;
 	st.version = 1;
 
 	if (auto blob = runtime().TryLoadCharacterState(world_code, char_id))
 	{
-		DemoCharState loaded{};
-		if (TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
+		svr::demo::DemoCharState loaded{};
+		if (svr::demo::TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
+
 			st = loaded;
 	}
 
 	st.gold += req->add;
 	st.version += 1;
-	const std::string out_blob = SerializeDemo(st);
+	const std::string out_blob = svr::demo::SerializeDemo(st);
 	runtime().CacheCharacterState(world_code, char_id, out_blob);
 
 	proto::S2C_add_gold_ok res{};

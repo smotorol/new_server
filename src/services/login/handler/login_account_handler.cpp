@@ -11,12 +11,14 @@
 namespace pt_la = proto::internal::login_account;
 
 LoginAccountHandler::LoginAccountHandler(
-    RegisterAckCallback on_register_ack,
-    DisconnectCallback on_disconnect,
-    AuthResultCallback on_auth_result)
-    : on_register_ack_(std::move(on_register_ack))
-    , on_disconnect_(std::move(on_disconnect))
-    , on_auth_result_(std::move(on_auth_result))
+	RegisterAckCallback on_register_ack,
+	DisconnectCallback on_disconnect,
+	AuthResultCallback on_auth_result,
+	EnterWorldSuccessCallback on_enter_world_success)
+	: on_register_ack_(std::move(on_register_ack))
+	, on_disconnect_(std::move(on_disconnect))
+	, on_auth_result_(std::move(on_auth_result))
+	, on_enter_world_success_(std::move(on_enter_world_success))
 {
 }
 
@@ -123,9 +125,27 @@ bool LoginAccountHandler::DataAnalysis(
                     res->account_id,
                     res->char_id,
                     res->login_session,
+                    res->world_token,
                     res->world_host,
                     res->world_port,
                     res->fail_reason);
+            }
+            return true;
+        }
+    case pt_la::LoginAccountMsg::world_enter_success_notify:
+        {
+            const auto* req = proto::as<pt_la::WorldEnterSuccessNotify>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("LoginAccountHandler invalid world_enter_success_notify sid={}", n);
+                return false;
+            }
+
+            if (on_enter_world_success_) {
+                on_enter_world_success_(
+                    req->account_id,
+                    req->char_id,
+                    req->login_session,
+                    req->world_token);
             }
             return true;
         }

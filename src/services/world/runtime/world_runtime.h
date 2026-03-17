@@ -32,7 +32,6 @@
 #include "server_common/runtime/line_client_start_helper.h"
 
 #include "services/world/handler/world_handler.h"
-#include "services/world/handler/world_login_handler.h"
 #include "services/world/handler/world_control_handler.h"
 #include "services/world/actors/world_actors.h"
 #include "services/runtime/server_runtime_base.h"
@@ -64,7 +63,6 @@ struct DbPool
 namespace svr {
 
 	constexpr std::uint16_t PORT_WORLD = 27787;
-	constexpr std::uint16_t PORT_LOGIN = 27788;
 	constexpr std::uint16_t PORT_CONTROL = 27789;
 
 	class WorldRuntime final : public dc::ServerRuntimeBase, public IWorldRuntime {
@@ -77,25 +75,6 @@ namespace svr {
 			std::uint32_t server_id = 0;
 			std::string server_name;
 			std::uint16_t listen_port = 0;
-		};
-
-		struct PendingWorldAuthTicket
-		{
-			std::uint64_t account_id = 0;
-			std::uint64_t char_id = 0;
-			std::string login_session;
-			std::string token;
-			std::uint64_t expire_at_unix_sec = 0;
-		};
-
-		struct ConsumedWorldAuthTicket
-		{
-			std::uint64_t account_id = 0;
-			std::uint64_t char_id = 0;
-			std::string login_session;
-			std::string token;
-			std::uint64_t consumed_at_unix_sec = 0;
-			std::uint64_t original_expire_at_unix_sec = 0;
 		};
 
 		struct DuplicateLoginLogContext
@@ -195,18 +174,27 @@ namespace svr {
 		void RequestBenchReset() noexcept;
 		void RequestBenchMeasure(int seconds) noexcept;
 
-		bool UpsertPendingWorldAuthTicket(
+		void OnWorldAuthTicketConsumeResponse(
+			std::uint64_t request_id,
+			ConsumePendingWorldAuthTicketResultKind result_kind,
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::string_view login_session,
-			std::string token,
-			std::uint64_t expire_at_unix_sec);
+			std::string_view world_token);
 
-		bool ConsumePendingWorldAuthTicket(
+		bool RequestConsumeWorldAuthTicket(
+			std::uint32_t sid,
+			std::uint32_t serial,
+ 			std::uint64_t account_id,
+ 			std::uint64_t char_id,
+ 			std::string_view login_session,
+			std::string_view token) override;
+
+		bool NotifyAccountWorldEnterSuccess(
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::string_view login_session,
-			std::string_view token);
+			std::string_view world_token) override;
 
 		BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
 			std::uint64_t account_id,
@@ -238,9 +226,6 @@ namespace svr {
 		bool DatabaseInit();
 		bool NetworkInit();
 		void InitHostedLineDescriptors_() noexcept;
-		void SweepExpiredPendingWorldAuthTickets_();
-		void SweepOldConsumedWorldAuthTickets_();
-		void RememberConsumedWorldAuthTicket_(const PendingWorldAuthTicket& ticket);
 
 		bool TryReserveDelayedWorldClose_(
 			std::uint32_t sid,
@@ -390,13 +375,6 @@ namespace svr {
 
 		dc::BasicLineRegistry<svr::WorldLineId, svr::kWorldLineCount> lines_{};
 
-		void RegisterLoginLine(
-			std::uint32_t sid, std::uint32_t serial,
-			std::uint32_t server_id, std::string_view server_name,
-			std::uint16_t listen_port);
-		void UnregisterLoginLine(
-			std::uint32_t sid, std::uint32_t serial);
-
 		void RegisterControlLine(
 			std::uint32_t sid, std::uint32_t serial,
 			std::uint32_t server_id, std::string_view server_name,
@@ -405,12 +383,23 @@ namespace svr {
 			std::uint32_t sid, std::uint32_t serial);
 
 		mutable std::mutex service_line_mtx_;
-		RemoteServiceLineState login_line_state_{};
 		RemoteServiceLineState control_line_state_{};
 
-		mutable std::mutex auth_ticket_mtx_;
-		std::unordered_map<std::string, PendingWorldAuthTicket> pending_world_auth_tickets_;
-		std::unordered_map<std::string, ConsumedWorldAuthTicket> consumed_world_auth_tickets_;
+		struct PendingEnterWorldConsumeRequest
+		{
+			std::uint64_t request_id = 0;
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+			std::uint64_t account_id = 0;
+			std::uint64_t char_id = 0;
+			std::string login_session;
+			std::string world_token;
+			std::chrono::steady_clock::time_point issued_at{};
+		};
+
+		std::atomic<std::uint64_t> next_world_auth_consume_request_id_{ 1 };
+		mutable std::mutex pending_enter_world_consume_mtx_;
+		std::unordered_map<std::uint64_t, PendingEnterWorldConsumeRequest> pending_enter_world_consume_;
 
 		mutable std::mutex world_session_mtx_;
 
@@ -473,7 +462,6 @@ namespace svr {
 		procmetrics::ProcSnapshot bench_proc_prev_{};
 
 		std::uint16_t port_world_ = PORT_WORLD;
-		std::uint16_t port_login_ = PORT_LOGIN;
 		std::uint16_t port_control_ = PORT_CONTROL;
 
 		std::string db_acc_;

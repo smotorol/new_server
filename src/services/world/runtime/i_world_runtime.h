@@ -85,6 +85,28 @@ namespace svr {
 		}
 	};
 
+	enum class ConsumePendingWorldAuthTicketResultKind
+	{
+		Ok = 0,
+		TokenNotFound,
+		Expired,
+		ReplayDetected,
+		AccountMismatch,
+		CharMismatch,
+		LoginSessionMismatch,
+	};
+
+	struct ConsumePendingWorldAuthTicketResult
+	{
+		ConsumePendingWorldAuthTicketResultKind kind =
+			ConsumePendingWorldAuthTicketResultKind::TokenNotFound;
+
+		[[nodiscard]] bool ok() const noexcept
+		{
+			return kind == ConsumePendingWorldAuthTicketResultKind::Ok;
+		}
+	};
+
 	class IWorldRuntime {
 	public:
 		virtual ~IWorldRuntime() = default;
@@ -100,18 +122,27 @@ namespace svr {
 
 		virtual std::uint64_t FindCharIdBySession(std::uint32_t sid) const = 0;
 
-		virtual bool UpsertPendingWorldAuthTicket(
-			std::uint64_t account_id,
-			std::uint64_t char_id,
-			std::string_view login_session,
-			std::string token,
-			std::uint64_t expire_at_unix_sec) = 0;
-
-		virtual bool ConsumePendingWorldAuthTicket(
-			std::uint64_t account_id,
-			std::uint64_t char_id,
-			std::string_view login_session,
+		virtual bool RequestConsumeWorldAuthTicket(
+			std::uint32_t sid,
+			std::uint32_t serial,
+ 			std::uint64_t account_id,
+ 			std::uint64_t char_id,
+ 			std::string_view login_session,
 			std::string_view token) = 0;
+
+		virtual void OnWorldAuthTicketConsumeResponse(
+			std::uint64_t request_id,
+			svr::ConsumePendingWorldAuthTicketResultKind result_kind,
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::string_view login_session,
+			std::string_view world_token) = 0;
+
+		virtual bool NotifyAccountWorldEnterSuccess(
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::string_view login_session,
+			std::string_view world_token) = 0;
 
 		virtual BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
 			std::uint64_t account_id,

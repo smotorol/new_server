@@ -12,12 +12,9 @@ int main()
     common::init_logging();
 
     constexpr std::uint16_t kLoginPort = 26788;
-    constexpr std::uint16_t kWorldPort = 27788;
     constexpr std::uint16_t kAccountPort = 27780;
     dc::LoginLineRuntime runtime(
         kLoginPort,
-        "127.0.0.1",
-        kWorldPort,
         "127.0.0.1",
         kAccountPort);
     if (!runtime.InitMainThread()) {

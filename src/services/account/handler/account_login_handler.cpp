@@ -52,6 +52,7 @@ bool AccountLoginHandler::SendAccountAuthResult(
     std::uint64_t account_id,
     std::uint64_t char_id,
     std::string_view login_session,
+    std::string_view world_token,
     std::string_view world_host,
     std::string_view fail_reason,
     std::uint16_t world_port)
@@ -65,6 +66,8 @@ bool AccountLoginHandler::SendAccountAuthResult(
 
     std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
         static_cast<int>(login_session.size()), login_session.data());
+    std::snprintf(pkt.world_token, sizeof(pkt.world_token), "%.*s",
+        static_cast<int>(world_token.size()), world_token.data());
     std::snprintf(pkt.world_host, sizeof(pkt.world_host), "%.*s",
         static_cast<int>(world_host.size()), world_host.data());
     std::snprintf(pkt.fail_reason, sizeof(pkt.fail_reason), "%.*s",
@@ -72,6 +75,31 @@ bool AccountLoginHandler::SendAccountAuthResult(
 
     const auto h = proto::make_header(
         static_cast<std::uint16_t>(pt_la::LoginAccountMsg::account_auth_result),
+        static_cast<std::uint16_t>(sizeof(pkt)));
+
+    return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
+bool AccountLoginHandler::SendWorldEnterSuccessNotify(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
+    std::uint32_t dwSerial,
+    std::uint64_t account_id,
+    std::uint64_t char_id,
+    std::string_view login_session,
+    std::string_view world_token)
+{
+    pt_la::WorldEnterSuccessNotify pkt{};
+    pkt.account_id = account_id;
+    pkt.char_id = char_id;
+
+    std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
+        static_cast<int>(login_session.size()), login_session.data());
+    std::snprintf(pkt.world_token, sizeof(pkt.world_token), "%.*s",
+        static_cast<int>(world_token.size()), world_token.data());
+
+    const auto h = proto::make_header(
+        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::world_enter_success_notify),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));

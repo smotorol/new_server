@@ -11,10 +11,12 @@
 namespace pt_aw = proto::internal::account_world;
 
 WorldAccountHandler::WorldAccountHandler(
-    RegisterAckCallback on_register_ack,
-    DisconnectCallback on_disconnect)
-    : on_register_ack_(std::move(on_register_ack))
-    , on_disconnect_(std::move(on_disconnect))
+	svr::IWorldRuntime& runtime,
+	RegisterAckCallback on_register_ack,
+	DisconnectCallback on_disconnect)
+	: runtime_(runtime)
+	, on_register_ack_(std::move(on_register_ack))
+	, on_disconnect_(std::move(on_disconnect))
 {
 }
 
@@ -44,6 +46,57 @@ bool WorldAccountHandler::SendHelloRegister(
 
     const auto h = proto::make_header(
         static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_server_hello),
+        static_cast<std::uint16_t>(sizeof(pkt)));
+
+    return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
+bool WorldAccountHandler::SendWorldAuthTicketConsumeRequest(
+	std::uint32_t dwProID,
+	std::uint32_t dwIndex,
+	std::uint32_t dwSerial,
+	std::uint64_t request_id,
+	std::uint64_t account_id,
+	std::uint64_t char_id,
+	std::string_view login_session,
+	std::string_view world_token)
+{
+	pt_aw::WorldAuthTicketConsumeRequest pkt{};
+	pkt.request_id = request_id;
+	pkt.account_id = account_id;
+	pkt.char_id = char_id;
+	std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
+		static_cast<int>(login_session.size()), login_session.data());
+	std::snprintf(pkt.world_token, sizeof(pkt.world_token), "%.*s",
+		static_cast<int>(world_token.size()), world_token.data());
+
+	const auto h = proto::make_header(
+		static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_auth_ticket_consume_request),
+		static_cast<std::uint16_t>(sizeof(pkt)));
+
+	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
+bool WorldAccountHandler::SendWorldEnterSuccessNotify(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
+    std::uint32_t dwSerial,
+    std::uint64_t account_id,
+    std::uint64_t char_id,
+    std::string_view login_session,
+    std::string_view world_token)
+{
+    pt_aw::WorldEnterSuccessNotify pkt{};
+    pkt.account_id = account_id;
+    pkt.char_id = char_id;
+
+    std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
+        static_cast<int>(login_session.size()), login_session.data());
+    std::snprintf(pkt.world_token, sizeof(pkt.world_token), "%.*s",
+        static_cast<int>(world_token.size()), world_token.data());
+
+    const auto h = proto::make_header(
+        static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_enter_success_notify),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -90,7 +143,23 @@ bool WorldAccountHandler::DataAnalysis(
             }
             return true;
         }
+    case pt_aw::AccountWorldMsg::world_auth_ticket_consume_response:
+        {
+            const auto* req = proto::as<pt_aw::WorldAuthTicketConsumeResponse>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("WorldAccountHandler invalid world_auth_ticket_consume_response sid={}", n);
+                return false;
+            }
 
+            runtime_.OnWorldAuthTicketConsumeResponse(
+                req->request_id,
+                static_cast<svr::ConsumePendingWorldAuthTicketResultKind>(req->result_code),
+                req->account_id,
+                req->char_id,
+                req->login_session,
+                req->world_token);
+            return true;
+        }
     default:
         spdlog::warn("WorldAccountHandler unknown msg_type={} sid={}", msg_type, n);
         return false;

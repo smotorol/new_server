@@ -31,6 +31,24 @@ namespace dc {
         static constexpr std::uint32_t kMaxDqsSlotCount = 1024;
 
     private:
+        struct PendingWorldTicketUpsert
+        {
+            std::uint64_t request_id = 0;
+            std::uint32_t login_sid = 0;
+            std::uint32_t login_serial = 0;
+
+            std::uint64_t account_id = 0;
+            std::uint64_t char_id = 0;
+
+            std::string login_session;
+            std::string world_token;
+            std::string world_host;
+            std::uint16_t world_port = 0;
+
+            std::chrono::steady_clock::time_point issued_at{};
+        };
+
+    private:
         bool OnRuntimeInit() override;
         void OnBeforeIoStop() override;
         void OnAfterIoStop() override;
@@ -71,6 +89,34 @@ namespace dc {
             std::string& out_host,
             std::uint16_t& out_port) const;
 
+        std::string GenerateWorldToken_() const;
+
+        void HandleWorldAuthTicketConsume(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint64_t request_id,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view world_token);
+
+        std::uint16_t ConsumeWorldAuthTicketBrokered_(
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view world_token,
+            std::uint64_t& out_account_id,
+            std::uint64_t& out_char_id,
+            std::string& out_login_session,
+            std::string& out_world_token);
+
+        void OnWorldEnterSuccessNotify(
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view world_token);
+
+        void ExpirePendingWorldTickets_(std::chrono::steady_clock::time_point now);
     private:
         bool InitDbWorkers_();
         void ShutdownDbWorkers_();
@@ -107,6 +153,9 @@ namespace dc {
 
         std::shared_ptr<AccountLoginHandler> login_handler_;
         std::shared_ptr<AccountWorldHandler> world_handler_;
+
+        std::mutex pending_world_upsert_mtx_;
+        std::unordered_map<std::string, PendingWorldTicketUpsert> pending_world_upserts_;
 
     private:
         std::string db_conn_str_ =
