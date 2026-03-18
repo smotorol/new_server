@@ -14,46 +14,11 @@
 #include "db/core/dqs_payloads.h"
 #include "services/world/actors/world_actors.h"
 #include "services/world/common/demo_char_state.h"
+#include "services/world/common/string_utils.h"
 
 namespace pt_w = proto::world;
 
 namespace {
-
-	const char* ToString(svr::DuplicateSessionCause cause) noexcept
-	{
-		switch (cause) {
-		case svr::DuplicateSessionCause::None:
-			return "None";
-		case svr::DuplicateSessionCause::DuplicateCharSession:
-			return "DuplicateCharSession";
-		case svr::DuplicateSessionCause::DuplicateAccountSession:
-			return "DuplicateAccountSession";
-		case svr::DuplicateSessionCause::DuplicateCharAndAccountSession:
-			return "DuplicateCharAndAccountSession";
-		default:
-			return "UnknownDuplicateSessionCause";
-		}
-	}
-
-	const char* ToString(svr::BindAuthedWorldSessionResultKind kind) noexcept
-	{
-		switch (kind) {
-		case svr::BindAuthedWorldSessionResultKind::InvalidInput:
-			return "InvalidInput";
-		case svr::BindAuthedWorldSessionResultKind::Inserted:
-			return "Inserted";
-		case svr::BindAuthedWorldSessionResultKind::ReplacedCharSession:
-			return "ReplacedCharSession";
-		case svr::BindAuthedWorldSessionResultKind::ReplacedAccountSession:
-			return "ReplacedAccountSession";
-		case svr::BindAuthedWorldSessionResultKind::ReplacedBoth:
-			return "ReplacedBoth";
-		case svr::BindAuthedWorldSessionResultKind::AlreadyBoundSameSession:
-			return "AlreadyBoundSameSession";
-		default:
-			return "UnknownBindAuthedWorldSessionResultKind";
-		}
-	}
 
 	pt_w::EnterWorldResultCode MapConsumeFailReason(
 		svr::ConsumePendingWorldAuthTicketResultKind kind) noexcept

@@ -2,9 +2,7 @@
 #include <cstdint>
 #include <cstring>
 
-#include "proto/client/login_proto.h"
-
-namespace pt_l = proto::login;
+#include "shared/constants.h"
 
 namespace svr::dqs_payload {
 
@@ -44,8 +42,8 @@ namespace svr::dqs_payload {
 		std::uint32_t serial = 0;
 		std::uint64_t request_id = 0;
 		std::uint64_t selected_char_id = 0;
-		char login_id[pt_l::k_login_id_max_len + 1]{};
-		char password[pt_l::k_login_pw_max_len + 1]{};
+		char login_id[dc::k_login_id_max_len + 1]{};
+		char password[dc::k_login_pw_max_len + 1]{};
 
 		AccountAuthRequest() { std::memset(this, 0, sizeof(*this)); }
 	};

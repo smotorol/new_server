@@ -47,8 +47,8 @@ namespace svr::dqs_result {
 		std::uint8_t ok = 0;
 		std::uint64_t account_id = 0;
 		std::uint64_t char_id = 0;
-		char login_session[pt_la::k_login_session_max_len + 1]{};
-		char fail_reason[pt_la::k_auth_fail_reason_max_len + 1]{};
+		char login_session[dc::k_login_session_max_len + 1]{};
+		char fail_reason[dc::k_auth_fail_reason_max_len + 1]{};
 		svr::dqs::ResultCode result = svr::dqs::ResultCode::success;
 	};
 

@@ -6,6 +6,7 @@ dc_target_defaults(dc_world_service)
 dc_target_src_root(dc_world_service)
 
 target_link_libraries(dc_world_service PUBLIC
+    dc_shared
     dc_core
     dc_net
     dc_app

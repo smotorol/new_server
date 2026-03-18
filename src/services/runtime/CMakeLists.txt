@@ -6,6 +6,7 @@ dc_target_defaults(dc_service_runtime)
 dc_target_src_root(dc_service_runtime)
 
 target_link_libraries(dc_service_runtime PUBLIC
+    dc_shared
     dc_core
     dc_net
 )

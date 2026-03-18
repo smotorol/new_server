@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "proto/common/proto_base.h"
+#include "shared/constants.h"
 
 namespace proto::internal::world_zone {
 
@@ -18,6 +19,14 @@ namespace proto::internal::world_zone {
 		world_zone_player_leave = 3414,
 	};
 
+	enum class ZoneMapAssignResultCode : std::uint16_t
+	{
+		ok = 0,
+		not_found = 1,
+		capacity_full = 2,
+		internal_error = 3,
+	};
+
 #pragma pack(push, 1)
 
 	struct ZoneServerHello
@@ -31,7 +40,7 @@ namespace proto::internal::world_zone {
 		std::uint16_t active_player_count = 0;
 		std::uint16_t load_score = 0;
 		std::uint32_t flags = 0;
-		char server_name[proto::k_service_name_max_len + 1]{};
+		char server_name[dc::k_service_name_max_len + 1]{};
 	};
 
 	struct ZoneServerRegisterAck
@@ -46,7 +55,7 @@ namespace proto::internal::world_zone {
 		std::uint16_t active_player_count = 0;
 		std::uint16_t load_score = 0;
 		std::uint32_t flags = 0;
-		char server_name[proto::k_service_name_max_len + 1]{};
+		char server_name[dc::k_service_name_max_len + 1]{};
 	};
 
 	struct ZoneServerRouteHeartbeat
@@ -93,7 +102,7 @@ namespace proto::internal::world_zone {
     struct ZoneWorldMapAssignResponse
     {
         std::uint64_t request_id = 0;
-        std::uint16_t result_code = 0; // 0=ok
+        std::uint16_t result_code = 0;
         std::uint16_t zone_id = 0;
         std::uint32_t map_template_id = 0;
         std::uint32_t instance_id = 0;

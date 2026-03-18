@@ -37,6 +37,8 @@
 #include "services/runtime/server_runtime_base.h"
 #include "services/world/runtime/i_world_runtime.h"
 #include "services/world/runtime/world_line_id.h"
+#include "services/world/runtime/world_session_types.h"
+#include "services/world/runtime/world_runtime_types.h"
 #include "services/world/handler/world_account_handler.h"
 #include "services/world/handler/world_zone_handler.h"
 
@@ -66,159 +68,21 @@ namespace svr {
 	constexpr std::uint16_t PORT_WORLD = 27787;
 	constexpr std::uint16_t PORT_ZONE = 27788;
 	constexpr std::uint16_t PORT_CONTROL = 27789;
+	using RemoteServiceLineState = svr::RemoteServiceLineState;
+	using ZoneRouteState = svr::ZoneRouteState;
+	using DuplicateLoginLogContext = svr::DuplicateLoginLogContext;
+	using SessionCloseLogContext = svr::SessionCloseLogContext;
+	using DelayedCloseKey = svr::DelayedCloseKey;
+	using DelayedCloseKeyHash = svr::DelayedCloseKeyHash;
+	using DelayedCloseEntry = svr::DelayedCloseEntry;
+	using ClosedAuthedSessionContext = svr::ClosedAuthedSessionContext;
+	using PendingEnterWorldConsumeRequest = svr::PendingEnterWorldConsumeRequest;
+	using ZoneRouteInfo = svr::ZoneRouteInfo;
+	using MapAssignmentEntry = svr::MapAssignmentEntry;
+	using PendingZoneAssignRequest = svr::PendingZoneAssignRequest;
+	using PendingEnterWorldFinalize = svr::PendingEnterWorldFinalize;
 
 	class WorldRuntime final : public dc::ServerRuntimeBase, public IWorldRuntime {
-	private:
-		struct RemoteServiceLineState
-		{
-			bool registered = false;
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-			std::uint32_t server_id = 0;
-			std::string server_name;
-			std::uint16_t listen_port = 0;
-		};
-
-		struct ZoneRouteState
-		{
-			bool registered = false;
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-			std::uint32_t server_id = 0;
-			std::uint16_t zone_id = 0;
-			std::uint16_t world_id = 0;
-			std::uint16_t channel_id = 0;
-			std::uint16_t map_instance_capacity = 0;
-			std::uint16_t active_map_instance_count = 0;
-			std::uint16_t active_player_count = 0;
-			std::uint16_t load_score = 0;
-			std::uint32_t flags = 0;
-			std::string server_name;
-			std::chrono::steady_clock::time_point last_heartbeat_at{};
-		};
-
-		struct DuplicateLoginLogContext
-		{
-			std::uint64_t trace_id = 0;
-
-			std::uint64_t account_id = 0;
-			std::uint64_t char_id = 0;
-
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-
-			std::uint32_t new_sid = 0;
-			std::uint32_t new_serial = 0;
-
-			std::uint16_t packet_kick_reason = 0;
-			DuplicateSessionCause log_cause = DuplicateSessionCause::None;
-			SessionKickStatCategory stat_category = SessionKickStatCategory::None;
-		};
-
-		struct SessionCloseLogContext
-		{
-			std::uint64_t trace_id = 0;
-			std::uint64_t char_id = 0;
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-		};
-
-		struct DelayedCloseKey
-		{
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-
-			bool operator==(const DelayedCloseKey& rhs) const noexcept
-			{
-				return sid == rhs.sid && serial == rhs.serial;
-			}
-		};
-
-		struct DelayedCloseKeyHash
-		{
-			std::size_t operator()(const DelayedCloseKey& k) const noexcept
-			{
-				const std::uint64_t packed =
-					(static_cast<std::uint64_t>(k.sid) << 32) |
-					static_cast<std::uint64_t>(k.serial);
-				return std::hash<std::uint64_t>{}(packed);
-			}
-		};
-
-		struct DelayedCloseEntry
-		{
-			std::shared_ptr<boost::asio::steady_timer> timer;
-			bool armed = false;
-			SessionCloseLogContext log_ctx{};
-		};
-
-		struct ClosedAuthedSessionContext
-		{
-			UnbindAuthedWorldSessionResultKind unbind_kind =
-				UnbindAuthedWorldSessionResultKind::NotFoundBySid;
-
-			std::uint64_t account_id = 0;
-			std::uint64_t char_id = 0;
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-
-			[[nodiscard]] bool removed() const noexcept
-			{
-				return unbind_kind == UnbindAuthedWorldSessionResultKind::Removed;
-			}
-		};
-
-		struct PendingEnterWorldConsumeRequest
-		{
-			std::uint64_t request_id = 0;
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-			std::uint64_t account_id = 0;
-			std::uint64_t char_id = 0;
-			std::string login_session;
-			std::string world_token;
-			std::chrono::steady_clock::time_point issued_at{};
-		};
-
-		struct ZoneRouteInfo
-		{
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-			std::uint32_t zone_server_id = 0;
-			std::uint16_t zone_id = 0;
-			std::uint16_t active_map_instance_count = 0;
-			std::uint16_t active_player_count = 0;
-			std::uint16_t load_score = 0;
-			std::uint32_t flags = 0;
-			std::chrono::steady_clock::time_point last_heartbeat_at{};
-		};
-
-		struct MapAssignmentEntry
-		{
-			std::uint16_t zone_id = 0;
-			std::uint32_t map_template_id = 0;
-			std::uint32_t instance_id = 0;
-		};
-
-		struct PendingZoneAssignRequest
-		{
-			std::uint64_t request_id = 0;
-			std::uint32_t target_sid = 0;
-			std::uint32_t target_serial = 0;
-			std::uint32_t map_template_id = 0;
-			std::uint32_t instance_id = 0;
-			std::chrono::steady_clock::time_point issued_at{};
-		};
-
-		struct PendingEnterWorldFinalize
-		{
-			std::uint64_t assign_request_id = 0;
-			PendingEnterWorldConsumeRequest enter_pending{};
-			std::uint32_t map_template_id = 0;
-			std::uint32_t instance_id = 0;
-			std::string cached_state_blob;
-		};
-
 	public:
 		WorldRuntime();
 		~WorldRuntime();
@@ -333,11 +197,6 @@ namespace svr {
 			std::uint32_t serial,
 			DelayedCloseEntry* released_entry = nullptr) noexcept;
 
-		static const char* ToString(BindAuthedWorldSessionResultKind kind) noexcept;
-		static const char* ToString(UnbindAuthedWorldSessionResultKind kind) noexcept;
-		static const char* ToString(DuplicateSessionCause cause) noexcept;
-		static const char* ToString(SessionKickStatCategory category) noexcept;
-
 		std::optional<WorldAuthedSession> FindAuthenticatedWorldSessionBySid_(
 			std::uint32_t sid) const;
 
@@ -376,7 +235,7 @@ namespace svr {
 			std::uint16_t assigned_zone_id,
 			std::uint32_t map_template_id,
 			std::uint32_t instance_id,
- 			std::string_view log_text);
+			std::string_view cached_state_blob);
 
 		static ClosedAuthedSessionContext MakeClosedAuthedSessionContext_(
 			const UnbindAuthedWorldSessionResult& unbind_result,
@@ -476,7 +335,12 @@ namespace svr {
 		std::optional<ZoneRouteInfo> FindZoneRouteByZoneId_(std::uint16_t zone_id) const;
 		bool SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		bool SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
-
+		void RemoveMapAssignmentsByZoneSid_(std::uint32_t sid);
+		void FailPendingZoneAssignRequestsByZoneSid_(
+			std::uint32_t sid,
+			proto::world::EnterWorldResultCode reason,
+			std::string_view log_text,
+			std::string_view rollback_log);
 
 		bool InitRedis();
 		void ScheduleFlush_();
@@ -547,7 +411,8 @@ namespace svr {
 		std::unordered_map<std::uint64_t, PendingEnterWorldConsumeRequest> pending_enter_world_consume_;
 		std::unordered_map<std::uint64_t, MapAssignmentEntry> map_assignments_;
 		std::unordered_map<std::uint64_t, PendingZoneAssignRequest> pending_zone_assign_requests_;
-		std::unordered_map<std::uint64_t, PendingEnterWorldFinalize> pending_enter_world_finalize_by_assign_request_;
+		std::unordered_map<std::uint64_t, std::uint64_t> pending_zone_assign_request_id_by_map_key_;
+		std::unordered_map<std::uint64_t, std::vector<PendingEnterWorldFinalize>> pending_enter_world_finalize_by_assign_request_;
 		std::uint64_t next_zone_assign_request_id_ = 1;
 
 		mutable std::mutex world_session_mtx_;

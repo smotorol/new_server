@@ -1,11 +1,9 @@
 #pragma once
 
 #include <cstdint>
+#include "shared/constants.h"
 
 namespace proto::world {
-
-    inline constexpr std::size_t k_login_session_max_len = 64;
-    inline constexpr std::size_t k_world_token_max_len = 32;
 
     enum class WorldC2SMsg : std::uint16_t
     {
@@ -43,8 +41,8 @@ namespace proto::world {
     {
         std::uint64_t account_id = 0;
         std::uint64_t char_id = 0;
-        char login_session[k_login_session_max_len + 1]{};
-        char world_token[k_world_token_max_len + 1]{};
+        char login_session[dc::k_login_session_max_len + 1]{};
+        char world_token[dc::k_world_token_max_len + 1]{};
     };
 
     struct S2C_enter_world_result

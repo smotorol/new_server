@@ -6,6 +6,7 @@ dc_target_defaults(dc_net)
 dc_target_src_root(dc_net)
 
 target_link_libraries(dc_net PUBLIC
+    dc_shared
     dc_core
     Boost::system
 )

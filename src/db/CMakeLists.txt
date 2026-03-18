@@ -11,6 +11,7 @@ dc_target_defaults(dc_db_odbc)
 dc_target_src_root(dc_db_odbc)
 
 target_link_libraries(dc_db_odbc PUBLIC
+    dc_shared
     dc_core
     dc_db_core
 )

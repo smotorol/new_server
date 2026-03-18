@@ -6,6 +6,7 @@ dc_target_defaults(dc_cache_redis)
 dc_target_src_root(dc_cache_redis)
 
 target_link_libraries(dc_cache_redis PUBLIC
+    dc_shared
     dc_core
     dc_db_core
 )

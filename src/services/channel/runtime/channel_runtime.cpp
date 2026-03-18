@@ -396,7 +396,7 @@ namespace svr {
 				next_stat = now + std::chrono::seconds(1);
 				// 서버→클라 move 브로드캐스트 통계 ("각 세션 enqueue 기준")
 				// - 누적 카운터를 유지하고, 여기서만 초당 델타를 구한다.
-				const auto cur_pkts = svr::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
+				const auto cur_pkts = svr::metrics::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
 				const auto cur_items = svr::g_s2c_move_items_sent.load(std::memory_order_relaxed);
 				const auto d_pkts = cur_pkts - last_move_pkts;
 				const auto d_items = cur_items - last_move_items;
@@ -1182,7 +1182,7 @@ namespace svr {
 	{
 		// reset all server-side bench counters (monotonic)
 		svr::BenchResetAllServerCounters();
-		svr::g_s2c_move_pkts_sent.store(0, std::memory_order_relaxed);
+		svr::metrics::g_s2c_move_pkts_sent.store(0, std::memory_order_relaxed);
 		svr::g_s2c_move_items_sent.store(0, std::memory_order_relaxed);
 
 		// reset window baselines
@@ -1223,7 +1223,7 @@ namespace svr {
 		bench_base_c2s_move_rx_ = svr::g_c2s_bench_move_rx.load(std::memory_order_relaxed);
 		bench_base_s2c_ack_tx_ = svr::g_s2c_bench_ack_tx.load(std::memory_order_relaxed);
 		bench_base_s2c_ack_drop_ = svr::g_s2c_bench_ack_drop.load(std::memory_order_relaxed);
-		bench_base_s2c_move_pkts_ = svr::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
+		bench_base_s2c_move_pkts_ = svr::metrics::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
 		bench_base_s2c_move_items_ = svr::g_s2c_move_items_sent.load(std::memory_order_relaxed);
 		bench_base_send_drops_ = 0;
 		if (world_server_) {
@@ -1246,7 +1246,7 @@ namespace svr {
 		const auto cur_c2s = svr::g_c2s_bench_move_rx.load(std::memory_order_relaxed);
 		const auto cur_ack = svr::g_s2c_bench_ack_tx.load(std::memory_order_relaxed);
 		const auto cur_ack_drop = svr::g_s2c_bench_ack_drop.load(std::memory_order_relaxed);
-		const auto cur_move_pkts = svr::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
+		const auto cur_move_pkts = svr::metrics::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
 		const auto cur_move_items = svr::g_s2c_move_items_sent.load(std::memory_order_relaxed);
 
 		std::uint64_t cur_send_drops = 0;

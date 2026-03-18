@@ -9,6 +9,7 @@ dc_target_src_root(test_client)
 dc_set_vs_workdir(test_client)
 
 target_link_libraries(test_client PRIVATE
+    dc_shared
     dc_core
     dc_net
     dc_app

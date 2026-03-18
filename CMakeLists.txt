@@ -31,6 +31,7 @@ add_subdirectory(src/db)
 add_subdirectory(src/cache)
 add_subdirectory(src/server_common)
 add_subdirectory(src/services)
+add_subdirectory(src/shared)
 
 if(BUILD_CHANNEL_SERVER_LEGACY)
     add_subdirectory(apps/channel_server)

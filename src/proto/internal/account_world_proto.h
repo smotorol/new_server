@@ -2,16 +2,11 @@
 
 #include <cstdint>
 
-#include "proto/client/login_proto.h"
 #include "proto/common/types.h"
 #include "proto/common/proto_base.h"
-
-namespace pt_l = proto::login;
+#include "shared/constants.h"
 
 namespace proto::internal::account_world {
-
-    inline constexpr std::size_t k_login_session_max_len = 64;
-    inline constexpr std::size_t k_world_token_max_len = 32;
 
     enum : std::uint32_t
     {
@@ -42,8 +37,8 @@ namespace proto::internal::account_world {
         std::uint16_t active_zone_count = 0;
         std::uint16_t load_score = 0;
         std::uint32_t flags = 0;
-        char server_name[proto::k_service_name_max_len + 1]{};
-        char public_host[pt_l::k_world_host_max_len + 1]{};
+        char server_name[dc::k_service_name_max_len + 1]{};
+        char public_host[dc::k_world_host_max_len + 1]{};
     };
 
     struct WorldServerRouteHeartbeat
@@ -66,8 +61,8 @@ namespace proto::internal::account_world {
         std::uint16_t active_zone_count = 0;
         std::uint16_t load_score = 0;
         std::uint32_t flags = 0;
-        char server_name[proto::k_service_name_max_len + 1]{};
-        char public_host[pt_l::k_world_host_max_len + 1]{};
+        char server_name[dc::k_service_name_max_len + 1]{};
+        char public_host[dc::k_world_host_max_len + 1]{};
     };
 
     struct WorldAuthTicketConsumeRequest
@@ -75,8 +70,8 @@ namespace proto::internal::account_world {
         std::uint64_t request_id = 0;
         std::uint64_t account_id = 0;
         std::uint64_t char_id = 0;
-        char login_session[k_login_session_max_len + 1]{};
-        char world_token[k_world_token_max_len + 1]{};
+        char login_session[dc::k_login_session_max_len + 1]{};
+        char world_token[dc::k_world_token_max_len + 1]{};
     };
 
     struct WorldAuthTicketConsumeResponse
@@ -85,16 +80,16 @@ namespace proto::internal::account_world {
         std::uint16_t result_code = 0;
         std::uint64_t account_id = 0;
         std::uint64_t char_id = 0;
-        char login_session[k_login_session_max_len + 1]{};
-        char world_token[k_world_token_max_len + 1]{};
+        char login_session[dc::k_login_session_max_len + 1]{};
+        char world_token[dc::k_world_token_max_len + 1]{};
     };
 
     struct WorldEnterSuccessNotify
     {
         std::uint64_t account_id = 0;
         std::uint64_t char_id = 0;
-        char login_session[k_login_session_max_len + 1]{};
-        char world_token[k_world_token_max_len + 1]{};
+        char login_session[dc::k_login_session_max_len + 1]{};
+        char world_token[dc::k_world_token_max_len + 1]{};
     };
 
 #pragma pack(pop)

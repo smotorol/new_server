@@ -9,6 +9,7 @@
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
 #include "services/world/actors/world_actors.h"
+#include "services/world/metrics/world_metrics.h"
 
 bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
@@ -119,7 +120,7 @@ bool WorldHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid
 	auto* req = proto::as<proto::C2S_bench_move>(body, body_len);
 	if (!req) return false;
 
-	svr::g_c2s_bench_move_rx.fetch_add(1, std::memory_order_relaxed);
+	svr::metrics::g_c2s_bench_move_rx.fetch_add(1, std::memory_order_relaxed);
 
 	const std::uint64_t char_id = GetActorIdBySession(sid);
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);

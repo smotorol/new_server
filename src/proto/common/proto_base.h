@@ -1,10 +1,8 @@
 #pragma once
 #include "types.h"
+#include "shared/constants.h"
 
 namespace proto {
-
-	constexpr int max_world_name_len = 32;
-	constexpr std::size_t k_service_name_max_len = 32;
 
 	enum C2SMsg : u16 {
 		open_world_notice = 1,
@@ -51,7 +49,7 @@ namespace proto {
 
 #pragma pack(push, 1)
 	struct C2S_open_world_notice {
-		char szWorldName[max_world_name_len + 1];
+		char szWorldName[dc::k_max_world_name_len + 1];
 		C2S_open_world_notice() { zero(*this); }
 	};
 
@@ -237,7 +235,7 @@ namespace proto {
 	};
 #pragma pack(pop)
 
-	static_assert(sizeof(C2S_open_world_notice) == (max_world_name_len + 1) * sizeof(char));
+	static_assert(sizeof(C2S_open_world_notice) == (dc::k_max_world_name_len + 1) * sizeof(char));
 	static_assert(sizeof(S2C_open_world_success) == 4);
 	static_assert(sizeof(C2S_add_gold) == 4);
 	static_assert(sizeof(S2C_add_gold_ok) == 8);

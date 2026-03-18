@@ -6,6 +6,7 @@ dc_target_defaults(dc_login_service)
 dc_target_src_root(dc_login_service)
 
 target_link_libraries(dc_login_service PUBLIC
+    dc_shared
     dc_core
     dc_net
     dc_service_runtime

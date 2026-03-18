@@ -7,6 +7,7 @@ dc_target_src_root(world_server)
 dc_set_vs_workdir(world_server)
 
 target_link_libraries(world_server PRIVATE
+    dc_shared
     dc_core
     dc_net
     dc_app

@@ -7,6 +7,7 @@ dc_target_src_root(channel_server)
 dc_set_vs_workdir(channel_server)
 
 target_link_libraries(channel_server PRIVATE
+    dc_shared
     dc_core
     dc_net
     dc_app

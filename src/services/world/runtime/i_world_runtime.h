@@ -124,17 +124,6 @@ namespace svr {
 		}
 	};
 
-	struct ZoneRouteInfo
-	{
-		std::uint32_t server_id = 0;
-		std::uint32_t sid = 0;
-		std::uint32_t serial = 0;
-		std::uint16_t active_map_instance_count = 0;
-		std::uint16_t active_player_count = 0;
-		std::uint16_t load_score = 0;
-		std::uint32_t flags = 0;
-	};
-
 	enum class MapInstanceAssignmentResultKind
 	{
 		InvalidInput,

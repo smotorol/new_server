@@ -33,7 +33,7 @@ namespace svr {
 	std::uint16_t ZoneRuntime::GetActivePlayerCount() const noexcept
 	{
 		return active_player_count_.load(std::memory_order_relaxed);
- 	}
+	}
 
 	bool ZoneRuntime::OnRuntimeInit()
 	{
@@ -62,7 +62,7 @@ namespace svr {
 		if (now >= next_reap_tp_) {
 			next_reap_tp_ = now + std::chrono::seconds(10);
 			ReapEmptyDungeonInstances_(now);
- 		}
+		}
 	}
 
 	bool ZoneRuntime::NetworkInit_()
@@ -85,14 +85,14 @@ namespace svr {
 			[this]() { return GetLoadScore(); },
 			[this]() { return flags_; },
 			[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZoneMapAssignRequest& req) {
-				OnMapAssignRequest(sid, serial, req);
-			},
+			OnMapAssignRequest(sid, serial, req);
+		},
 			[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZonePlayerEnter& req) {
-				OnPlayerEnterRequest_(sid, serial, req);
-			},
+			OnPlayerEnterRequest_(sid, serial, req);
+		},
 			[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZonePlayerLeave& req) {
-				OnPlayerLeaveRequest_(sid, serial, req);
- 			});
+			OnPlayerLeaveRequest_(sid, serial, req);
+		});
 
 		dc::InitOutboundLineEntry(world_line_, 201, "zone-world", world_host_, world_port_, true, 1000, 5000);
 		if (!dc::StartOutboundLine(world_line_, io_, zone_world_handler_, [this](std::uint64_t, std::function<void()> fn) {
@@ -154,13 +154,54 @@ namespace svr {
 		if (!handler) {
 			return;
 		}
+		const auto key = MakeMapInstanceKey_(req.map_template_id, req.instance_id);
+		const bool exists_before = (map_instances_.find(key) != map_instances_.end());
+
+		if (!exists_before && req.create_if_missing == 0) {
+			handler->SendMapAssignResponse(
+				0,
+				sid,
+				serial,
+				req.request_id,
+				static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::not_found),
+				zone_id_,
+				req.map_template_id,
+				req.instance_id);
+			return;
+		}
+
+		if (!exists_before &&
+			req.create_if_missing != 0 &&
+			map_instances_.size() >= static_cast<std::size_t>(map_instance_capacity_)) {
+			handler->SendMapAssignResponse(
+				0,
+				sid,
+				serial,
+				req.request_id,
+				static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::capacity_full),
+				zone_id_,
+				req.map_template_id,
+				req.instance_id);
+			return;
+		}
+
 		EnsureMapInstance_(req.map_template_id, req.instance_id, req.create_if_missing != 0, req.dungeon_instance != 0);
-		handler->SendMapAssignResponse(0, sid, serial, req.request_id, 0, zone_id_, req.map_template_id, req.instance_id);
+
+		handler->SendMapAssignResponse(
+			0,
+			sid,
+			serial,
+			req.request_id,
+			static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::ok),
+			zone_id_,
+			req.map_template_id,
+			req.instance_id);
 	}
- 	void ZoneRuntime::EnsureMapInstance_(
+
+	void ZoneRuntime::EnsureMapInstance_(
 		std::uint32_t map_template_id,
 		std::uint32_t instance_id,
- 		bool create_if_missing,
+		bool create_if_missing,
 		bool dungeon_instance)
 	{
 		const auto key = MakeMapInstanceKey_(map_template_id, instance_id);
@@ -271,6 +312,6 @@ namespace svr {
 	bool ZoneRuntime::IsDungeonMapTemplate_(std::uint32_t map_template_id) noexcept
 	{
 		return map_template_id >= 2000;
- 	}
- 
- } // namespace svr
+	}
+
+} // namespace svr

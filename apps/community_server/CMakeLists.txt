@@ -7,6 +7,7 @@ dc_target_src_root(community_server)
 dc_set_vs_workdir(community_server)
 
 target_link_libraries(community_server PRIVATE
+    dc_shared
     dc_core
     dc_net
     dc_app

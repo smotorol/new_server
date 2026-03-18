@@ -7,6 +7,7 @@ dc_target_src_root(login_server)
 dc_set_vs_workdir(login_server)
 
 target_link_libraries(login_server PRIVATE
+    dc_shared
     dc_core
     dc_net
     dc_app
