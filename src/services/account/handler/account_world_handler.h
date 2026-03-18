@@ -13,6 +13,11 @@ public:
         std::uint32_t sid,
         std::uint32_t serial,
         std::uint32_t server_id,
+        std::uint16_t world_id,
+        std::uint16_t channel_id,
+        std::uint16_t active_zone_count,
+        std::uint16_t load_score,
+        std::uint32_t flags,
         std::string_view server_name,
         std::string_view public_host,
         std::uint16_t public_port)>;
@@ -31,16 +36,29 @@ public:
         std::string_view world_token)>;
 
     using EnterWorldSuccessCallback = std::function<void(
+        std::uint32_t sid,
+        std::uint32_t serial,
         std::uint64_t account_id,
         std::uint64_t char_id,
         std::string_view login_session,
         std::string_view world_token)>;
+
+	using RouteHeartbeatCallback = std::function<void(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint32_t server_id,
+		std::uint16_t world_id,
+		std::uint16_t channel_id,
+		std::uint16_t active_zone_count,
+		std::uint16_t load_score,
+		std::uint32_t flags)>;
 public:
     AccountWorldHandler(
         RegisterHelloCallback on_register_hello,
         DisconnectCallback on_disconnect,
         ConsumeRequestCallback on_consume_request,
-        EnterWorldSuccessCallback on_enter_world_success);
+        EnterWorldSuccessCallback on_enter_world_success,
+        RouteHeartbeatCallback on_route_heartbeat);
 
     ~AccountWorldHandler() override = default;
 
@@ -51,6 +69,11 @@ public:
         std::uint32_t dwSerial,
         std::uint8_t accepted,
         std::uint32_t server_id,
+        std::uint16_t world_id,
+        std::uint16_t channel_id,
+        std::uint16_t active_zone_count,
+        std::uint16_t load_score,
+        std::uint32_t flags,
         std::string_view server_name,
         std::string_view public_host,
         std::uint16_t public_port);
@@ -91,4 +114,5 @@ private:
     DisconnectCallback on_disconnect_;
     ConsumeRequestCallback on_consume_request_;
     EnterWorldSuccessCallback on_enter_world_success_;
+    RouteHeartbeatCallback on_route_heartbeat_;
 };

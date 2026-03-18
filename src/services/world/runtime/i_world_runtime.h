@@ -8,6 +8,9 @@
 
 #include "services/world/actors/world_actors.h"
 #include "db/core/dqs_results.h"
+#include "proto/internal/world_zone_proto.h"
+
+namespace pt_wz = proto::internal::world_zone;
 
 namespace svr {
 
@@ -94,6 +97,65 @@ namespace svr {
 		AccountMismatch,
 		CharMismatch,
 		LoginSessionMismatch,
+		WorldServerMismatch,
+	};
+
+	enum class AssignMapInstanceResultKind
+	{
+		Ok = 0,
+		NoZoneAvailable,
+		RequestSendFailed,
+		ResponseTimeout,
+		Rejected,
+	};
+
+	struct AssignMapInstanceResult
+	{
+		AssignMapInstanceResultKind kind = AssignMapInstanceResultKind::NoZoneAvailable;
+		std::uint16_t zone_id = 0;
+		std::uint32_t map_template_id = 0;
+		std::uint32_t instance_id = 0;
+
+		[[nodiscard]] bool ok() const noexcept
+		{
+			return kind == AssignMapInstanceResultKind::Ok;
+		}
+	};
+
+	struct ZoneRouteInfo
+	{
+		std::uint32_t server_id = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint16_t active_map_instance_count = 0;
+		std::uint16_t active_player_count = 0;
+		std::uint16_t load_score = 0;
+		std::uint32_t flags = 0;
+	};
+
+	enum class MapInstanceAssignmentResultKind
+	{
+		InvalidInput,
+		AssignedLocalFallback,
+		AssignedExistingRemote,
+		AssignedNewRemoteSkeleton,
+		NoAvailableZone,
+	};
+
+	struct MapInstanceAssignmentResult
+	{
+		MapInstanceAssignmentResultKind kind = MapInstanceAssignmentResultKind::InvalidInput;
+		std::uint32_t zone_server_id = 0;
+		std::uint32_t map_template_id = 0;
+		std::uint32_t instance_id = 0;
+		std::uint32_t local_zone_id = 0;
+
+		[[nodiscard]] bool ok() const noexcept
+		{
+			return kind == MapInstanceAssignmentResultKind::AssignedLocalFallback ||
+				kind == MapInstanceAssignmentResultKind::AssignedExistingRemote ||
+				kind == MapInstanceAssignmentResultKind::AssignedNewRemoteSkeleton;
+		}
 	};
 
 	struct ConsumePendingWorldAuthTicketResult
@@ -125,9 +187,9 @@ namespace svr {
 		virtual bool RequestConsumeWorldAuthTicket(
 			std::uint32_t sid,
 			std::uint32_t serial,
- 			std::uint64_t account_id,
- 			std::uint64_t char_id,
- 			std::string_view login_session,
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::string_view login_session,
 			std::string_view token) = 0;
 
 		virtual void OnWorldAuthTicketConsumeResponse(
@@ -143,6 +205,15 @@ namespace svr {
 			std::uint64_t char_id,
 			std::string_view login_session,
 			std::string_view world_token) = 0;
+
+		virtual std::uint32_t GetActiveWorldSessionCount() const = 0;
+		virtual std::uint16_t GetActiveZoneCount() const = 0;
+
+		virtual AssignMapInstanceResult AssignMapInstance(
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id,
+			bool create_if_missing,
+			bool dungeon_instance) = 0;
 
 		virtual BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
 			std::uint64_t account_id,
@@ -171,6 +242,11 @@ namespace svr {
 
 		virtual void RequestBenchReset() noexcept = 0;
 		virtual void RequestBenchMeasure(int seconds) noexcept = 0;
+
+		virtual void OnMapAssignRequest(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			const pt_wz::WorldZoneMapAssignRequest& req) = 0;
 	};
 
 } // namespace svr

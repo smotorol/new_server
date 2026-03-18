@@ -69,6 +69,7 @@ namespace {
 		case K::AccountMismatch:
 		case K::CharMismatch:
 		case K::LoginSessionMismatch:
+		case K::WorldServerMismatch:
 			return pt_w::EnterWorldResultCode::auth_ticket_mismatch;
 		default:
 			return pt_w::EnterWorldResultCode::internal_error;

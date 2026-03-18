@@ -14,11 +14,13 @@ AccountWorldHandler::AccountWorldHandler(
 	RegisterHelloCallback on_register_hello,
 	DisconnectCallback on_disconnect,
 	ConsumeRequestCallback on_consume_request,
-	EnterWorldSuccessCallback on_enter_world_success)
+	EnterWorldSuccessCallback on_enter_world_success,
+	RouteHeartbeatCallback on_route_heartbeat)
 	: on_register_hello_(std::move(on_register_hello))
 	, on_disconnect_(std::move(on_disconnect))
 	, on_consume_request_(std::move(on_consume_request))
 	, on_enter_world_success_(std::move(on_enter_world_success))
+	, on_route_heartbeat_(std::move(on_route_heartbeat))
 {
 }
 
@@ -28,6 +30,11 @@ bool AccountWorldHandler::SendRegisterAck(
 	std::uint32_t dwSerial,
 	std::uint8_t accepted,
 	std::uint32_t server_id,
+	std::uint16_t world_id,
+	std::uint16_t channel_id,
+	std::uint16_t active_zone_count,
+	std::uint16_t load_score,
+	std::uint32_t flags,
 	std::string_view server_name,
 	std::string_view public_host,
 	std::uint16_t public_port)
@@ -36,6 +43,11 @@ bool AccountWorldHandler::SendRegisterAck(
 	pkt.accepted = accepted;
 	pkt.server_id = server_id;
 	pkt.public_port = public_port;
+	pkt.world_id = world_id;
+	pkt.channel_id = channel_id;
+	pkt.active_zone_count = active_zone_count;
+	pkt.load_score = load_score;
+	pkt.flags = flags;
 
 	std::snprintf(pkt.server_name, sizeof(pkt.server_name), "%.*s",
 		static_cast<int>(server_name.size()), server_name.data());
@@ -108,9 +120,36 @@ bool AccountWorldHandler::DataAnalysis(
 					n,
 					GetLatestSerial(n),
 					hello->server_id,
+					hello->world_id,
+					hello->channel_id,
+					hello->active_zone_count,
+					hello->load_score,
+					hello->flags,
 					hello->server_name,
 					hello->public_host,
 					hello->public_port);
+			}
+			return true;
+		}
+
+	case pt_aw::AccountWorldMsg::world_server_route_heartbeat:
+		{
+			const auto* hb = proto::as<pt_aw::WorldServerRouteHeartbeat>(pMsg, body_len);
+			if (!hb) {
+				spdlog::error("AccountWorldHandler invalid world_server_route_heartbeat sid={}", n);
+				return false;
+			}
+
+			if (on_route_heartbeat_) {
+				on_route_heartbeat_(
+					n,
+					GetLatestSerial(n),
+					hb->server_id,
+					hb->world_id,
+					hb->channel_id,
+					hb->active_zone_count,
+					hb->load_score,
+					hb->flags);
 			}
 			return true;
 		}
@@ -146,6 +185,8 @@ bool AccountWorldHandler::DataAnalysis(
 
 			if (on_enter_world_success_) {
 				on_enter_world_success_(
+                    n,
+                    GetLatestSerial(n),
 					req->account_id,
 					req->char_id,
 					req->login_session,

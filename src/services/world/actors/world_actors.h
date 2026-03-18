@@ -116,6 +116,8 @@ namespace svr {
 
 		// zone/aoi
 		std::uint32_t zone_id = 1;
+		std::uint32_t map_template_id = 1001;
+		std::uint32_t map_instance_id = 0;
 		Vec2i pos{};
 
 		CharCombatState combat{};

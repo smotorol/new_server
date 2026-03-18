@@ -38,6 +38,7 @@
 #include "services/world/runtime/i_world_runtime.h"
 #include "services/world/runtime/world_line_id.h"
 #include "services/world/handler/world_account_handler.h"
+#include "services/world/handler/world_zone_handler.h"
 
 #include "proto/client/world_proto.h"
 #include "proto/common/packet_util.h"
@@ -63,6 +64,7 @@ struct DbPool
 namespace svr {
 
 	constexpr std::uint16_t PORT_WORLD = 27787;
+	constexpr std::uint16_t PORT_ZONE = 27788;
 	constexpr std::uint16_t PORT_CONTROL = 27789;
 
 	class WorldRuntime final : public dc::ServerRuntimeBase, public IWorldRuntime {
@@ -75,6 +77,24 @@ namespace svr {
 			std::uint32_t server_id = 0;
 			std::string server_name;
 			std::uint16_t listen_port = 0;
+		};
+
+		struct ZoneRouteState
+		{
+			bool registered = false;
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+			std::uint32_t server_id = 0;
+			std::uint16_t zone_id = 0;
+			std::uint16_t world_id = 0;
+			std::uint16_t channel_id = 0;
+			std::uint16_t map_instance_capacity = 0;
+			std::uint16_t active_map_instance_count = 0;
+			std::uint16_t active_player_count = 0;
+			std::uint16_t load_score = 0;
+			std::uint32_t flags = 0;
+			std::string server_name;
+			std::chrono::steady_clock::time_point last_heartbeat_at{};
 		};
 
 		struct DuplicateLoginLogContext
@@ -147,6 +167,48 @@ namespace svr {
 				return unbind_kind == UnbindAuthedWorldSessionResultKind::Removed;
 			}
 		};
+
+		struct PendingEnterWorldConsumeRequest
+		{
+			std::uint64_t request_id = 0;
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+			std::uint64_t account_id = 0;
+			std::uint64_t char_id = 0;
+			std::string login_session;
+			std::string world_token;
+			std::chrono::steady_clock::time_point issued_at{};
+		};
+
+		struct ZoneRouteInfo
+		{
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+			std::uint32_t zone_server_id = 0;
+			std::uint16_t zone_id = 0;
+			std::uint16_t active_map_instance_count = 0;
+			std::uint16_t active_player_count = 0;
+			std::uint16_t load_score = 0;
+			std::uint32_t flags = 0;
+			std::chrono::steady_clock::time_point last_heartbeat_at{};
+		};
+
+		struct MapAssignmentEntry
+		{
+			std::uint16_t zone_id = 0;
+			std::uint32_t map_template_id = 0;
+			std::uint32_t instance_id = 0;
+		};
+
+		struct PendingZoneAssignRequest
+		{
+			std::uint64_t request_id = 0;
+			std::uint32_t target_sid = 0;
+			std::uint32_t target_serial = 0;
+			std::uint32_t map_template_id = 0;
+			std::uint32_t instance_id = 0;
+			std::chrono::steady_clock::time_point issued_at{};
+		};
 	public:
 		WorldRuntime();
 		~WorldRuntime();
@@ -185,9 +247,9 @@ namespace svr {
 		bool RequestConsumeWorldAuthTicket(
 			std::uint32_t sid,
 			std::uint32_t serial,
- 			std::uint64_t account_id,
- 			std::uint64_t char_id,
- 			std::string_view login_session,
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::string_view login_session,
 			std::string_view token) override;
 
 		bool NotifyAccountWorldEnterSuccess(
@@ -195,6 +257,20 @@ namespace svr {
 			std::uint64_t char_id,
 			std::string_view login_session,
 			std::string_view world_token) override;
+
+		std::uint32_t GetActiveWorldSessionCount() const override;
+		std::uint16_t GetActiveZoneCount() const override;
+
+		AssignMapInstanceResult AssignMapInstance(
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id,
+			bool create_if_missing,
+			bool dungeon_instance) override;
+
+		void OnMapAssignRequest(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			const pt_wz::WorldZoneMapAssignRequest& req) override;
 
 		BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
 			std::uint64_t account_id,
@@ -225,6 +301,7 @@ namespace svr {
 		bool LoadIniFile();
 		bool DatabaseInit();
 		bool NetworkInit();
+		bool EnsureAccountHandler_();
 		void InitHostedLineDescriptors_() noexcept;
 
 		bool TryReserveDelayedWorldClose_(
@@ -236,6 +313,11 @@ namespace svr {
 			std::chrono::milliseconds delay,
 			std::uint64_t trace_id,
 			std::uint64_t char_id);
+		bool UpdateReservedDelayedWorldCloseContext_(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t trace_id,
+			std::uint64_t char_id) noexcept;
 		bool ReleaseDelayedWorldCloseReservation_(
 			std::uint32_t sid,
 			std::uint32_t serial,
@@ -266,6 +348,12 @@ namespace svr {
 
 		void ProcessNormalSessionClosedOnIo_(
 			const ClosedAuthedSessionContext& closed_ctx);
+		void CleanupClosedWorldSessionActors_(
+			const ClosedAuthedSessionContext& closed_ctx);
+		void FailPendingEnterWorldConsumeRequest_(
+			const PendingEnterWorldConsumeRequest& pending,
+			proto::world::EnterWorldResultCode reason,
+			std::string_view log_text);
 
 		static ClosedAuthedSessionContext MakeClosedAuthedSessionContext_(
 			const UnbindAuthedWorldSessionResult& unbind_result,
@@ -341,6 +429,11 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial,
 			std::uint32_t server_id,
+			std::uint16_t world_id,
+			std::uint16_t channel_id,
+			std::uint16_t active_zone_count,
+			std::uint16_t load_score,
+			std::uint32_t flags,
 			std::string_view server_name,
 			std::string_view public_host,
 			std::uint16_t public_port);
@@ -348,6 +441,19 @@ namespace svr {
 		void MarkAccountDisconnected_(
 			std::uint32_t sid,
 			std::uint32_t serial);
+
+		void SendAccountRouteHeartbeat_();
+		void ExpireStaleZoneRoutes_(std::chrono::steady_clock::time_point now);
+		std::uint64_t MakeMapAssignmentKey_(std::uint32_t map_template_id, std::uint32_t instance_id) const noexcept;
+		void RegisterZoneRoute(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneServerHello& req);
+		void OnZoneRouteHeartbeat(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneServerRouteHeartbeat& req);
+		void UnregisterZoneRoute(std::uint32_t sid, std::uint32_t serial);
+		void OnZoneMapAssignResponse(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res);
+		std::optional<ZoneRouteInfo> TrySelectZoneRoute_(bool dungeon_instance) const;
+		std::optional<ZoneRouteInfo> FindZoneRouteByZoneId_(std::uint16_t zone_id) const;
+		bool SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
+		bool SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
+
 
 		bool InitRedis();
 		void ScheduleFlush_();
@@ -382,24 +488,43 @@ namespace svr {
 		void UnregisterControlLine(
 			std::uint32_t sid, std::uint32_t serial);
 
+		void RegisterZoneRoute(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::uint16_t zone_id,
+			std::uint16_t world_id,
+			std::uint16_t channel_id,
+			std::uint16_t map_instance_capacity,
+			std::uint16_t active_map_instance_count,
+			std::uint16_t active_player_count,
+			std::uint16_t load_score,
+			std::uint32_t flags,
+			std::string_view server_name);
+
+		void OnZoneRouteHeartbeat(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::uint16_t zone_id,
+			std::uint16_t world_id,
+			std::uint16_t channel_id,
+			std::uint16_t map_instance_capacity,
+			std::uint16_t active_map_instance_count,
+			std::uint16_t active_player_count,
+			std::uint16_t load_score,
+			std::uint32_t flags);
+
 		mutable std::mutex service_line_mtx_;
 		RemoteServiceLineState control_line_state_{};
-
-		struct PendingEnterWorldConsumeRequest
-		{
-			std::uint64_t request_id = 0;
-			std::uint32_t sid = 0;
-			std::uint32_t serial = 0;
-			std::uint64_t account_id = 0;
-			std::uint64_t char_id = 0;
-			std::string login_session;
-			std::string world_token;
-			std::chrono::steady_clock::time_point issued_at{};
-		};
+		std::unordered_map<std::uint32_t, ZoneRouteState> zone_routes_by_sid_{};
 
 		std::atomic<std::uint64_t> next_world_auth_consume_request_id_{ 1 };
 		mutable std::mutex pending_enter_world_consume_mtx_;
 		std::unordered_map<std::uint64_t, PendingEnterWorldConsumeRequest> pending_enter_world_consume_;
+		std::unordered_map<std::uint64_t, MapAssignmentEntry> map_assignments_;
+		std::unordered_map<std::uint64_t, PendingZoneAssignRequest> pending_zone_assign_requests_;
+		std::uint64_t next_zone_assign_request_id_ = 1;
 
 		mutable std::mutex world_session_mtx_;
 
@@ -462,6 +587,7 @@ namespace svr {
 		procmetrics::ProcSnapshot bench_proc_prev_{};
 
 		std::uint16_t port_world_ = PORT_WORLD;
+		std::uint16_t port_zone_ = PORT_ZONE;
 		std::uint16_t port_control_ = PORT_CONTROL;
 
 		std::string db_acc_;
@@ -496,6 +622,7 @@ namespace svr {
 		std::atomic<bool> account_ready_{ false };
 		std::atomic<std::uint32_t> account_sid_{ 0 };
 		std::atomic<std::uint32_t> account_serial_{ 0 };
+		std::chrono::steady_clock::time_point next_account_route_heartbeat_tp_{};
 
 		std::string account_host_ = "127.0.0.1";
 		std::uint16_t account_port_ = 27781;

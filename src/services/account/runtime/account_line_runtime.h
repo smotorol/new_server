@@ -7,6 +7,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include "server_common/runtime/line_registry.h"
@@ -36,6 +37,9 @@ namespace dc {
             std::uint64_t request_id = 0;
             std::uint32_t login_sid = 0;
             std::uint32_t login_serial = 0;
+            std::uint32_t target_world_server_id = 0;
+            std::uint16_t target_world_id = 0;
+            std::uint16_t target_channel_id = 0;
 
             std::uint64_t account_id = 0;
             std::uint64_t char_id = 0;
@@ -46,6 +50,41 @@ namespace dc {
             std::uint16_t world_port = 0;
 
             std::chrono::steady_clock::time_point issued_at{};
+        };
+
+        struct RegisteredWorldEndpoint
+        {
+            std::uint32_t sid = 0;
+            std::uint32_t serial = 0;
+            std::uint32_t server_id = 0;
+            std::uint16_t world_id = 0;
+            std::uint16_t channel_id = 0;
+            std::uint16_t active_zone_count = 0;
+            std::uint16_t load_score = 0;
+            std::uint32_t flags = 0;
+            std::string server_name;
+            std::string public_host;
+            std::uint16_t public_port = 0;
+            std::chrono::steady_clock::time_point registered_at{};
+            std::chrono::steady_clock::time_point last_heartbeat_at{};
+        };
+
+        struct ConsumedWorldTicketAwaitingNotify
+        {
+            std::uint64_t request_id = 0;
+            std::uint32_t login_sid = 0;
+            std::uint32_t login_serial = 0;
+            std::uint32_t target_world_server_id = 0;
+
+            std::uint64_t account_id = 0;
+            std::uint64_t char_id = 0;
+
+            std::string login_session;
+            std::string world_token;
+            std::string world_host;
+            std::uint16_t world_port = 0;
+
+            std::chrono::steady_clock::time_point consumed_at{};
         };
 
     private:
@@ -77,6 +116,11 @@ namespace dc {
             std::uint32_t sid,
             std::uint32_t serial,
             std::uint32_t server_id,
+            std::uint16_t world_id,
+            std::uint16_t channel_id,
+            std::uint16_t active_zone_count,
+            std::uint16_t load_score,
+            std::uint32_t flags,
             std::string_view server_name,
             std::string_view public_host,
             std::uint16_t public_port);
@@ -85,9 +129,31 @@ namespace dc {
             std::uint32_t sid,
             std::uint32_t serial);
 
+        void OnWorldRouteHeartbeat(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint32_t server_id,
+            std::uint16_t world_id,
+            std::uint16_t channel_id,
+            std::uint16_t active_zone_count,
+            std::uint16_t load_score,
+            std::uint32_t flags);
+
         bool TryGetWorldEndpoint_(
             std::string& out_host,
-            std::uint16_t& out_port) const;
+            std::uint16_t& out_port,
+            std::uint32_t& out_server_id,
+            std::uint16_t& out_world_id,
+            std::uint16_t& out_channel_id) const;
+
+        bool TryGetRegisteredWorldServerId_(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint32_t& out_server_id) const;
+
+        static bool IsWorldSelectable_(const RegisteredWorldEndpoint& endpoint);
+
+        void ErasePendingWorldTicketsForServer_(std::uint32_t world_server_id);
 
         std::string GenerateWorldToken_() const;
 
@@ -101,22 +167,33 @@ namespace dc {
             std::string_view world_token);
 
         std::uint16_t ConsumeWorldAuthTicketBrokered_(
+            std::uint32_t sid,
+            std::uint32_t serial,
             std::uint64_t account_id,
             std::uint64_t char_id,
             std::string_view login_session,
             std::string_view world_token,
-            std::uint64_t& out_account_id,
-            std::uint64_t& out_char_id,
-            std::string& out_login_session,
-            std::string& out_world_token);
+            ConsumedWorldTicketAwaitingNotify& out_consumed);
 
         void OnWorldEnterSuccessNotify(
+            std::uint32_t sid,
+            std::uint32_t serial,
             std::uint64_t account_id,
             std::uint64_t char_id,
             std::string_view login_session,
             std::string_view world_token);
 
+        bool TryFinalizeConsumedWorldEnterSuccess_(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view world_token,
+            ConsumedWorldTicketAwaitingNotify& out_consumed);
+
         void ExpirePendingWorldTickets_(std::chrono::steady_clock::time_point now);
+        void ExpireStaleWorldRoutes_(std::chrono::steady_clock::time_point now);
     private:
         bool InitDbWorkers_();
         void ShutdownDbWorkers_();
@@ -140,13 +217,9 @@ namespace dc {
         std::atomic<std::uint32_t> login_serial_{ 0 };
         std::atomic<bool> login_ready_{ false };
 
-        std::atomic<std::uint32_t> world_sid_{ 0 };
-        std::atomic<std::uint32_t> world_serial_{ 0 };
-        std::atomic<bool> world_ready_{ false };
-
-        mutable std::mutex world_endpoint_mtx_;
-        std::string world_public_host_ = "127.0.0.1";
-        std::uint16_t world_public_port_ = 0;
+		mutable std::mutex world_registry_mtx_;
+		std::unordered_map<std::uint32_t, RegisteredWorldEndpoint> worlds_by_sid_;
+		std::unordered_map<std::uint32_t, std::uint32_t> world_sid_by_server_id_;
 
         HostedLineEntry login_line_{};
         HostedLineEntry world_line_{};
@@ -154,8 +227,11 @@ namespace dc {
         std::shared_ptr<AccountLoginHandler> login_handler_;
         std::shared_ptr<AccountWorldHandler> world_handler_;
 
+        static constexpr auto kWorldRouteHeartbeatTimeout_ = std::chrono::seconds(10);
+
         std::mutex pending_world_upsert_mtx_;
         std::unordered_map<std::string, PendingWorldTicketUpsert> pending_world_upserts_;
+        std::unordered_map<std::string, ConsumedWorldTicketAwaitingNotify> consumed_world_enters_awaiting_notify_;
 
     private:
         std::string db_conn_str_ =

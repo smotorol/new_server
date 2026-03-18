@@ -136,8 +136,8 @@ namespace svr {
 		last_move_pkts_ = 0;
 		last_move_items_ = 0;
 
-		spdlog::info("WorldServer initialized. ports: world={}, control={}",
-			port_world_, port_control_);
+		spdlog::info("WorldServer initialized. ports: world={}, zone={}, control={}",
+			port_world_, port_zone_, port_control_);
 		return true;
 	}
 
@@ -165,6 +165,14 @@ namespace svr {
 	port_world_,
 	true,
 	0
+		};
+
+		lines_.desc(svr::WorldLineId::Zone) = dc::LineDescriptor{
+			static_cast<std::uint32_t>(svr::WorldLineId::Zone),
+			"zone",
+			port_zone_,
+			true,
+			0
 		};
 
 		lines_.desc(svr::WorldLineId::Control) = dc::LineDescriptor{
@@ -198,6 +206,11 @@ namespace svr {
 
 		account_line_.host.Stop();
 		world_account_handler_.reset();
+
+		{
+			std::lock_guard lk(service_line_mtx_);
+			zone_routes_by_sid_.clear();
+		}
 		account_ready_.store(false, std::memory_order_release);
 		account_sid_.store(0, std::memory_order_relaxed);
 		account_serial_.store(0, std::memory_order_relaxed);
@@ -319,6 +332,31 @@ namespace svr {
 		return true;
 	}
 
+	bool WorldRuntime::UpdateReservedDelayedWorldCloseContext_(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t trace_id,
+		std::uint64_t char_id) noexcept
+	{
+		if (sid == 0 || serial == 0) {
+			return false;
+		}
+
+		std::lock_guard lk(delayed_world_close_mtx_);
+
+		const DelayedCloseKey key{ sid, serial };
+		auto it = delayed_world_close_entries_.find(key);
+		if (it == delayed_world_close_entries_.end()) {
+			return false;
+		}
+
+		it->second.log_ctx.trace_id = trace_id;
+		it->second.log_ctx.char_id = char_id;
+		it->second.log_ctx.sid = sid;
+		it->second.log_ctx.serial = serial;
+		return true;
+	}
+
 	bool WorldRuntime::ReleaseDelayedWorldCloseReservation_(
 		std::uint32_t sid,
 		std::uint32_t serial,
@@ -392,6 +430,22 @@ namespace svr {
 			released_entry.log_ctx.trace_id,
 			released_entry.log_ctx.char_id);
 
+		if (!closed_ctx.removed()) {
+			const auto current = FindAuthenticatedWorldSessionByCharId_(log_ctx.char_id);
+			if (current.has_value()) {
+				spdlog::info(
+					"[dup_login trace={}] stale close guarded. old_char_id={} old_sid={} old_serial={} close_kind={} authoritative_sid={} authoritative_serial={} authoritative_account_id={}",
+					log_ctx.trace_id,
+					log_ctx.char_id,
+					closed_ctx.sid,
+					closed_ctx.serial,
+					ToString(closed_ctx.unbind_kind),
+					current->sid,
+					current->serial,
+					current->account_id);
+			}
+		}
+
 		FinalizeWorldSessionClosedOnIo_(
 			"world session closed processed on duplicate-login path",
 			closed_ctx,
@@ -409,6 +463,72 @@ namespace svr {
 			"world close post-processing completed on normal path",
 			closed_ctx,
 			log_ctx);
+	}
+
+	void WorldRuntime::FailPendingEnterWorldConsumeRequest_(
+		const PendingEnterWorldConsumeRequest& pending,
+		pt_w::EnterWorldResultCode reason,
+		std::string_view log_text)
+	{
+		auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			return;
+		}
+
+		pt_w::S2C_enter_world_result res{};
+		res.ok = 0;
+		res.reason = static_cast<std::uint16_t>(reason);
+		res.account_id = pending.account_id;
+		res.char_id = pending.char_id;
+
+		const auto h = proto::make_header(
+			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(sizeof(res)));
+		handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+
+		spdlog::warn(
+			"{} request_id={} sid={} serial={} account_id={} char_id={} token={}",
+			log_text,
+			pending.request_id,
+			pending.sid,
+			pending.serial,
+			pending.account_id,
+			pending.char_id,
+			pending.world_token);
+	}
+
+	void WorldRuntime::CleanupClosedWorldSessionActors_(
+		const ClosedAuthedSessionContext& closed_ctx)
+	{
+		if (!closed_ctx.removed() || closed_ctx.char_id == 0) {
+			return;
+		}
+
+		PostActor(
+			closed_ctx.char_id,
+			[this,
+			close_char_id = closed_ctx.char_id,
+			close_sid = closed_ctx.sid,
+			close_serial = closed_ctx.serial]() {
+			auto& a = GetOrCreatePlayerActor(close_char_id);
+
+			if (a.sid == close_sid && a.serial == close_serial) {
+				a.unbind_session(close_sid, close_serial);
+			}
+
+			if (a.zone_id != 0) {
+				const auto zone_id = a.zone_id;
+				const auto map_template_id = a.map_template_id;
+				const auto map_instance_id = a.map_instance_id;
+				SendZonePlayerLeave_(static_cast<std::uint16_t>(zone_id), close_char_id, map_template_id, map_instance_id);
+				PostActor(
+					svr::MakeZoneActorId(zone_id),
+					[this, close_char_id, zone_id]() {
+					auto& z = GetOrCreateZoneActor(zone_id);
+					z.Leave(close_char_id);
+				});
+			}
+		});
 	}
 
 	void WorldRuntime::FinalizeWorldSessionClosedOnIo_(
@@ -447,26 +567,7 @@ namespace svr {
 		ClosedAuthedSessionContext closed_ctx =
 			MakeClosedAuthedSessionContext_(unbind_result, sid, serial);
 
-		if (closed_ctx.removed() && closed_ctx.char_id != 0) {
-			PostActor(closed_ctx.char_id, [this,
-				close_char_id = closed_ctx.char_id,
-				close_sid = closed_ctx.sid,
-				close_serial = closed_ctx.serial]() {
-				auto& a = GetOrCreatePlayerActor(close_char_id);
-
-				if (a.sid == close_sid && a.serial == close_serial) {
-					a.bind_session(0, 0);
-				}
-
-				if (a.zone_id != 0) {
-					const auto zone_id = a.zone_id;
-					PostActor(svr::MakeZoneActorId(zone_id), [this, close_char_id, zone_id]() {
-						auto& z = GetOrCreateZoneActor(zone_id);
-						z.Leave(close_char_id);
-					});
-				}
-			});
-		}
+		CleanupClosedWorldSessionActors_(closed_ctx);
 
 		if (released && released_entry.log_ctx.trace_id != 0) {
 			if (closed_ctx.char_id == 0) {
@@ -678,10 +779,10 @@ namespace svr {
 		std::uint32_t serial,
 		std::uint16_t kick_reason)
 	{
-	// 정책:
-	// - account_id 당 인증된 활성 월드 세션은 최대 1개만 허용한다.
-	// - 새 월드 입장 바인딩이 성공하면 동일 char_id 또는 동일 account_id 에 묶여 있던 기존 세션은 강제 종료한다.
-	// - 새 세션이 최종 권한(authoritative) 세션이 된다.
+		// 정책:
+		// - account_id 당 인증된 활성 월드 세션은 최대 1개만 허용한다.
+		// - 새 월드 입장 바인딩이 성공하면 동일 char_id 또는 동일 account_id 에 묶여 있던 기존 세션은 강제 종료한다.
+		// - 새 세션이 최종 권한(authoritative) 세션이 된다.
 
 		BindAuthedWorldSessionResult result{};
 		result.current_session = WorldAuthedSession{
@@ -1480,6 +1581,31 @@ namespace svr {
 		return true;
 	}
 
+	bool WorldRuntime::EnsureAccountHandler_()
+	{
+		if (world_account_handler_) {
+			return true;
+		}
+
+		world_account_handler_ = std::make_shared<WorldAccountHandler>(
+			*this,
+			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
+				std::uint16_t world_id, std::uint16_t channel_id,
+				std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags,
+				std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
+			MarkAccountRegistered_(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
+		},
+			[this](std::uint32_t sid, std::uint32_t serial) {
+			MarkAccountDisconnected_(sid, serial);
+		});
+
+		if (!world_account_handler_) {
+			spdlog::error("WorldRuntime failed to create world_account_handler_");
+			return false;
+		}
+
+		return true;
+	}
 
 	bool WorldRuntime::NetworkInit()
 	{
@@ -1493,6 +1619,32 @@ namespace svr {
 			lines_.entry(svr::WorldLineId::World),
 			io_,
 			std::make_shared<WorldHandler>(*this),
+			dispatch)) {
+			return false;
+		}
+
+		if (!dc::StartHostedLine(
+			lines_.entry(svr::WorldLineId::Zone),
+			io_,
+			std::make_shared<WorldZoneHandler>(
+				[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
+					std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id,
+					std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count,
+					std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags, std::string_view server_name) {
+			RegisterZoneRoute(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags, server_name);
+		},
+				[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
+					std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id,
+					std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count,
+					std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags) {
+			OnZoneRouteHeartbeat(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags);
+		},
+				[this](std::uint32_t sid, std::uint32_t serial) {
+			UnregisterZoneRoute(sid, serial);
+		},
+				[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res) {
+			OnZoneMapAssignResponse(sid, serial, res);
+		}),
 			dispatch)) {
 			return false;
 		}
@@ -1513,21 +1665,20 @@ namespace svr {
 			return false;
 		}
 
-		world_account_handler_ = std::make_shared<WorldAccountHandler>(
-			*this,
-			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
-				std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
-			MarkAccountRegistered_(sid, serial, server_id, server_name, public_host, public_port);
-		},
-			[this](std::uint32_t sid, std::uint32_t serial) {
-			MarkAccountDisconnected_(sid, serial);
-		});
+		if (!EnsureAccountHandler_()) {
+			return false;
+		}
 
 		world_account_handler_->SetServerIdentity(
 			10,
+			1,
+			1,
 			"world",
 			"127.0.0.1",
-			port_world_);
+			port_world_,
+			0,
+			0,
+			pt_aw::k_world_flag_accepting_players | pt_aw::k_world_flag_visible);
 
 		dc::InitOutboundLineEntry(
 			account_line_,
@@ -1554,8 +1705,9 @@ namespace svr {
 			return false;
 		}
 
-		spdlog::info("NetworkInit: world={}, control={} account_remote={}:{}",
+		spdlog::info("NetworkInit: world={} zone={} control={} account_remote={}:{}",
 			lines_.host(svr::WorldLineId::World).port(),
+			lines_.host(svr::WorldLineId::Zone).port(),
 			lines_.host(svr::WorldLineId::Control).port(),
 			account_host_,
 			account_port_);
@@ -2061,6 +2213,184 @@ namespace svr {
 		g_Main.ReleaseMainThread();
 	}
 
+	std::uint64_t WorldRuntime::MakeMapAssignmentKey_(std::uint32_t map_template_id, std::uint32_t instance_id) const noexcept
+	{
+		return (static_cast<std::uint64_t>(map_template_id) << 32) | static_cast<std::uint64_t>(instance_id);
+	}
+
+	void WorldRuntime::RegisterZoneRoute(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneServerHello& req)
+	{
+		RegisterZoneRoute(sid, serial, req.server_id, req.zone_id, req.world_id, req.channel_id, req.map_instance_capacity, req.active_map_instance_count, req.active_player_count, req.load_score, req.flags, req.server_name);
+	}
+
+	void WorldRuntime::OnZoneRouteHeartbeat(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneServerRouteHeartbeat& req)
+	{
+		OnZoneRouteHeartbeat(sid, serial, req.server_id, req.zone_id, req.world_id, req.channel_id, req.map_instance_capacity, req.active_map_instance_count, req.active_player_count, req.load_score, req.flags);
+	}
+
+	void WorldRuntime::OnZoneMapAssignResponse(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res)
+	{
+		auto it = pending_zone_assign_requests_.find(res.request_id);
+		if (it == pending_zone_assign_requests_.end()) {
+			return;
+		}
+		if (it->second.target_sid != sid || it->second.target_serial != serial) {
+			return;
+		}
+		if (res.result_code == 0) {
+			map_assignments_[MakeMapAssignmentKey_(res.map_template_id, res.instance_id)] =
+				MapAssignmentEntry{ res.zone_id, res.map_template_id, res.instance_id };
+		}
+		pending_zone_assign_requests_.erase(it);
+	}
+
+
+	std::optional<WorldRuntime::ZoneRouteInfo> WorldRuntime::TrySelectZoneRoute_(bool dungeon_instance) const
+	{
+		std::optional<ZoneRouteInfo> best;
+		for (const auto& [sid, route] : zone_routes_by_sid_) {
+			if (route.serial == 0) {
+				continue;
+			}
+
+			ZoneRouteInfo current{};
+			current.sid = route.sid;
+			current.serial = route.serial;
+			current.zone_server_id = route.server_id;
+			current.zone_id = route.zone_id;
+			current.active_map_instance_count = route.active_map_instance_count;
+			current.load_score = route.load_score;
+			current.flags = route.flags;
+			current.last_heartbeat_at = route.last_heartbeat_at;
+
+			if (!best.has_value()) {
+				best = current;
+				continue;
+			}
+			if (current.load_score < best->load_score) {
+				best = current;
+				continue;
+			}
+			if (current.load_score == best->load_score && dungeon_instance &&
+				current.active_map_instance_count < best->active_map_instance_count) {
+				best = current;
+				continue;
+			}
+			if (current.load_score == best->load_score &&
+				current.active_player_count < best->active_player_count) {
+				best = current;
+ 			}
+		}
+		return best;
+	}
+
+	std::optional<WorldRuntime::ZoneRouteInfo> WorldRuntime::FindZoneRouteByZoneId_(std::uint16_t zone_id) const
+	{
+		std::lock_guard lk(service_line_mtx_);
+		for (const auto& [_, route] : zone_routes_by_sid_) {
+			if (route.registered && route.zone_id == zone_id) {
+				ZoneRouteInfo current{};
+				current.sid = route.sid;
+				current.serial = route.serial;
+				current.zone_server_id = route.server_id;
+				current.zone_id = route.zone_id;
+				current.active_map_instance_count = route.active_map_instance_count;
+				current.active_player_count = route.active_player_count;
+				current.load_score = route.load_score;
+				current.flags = route.flags;
+				current.last_heartbeat_at = route.last_heartbeat_at;
+				return current;
+			}
+		}
+		return std::nullopt;
+	}
+
+	bool WorldRuntime::SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
+	{
+		auto route = FindZoneRouteByZoneId_(zone_id);
+		if (!route.has_value()) {
+			return false;
+		}
+		auto* handler = lines_.host(WorldLineId::Zone).handler_as<WorldZoneHandler>();
+		if (!handler) {
+			return false;
+		}
+		return handler->SendPlayerEnter(0, route->sid, route->serial, char_id, map_template_id, instance_id, zone_id);
+	}
+
+	bool WorldRuntime::SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
+	{
+		auto route = FindZoneRouteByZoneId_(zone_id);
+		if (!route.has_value()) {
+			return false;
+		}
+		auto* handler = lines_.host(WorldLineId::Zone).handler_as<WorldZoneHandler>();
+		if (!handler) {
+			return false;
+		}
+		return handler->SendPlayerLeave(0, route->sid, route->serial, char_id, map_template_id, instance_id, zone_id);
+ 	}
+
+	svr::AssignMapInstanceResult WorldRuntime::AssignMapInstance(
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		bool create_if_missing,
+		bool dungeon_instance)
+	{
+		AssignMapInstanceResult result{};
+		result.map_template_id = map_template_id;
+		result.instance_id = instance_id;
+
+		const auto key = MakeMapAssignmentKey_(map_template_id, instance_id);
+		if (auto it = map_assignments_.find(key); it != map_assignments_.end()) {
+			result.kind = AssignMapInstanceResultKind::Ok;
+			result.zone_id = it->second.zone_id;
+			return result;
+		}
+
+		auto zone = TrySelectZoneRoute_(dungeon_instance);
+		if (!zone.has_value()) {
+			result.kind = AssignMapInstanceResultKind::NoZoneAvailable;
+			return result;
+		}
+
+		auto* handler = lines_.host(WorldLineId::Zone).handler_as<WorldZoneHandler>();
+		if (!handler) {
+			result.kind = AssignMapInstanceResultKind::RequestSendFailed;
+			return result;
+		}
+
+		const std::uint64_t request_id = next_zone_assign_request_id_++;
+		PendingZoneAssignRequest pending{};
+		pending.request_id = request_id;
+		pending.target_sid = zone->sid;
+		pending.target_serial = zone->serial;
+		pending.map_template_id = map_template_id;
+		pending.instance_id = instance_id;
+		pending.issued_at = std::chrono::steady_clock::now();
+		pending_zone_assign_requests_[request_id] = pending;
+
+		if (!handler->SendMapAssignRequest(0, zone->sid, zone->serial, request_id, map_template_id, instance_id, create_if_missing, dungeon_instance)) {
+			pending_zone_assign_requests_.erase(request_id);
+			result.kind = AssignMapInstanceResultKind::RequestSendFailed;
+			return result;
+		}
+
+		result.kind = AssignMapInstanceResultKind::Ok;
+		result.zone_id = zone->zone_id;
+		map_assignments_[key] = MapAssignmentEntry{ zone->zone_id, map_template_id, instance_id };
+		return result;
+	}
+
+	void WorldRuntime::OnMapAssignRequest(
+		std::uint32_t /*sid*/,
+		std::uint32_t /*serial*/,
+		const pt_wz::WorldZoneMapAssignRequest& /*req*/)
+	{
+		// WorldCoordinator는 map assign request의 발신자다.
+		// 이 경로는 현재 구조에서 수신측으로 사용하지 않는다.
+	}
+
 	void WorldRuntime::OnMainLoopTick(std::chrono::steady_clock::time_point now) {
 		if (bench_req_reset_.exchange(false, std::memory_order_relaxed)) {
 			BenchResetMain_();
@@ -2074,6 +2404,13 @@ namespace svr {
 		if (bench_active_) {
 			BenchTickMain_();
 		}
+
+		if (account_ready_.load(std::memory_order_acquire) && now >= next_account_route_heartbeat_tp_) {
+			next_account_route_heartbeat_tp_ = now + std::chrono::seconds(3);
+			SendAccountRouteHeartbeat_();
+		}
+
+		ExpireStaleZoneRoutes_(now);
 
 		if (now >= next_stat_tp_) {
 			next_stat_tp_ = now + std::chrono::seconds(1);
@@ -2090,15 +2427,22 @@ namespace svr {
 			}
 
 			const auto& world_line = lines_.host(svr::WorldLineId::World);
+			const auto& zone_line = lines_.host(svr::WorldLineId::Zone);
 			const auto& control_line = lines_.host(svr::WorldLineId::Control);
 
 			spdlog::info(
 				"[linestats] world(cur={}, peak={}, open={}, close={}) "
+				"zone(cur={}, peak={}, open={}, close={}) "
 				"control(cur={}, peak={}, open={}, close={})",
 				world_line.stats().current_sessions.load(std::memory_order_relaxed),
 				world_line.stats().peak_sessions.load(std::memory_order_relaxed),
 				world_line.stats().session_open_count.load(std::memory_order_relaxed),
 				world_line.stats().session_close_count.load(std::memory_order_relaxed),
+
+				zone_line.stats().current_sessions.load(std::memory_order_relaxed),
+				zone_line.stats().peak_sessions.load(std::memory_order_relaxed),
+				zone_line.stats().session_open_count.load(std::memory_order_relaxed),
+				zone_line.stats().session_close_count.load(std::memory_order_relaxed),
 
 				control_line.stats().current_sessions.load(std::memory_order_relaxed),
 				control_line.stats().peak_sessions.load(std::memory_order_relaxed),
@@ -2110,12 +2454,20 @@ namespace svr {
 	bool WorldRuntime::RequestConsumeWorldAuthTicket(
 		std::uint32_t sid,
 		std::uint32_t serial,
- 		std::uint64_t account_id,
- 		std::uint64_t char_id,
- 		std::string_view login_session,
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::string_view login_session,
 		std::string_view token)
- 	{
-		if (!account_ready_.load(std::memory_order_acquire) || !world_account_handler_) {
+	{
+		if (!account_ready_.load(std::memory_order_acquire)) {
+			spdlog::warn("RequestConsumeWorldAuthTicket skipped: account line not ready. sid={} serial={} account_id={} char_id={}",
+				sid, serial, account_id, char_id);
+			return false;
+		}
+
+		if (!world_account_handler_) {
+			spdlog::warn("RequestConsumeWorldAuthTicket skipped: world_account_handler_ is null. sid={} serial={} account_id={} char_id={}",
+				sid, serial, account_id, char_id);
 			return false;
 		}
 
@@ -2134,7 +2486,7 @@ namespace svr {
 			};
 		}
 
-		return world_account_handler_->SendWorldAuthTicketConsumeRequest(
+		const bool sent = world_account_handler_->SendWorldAuthTicketConsumeRequest(
 			100,
 			account_sid_.load(std::memory_order_relaxed),
 			account_serial_.load(std::memory_order_relaxed),
@@ -2143,7 +2495,14 @@ namespace svr {
 			char_id,
 			login_session,
 			token);
- 	}
+
+		if (!sent) {
+			std::lock_guard lk(pending_enter_world_consume_mtx_);
+			pending_enter_world_consume_.erase(request_id);
+		}
+
+		return sent;
+	}
 
 	void WorldRuntime::OnWorldAuthTicketConsumeResponse(
 		std::uint64_t request_id,
@@ -2266,7 +2625,8 @@ namespace svr {
 				ToString(bind_result.kind),
 				ToString(bind_result.duplicate_cause));
 			return;
- 		} else {
+		}
+		else {
 			const std::uint32_t world_code = 0;
 			svr::demo::DemoCharState st{};
 			st.char_id = char_id;
@@ -2295,7 +2655,13 @@ namespace svr {
 			st.version += 1;
 			const std::string out_blob = svr::demo::SerializeDemo(st);
 
-			PostActor(char_id, [this, char_id, sid = pending.sid, serial = pending.serial]() {
+			constexpr std::uint32_t kDefaultMapTemplateId = 1001;
+			constexpr std::uint32_t kDefaultInstanceId = 0;
+			const auto map_assignment = AssignMapInstance(kDefaultMapTemplateId, kDefaultInstanceId, true, false);
+
+			const std::uint32_t assigned_zone_id = map_assignment.zone_id != 0 ? map_assignment.zone_id : 1;
+
+			PostActor(char_id, [this, char_id, sid = pending.sid, serial = pending.serial, assigned_zone_id]() {
 				auto& a = GetOrCreatePlayerActor(char_id);
 				a.bind_session(sid, serial);
 				a.combat.hp = 100;
@@ -2303,14 +2669,18 @@ namespace svr {
 				a.combat.atk = 20;
 				a.combat.def = 3;
 				a.combat.gold = 1000;
-				a.zone_id = 1;
+				a.zone_id = assigned_zone_id;
+				a.map_template_id = kDefaultMapTemplateId;
+				a.map_instance_id = kDefaultInstanceId;
 				a.pos = { 0,0 };
 
-				PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial]() {
-					auto& z = GetOrCreateZoneActor(1);
+				PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial, assigned_zone_id]() {
+					auto& z = GetOrCreateZoneActor(assigned_zone_id);
 					z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
 				});
 			});
+
+			SendZonePlayerEnter_(static_cast<std::uint16_t>(assigned_zone_id), char_id, kDefaultMapTemplateId, kDefaultInstanceId);
 
 			CacheCharacterState(world_code, char_id, out_blob);
 
@@ -2321,19 +2691,24 @@ namespace svr {
 				static_cast<std::uint16_t>(sizeof(bound)));
 			handler->Send(0, pending.sid, pending.serial, bh, reinterpret_cast<const char*>(&bound));
 
+			if (!NotifyAccountWorldEnterSuccess(account_id, char_id, pending.login_session, pending.world_token)) {
+				const auto rollback = UnbindAuthenticatedWorldSessionBySid(pending.sid, pending.serial);
+				ClosedAuthedSessionContext rollback_ctx{};
+				rollback_ctx.unbind_kind = rollback.kind;
+				rollback_ctx.sid = pending.sid;
+				rollback_ctx.serial = pending.serial;
+				CleanupClosedWorldSessionActors_(rollback_ctx);
+
+				FailPendingEnterWorldConsumeRequest_(
+					pending,
+					pt_w::EnterWorldResultCode::internal_error,
+					"OnWorldAuthTicketConsumeResponse rolled back because account world_enter_success_notify send failed.");
+				return;
+			}
+
 			res.ok = 1;
 			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::success);
-
-			if (!NotifyAccountWorldEnterSuccess(account_id, char_id, pending.login_session, pending.world_token)) {
-				spdlog::warn(
-					"OnWorldAuthTicketConsumeResponse success but account cleanup notify failed. request_id={} sid={} serial={} account_id={} char_id={}",
-					request_id,
-					pending.sid,
-					pending.serial,
-					account_id,
-					char_id);
-			}
- 		}
+		}
 
 		const auto h = proto::make_header(
 			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
@@ -2350,6 +2725,7 @@ namespace svr {
 			ToString(bind_result.kind),
 			ToString(bind_result.duplicate_cause));
 	}
+
 
 	void WorldRuntime::LogSessionCloseEvent_(
 		spdlog::level::level_enum level,
@@ -2728,11 +3104,19 @@ namespace svr {
 		std::string_view reason,
 		HandlerT& world_handler)
 	{
-		DelayedCloseEntry released_entry{};
-		ReleaseDelayedWorldCloseReservation_(
+
+		if (!UpdateReservedDelayedWorldCloseContext_(
 			ctx.sid,
 			ctx.serial,
-			&released_entry);
+			ctx.trace_id,
+			ctx.char_id)) {
+			spdlog::warn(
+				"[dup_login trace={}] immediate close lost delayed-close reservation context. char_id={} sid={} serial={}",
+				ctx.trace_id,
+				ctx.char_id,
+				ctx.sid,
+				ctx.serial);
+		}
 
 		LogDuplicateWorldSessionCloseDecision_(
 			spdlog::level::warn,
@@ -2775,10 +3159,175 @@ namespace svr {
 		return true;
 	}
 
+	std::uint32_t WorldRuntime::GetActiveWorldSessionCount() const
+	{
+		std::lock_guard lk(world_session_mtx_);
+		return static_cast<std::uint32_t>(authed_sessions_by_sid_.size());
+	}
+
+	std::uint16_t WorldRuntime::GetActiveZoneCount() const
+	{
+		std::lock_guard lk(service_line_mtx_);
+		const auto count = static_cast<std::uint16_t>(zone_routes_by_sid_.size());
+		return count == 0 ? 1 : count;
+	}
+
+	void WorldRuntime::SendAccountRouteHeartbeat_()
+	{
+		if (!account_ready_.load(std::memory_order_acquire)) {
+			return;
+		}
+
+		if (!world_account_handler_) {
+			spdlog::debug("WorldRuntime skipped account route heartbeat: world_account_handler_ is null");
+			return;
+		}
+
+		const auto sid = account_sid_.load(std::memory_order_relaxed);
+		const auto serial = account_serial_.load(std::memory_order_relaxed);
+		if (sid == 0 || serial == 0) {
+			return;
+		}
+
+		if (!world_account_handler_->SendRouteHeartbeat(0, sid, serial)) {
+			spdlog::debug("WorldRuntime failed to send account route heartbeat. sid={} serial={}", sid, serial);
+		}
+	}
+
+	void WorldRuntime::RegisterZoneRoute(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint32_t server_id,
+		std::uint16_t zone_id,
+		std::uint16_t world_id,
+		std::uint16_t channel_id,
+		std::uint16_t map_instance_capacity,
+		std::uint16_t active_map_instance_count,
+		std::uint16_t active_player_count,
+		std::uint16_t load_score,
+		std::uint32_t flags,
+		std::string_view server_name)
+	{
+		std::lock_guard lk(service_line_mtx_);
+		auto& route = zone_routes_by_sid_[sid];
+		route.registered = true;
+		route.sid = sid;
+		route.serial = serial;
+		route.server_id = server_id;
+		route.zone_id = zone_id;
+		route.world_id = world_id;
+		route.channel_id = channel_id;
+		route.map_instance_capacity = map_instance_capacity;
+		route.active_map_instance_count = active_map_instance_count;
+		route.active_player_count = active_player_count;
+		route.load_score = load_score;
+		route.flags = flags;
+		route.server_name.assign(server_name.begin(), server_name.end());
+		route.last_heartbeat_at = std::chrono::steady_clock::now();
+
+		spdlog::info(
+			"WorldRuntime zone route registered. sid={} serial={} server_id={} zone_id={} world_id={} channel_id={} active_maps={} active_players={} capacity={} load={} flags={} name={}",
+			sid, serial, server_id, zone_id, world_id, channel_id, active_map_instance_count, active_player_count, map_instance_capacity, load_score, flags, server_name);
+	}
+
+	void WorldRuntime::OnZoneRouteHeartbeat(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint32_t server_id,
+		std::uint16_t zone_id,
+		std::uint16_t world_id,
+		std::uint16_t channel_id,
+		std::uint16_t map_instance_capacity,
+		std::uint16_t active_map_instance_count,
+		std::uint16_t active_player_count,
+		std::uint16_t load_score,
+		std::uint32_t flags)
+	{
+		std::lock_guard lk(service_line_mtx_);
+		auto it = zone_routes_by_sid_.find(sid);
+		if (it == zone_routes_by_sid_.end()) {
+			return;
+		}
+		if (it->second.serial != serial) {
+			return;
+		}
+
+		auto& route = it->second;
+		route.server_id = server_id;
+		route.zone_id = zone_id;
+		route.world_id = world_id;
+		route.channel_id = channel_id;
+		route.map_instance_capacity = map_instance_capacity;
+		route.active_map_instance_count = active_map_instance_count;
+		route.active_player_count = active_player_count;
+		route.load_score = load_score;
+		route.flags = flags;
+		route.last_heartbeat_at = std::chrono::steady_clock::now();
+	}
+
+	void WorldRuntime::UnregisterZoneRoute(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		std::lock_guard lk(service_line_mtx_);
+		auto it = zone_routes_by_sid_.find(sid);
+		if (it == zone_routes_by_sid_.end()) {
+			return;
+		}
+		if (it->second.serial != serial) {
+			return;
+		}
+
+		spdlog::info(
+			"WorldRuntime zone route removed. sid={} serial={} server_id={} zone_id={} world_id={} channel_id={}",
+			it->second.sid, it->second.serial, it->second.server_id, it->second.zone_id, it->second.world_id, it->second.channel_id);
+		zone_routes_by_sid_.erase(it);
+	}
+
+	void WorldRuntime::ExpireStaleZoneRoutes_(std::chrono::steady_clock::time_point now)
+	{
+		std::lock_guard lk(service_line_mtx_);
+		for (auto it = zone_routes_by_sid_.begin(); it != zone_routes_by_sid_.end();) {
+			if (it->second.last_heartbeat_at != std::chrono::steady_clock::time_point{} &&
+				now - it->second.last_heartbeat_at > std::chrono::seconds(8)) {
+				spdlog::warn(
+					"WorldRuntime zone route heartbeat expired. sid={} serial={} server_id={} zone_id={}",
+					it->second.sid, it->second.serial, it->second.server_id, it->second.zone_id);
+				it = zone_routes_by_sid_.erase(it);
+			}
+			else {
+				++it;
+			}
+		}
+
+		for (auto it = pending_zone_assign_requests_.begin(); it != pending_zone_assign_requests_.end();) {
+			if (now - it->second.issued_at > std::chrono::seconds(3)) {
+				it = pending_zone_assign_requests_.erase(it);
+			}
+			else {
+				++it;
+			}
+		}
+
+		for (auto it = pending_zone_assign_requests_.begin(); it != pending_zone_assign_requests_.end();) {
+			if (now - it->second.issued_at > std::chrono::seconds(3)) {
+				it = pending_zone_assign_requests_.erase(it);
+			}
+			else {
+				++it;
+			}
+		}
+	}
+
 	void WorldRuntime::MarkAccountRegistered_(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint32_t server_id,
+		std::uint16_t world_id,
+		std::uint16_t channel_id,
+		std::uint16_t active_zone_count,
+		std::uint16_t load_score,
+		std::uint32_t flags,
 		std::string_view server_name,
 		std::string_view public_host,
 		std::uint16_t public_port)
@@ -2786,10 +3335,12 @@ namespace svr {
 		account_sid_.store(sid, std::memory_order_relaxed);
 		account_serial_.store(serial, std::memory_order_relaxed);
 		account_ready_.store(true, std::memory_order_release);
+		next_account_route_heartbeat_tp_ = std::chrono::steady_clock::now() + std::chrono::seconds(3);
 
 		spdlog::info(
-			"WorldRuntime account line ready. sid={} serial={} server_id={} server_name={} public_host={} public_port={}",
-			sid, serial, server_id, server_name, public_host, public_port);
+
+			"WorldRuntime account line ready. sid={} serial={} server_id={} world_id={} channel_id={} zones={} load_score={} flags={} server_name={} public_host={} public_port={}",
+			sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
 	}
 
 	void WorldRuntime::MarkAccountDisconnected_(

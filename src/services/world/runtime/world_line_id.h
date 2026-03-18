@@ -9,6 +9,7 @@ namespace svr {
 	{
 		World = 0,
 		Control,
+		Zone,
 		Count
 	};
 
