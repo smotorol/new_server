@@ -103,6 +103,7 @@ namespace svr {
 	enum class AssignMapInstanceResultKind
 	{
 		Ok = 0,
+		Pending,
 		NoZoneAvailable,
 		RequestSendFailed,
 		ResponseTimeout,
@@ -112,6 +113,7 @@ namespace svr {
 	struct AssignMapInstanceResult
 	{
 		AssignMapInstanceResultKind kind = AssignMapInstanceResultKind::NoZoneAvailable;
+		std::uint64_t request_id = 0;
 		std::uint16_t zone_id = 0;
 		std::uint32_t map_template_id = 0;
 		std::uint32_t instance_id = 0;

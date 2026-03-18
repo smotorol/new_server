@@ -497,6 +497,108 @@ namespace svr {
 			pending.world_token);
 	}
 
+	void WorldRuntime::RollbackBoundEnterWorld_(
+		const PendingEnterWorldConsumeRequest& pending,
+		std::string_view reason_log)
+	{
+		const auto rollback = UnbindAuthenticatedWorldSessionBySid(pending.sid, pending.serial);
+
+		ClosedAuthedSessionContext rollback_ctx{};
+		rollback_ctx.unbind_kind = rollback.kind;
+		rollback_ctx.account_id = rollback.session.account_id;
+		rollback_ctx.char_id = rollback.session.char_id;
+		rollback_ctx.sid = pending.sid;
+		rollback_ctx.serial = pending.serial;
+
+		CleanupClosedWorldSessionActors_(rollback_ctx);
+
+		spdlog::warn(
+			"{} sid={} serial={} account_id={} char_id={}",
+			reason_log,
+			pending.sid,
+			pending.serial,
+			pending.account_id,
+			pending.char_id);
+	}
+
+	void WorldRuntime::FinalizeEnterWorldSuccess_(
+		const PendingEnterWorldConsumeRequest& pending,
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::string_view login_session,
+		std::string_view world_token,
+		std::uint16_t assigned_zone_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		std::string_view cached_state_blob)
+	{
+		auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			RollbackBoundEnterWorld_(pending, "FinalizeEnterWorldSuccess_ rolled back because world handler is null.");
+			return;
+		}
+
+		PostActor(char_id, [this, char_id, sid = pending.sid, serial = pending.serial, assigned_zone_id, map_template_id, instance_id]() {
+			auto& a = GetOrCreatePlayerActor(char_id);
+			a.bind_session(sid, serial);
+			a.combat.hp = 100;
+			a.combat.max_hp = 100;
+			a.combat.atk = 20;
+			a.combat.def = 3;
+			a.combat.gold = 1000;
+			a.zone_id = assigned_zone_id;
+			a.map_template_id = map_template_id;
+			a.map_instance_id = instance_id;
+			a.pos = { 0, 0 };
+
+			PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial, assigned_zone_id]() {
+				auto& z = GetOrCreateZoneActor(assigned_zone_id);
+				z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
+			});
+		});
+
+		if (!SendZonePlayerEnter_(assigned_zone_id, char_id, map_template_id, instance_id)) {
+			RollbackBoundEnterWorld_(pending, "FinalizeEnterWorldSuccess_ rolled back because zone player enter send failed.");
+			FailPendingEnterWorldConsumeRequest_(
+				pending,
+				pt_w::EnterWorldResultCode::internal_error,
+				"FinalizeEnterWorldSuccess_ failed: zone player enter send failed.");
+			return;
+		}
+
+		if (!cached_state_blob.empty()) {
+			const std::uint32_t world_code = 0;
+			CacheCharacterState(world_code, char_id, std::string(cached_state_blob));
+		}
+
+		proto::S2C_actor_bound bound{};
+		bound.actor_id = char_id;
+		auto bh = proto::make_header(
+			static_cast<std::uint16_t>(proto::S2CMsg::actor_bound),
+			static_cast<std::uint16_t>(sizeof(bound)));
+		handler->Send(0, pending.sid, pending.serial, bh, reinterpret_cast<const char*>(&bound));
+
+		if (!NotifyAccountWorldEnterSuccess(account_id, char_id, login_session, world_token)) {
+			RollbackBoundEnterWorld_(pending, "FinalizeEnterWorldSuccess_ rolled back because account world_enter_success_notify send failed.");
+			FailPendingEnterWorldConsumeRequest_(
+				pending,
+				pt_w::EnterWorldResultCode::internal_error,
+				"FinalizeEnterWorldSuccess_ failed: account world_enter_success_notify send failed.");
+			return;
+		}
+
+		pt_w::S2C_enter_world_result res{};
+		res.ok = 1;
+		res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::success);
+		res.account_id = account_id;
+		res.char_id = char_id;
+
+		const auto h = proto::make_header(
+			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(sizeof(res)));
+		handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+	}
+
 	void WorldRuntime::CleanupClosedWorldSessionActors_(
 		const ClosedAuthedSessionContext& closed_ctx)
 	{
@@ -2228,21 +2330,58 @@ namespace svr {
 		OnZoneRouteHeartbeat(sid, serial, req.server_id, req.zone_id, req.world_id, req.channel_id, req.map_instance_capacity, req.active_map_instance_count, req.active_player_count, req.load_score, req.flags);
 	}
 
-	void WorldRuntime::OnZoneMapAssignResponse(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res)
-	{
-		auto it = pending_zone_assign_requests_.find(res.request_id);
-		if (it == pending_zone_assign_requests_.end()) {
-			return;
-		}
-		if (it->second.target_sid != sid || it->second.target_serial != serial) {
-			return;
-		}
-		if (res.result_code == 0) {
-			map_assignments_[MakeMapAssignmentKey_(res.map_template_id, res.instance_id)] =
-				MapAssignmentEntry{ res.zone_id, res.map_template_id, res.instance_id };
-		}
+ 	void WorldRuntime::OnZoneMapAssignResponse(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res)
+ 	{
+ 		auto it = pending_zone_assign_requests_.find(res.request_id);
+ 		if (it == pending_zone_assign_requests_.end()) {
+ 			return;
+ 		}
+
+		PendingZoneAssignRequest pending_assign = it->second;
+		if (pending_assign.target_sid != sid || pending_assign.target_serial != serial) {
+ 			return;
+ 		}
+
 		pending_zone_assign_requests_.erase(it);
-	}
+
+		auto finalize_it = pending_enter_world_finalize_by_assign_request_.find(res.request_id);
+
+		if (res.result_code != 0) {
+			if (finalize_it != pending_enter_world_finalize_by_assign_request_.end()) {
+				auto finalize = std::move(finalize_it->second);
+				pending_enter_world_finalize_by_assign_request_.erase(finalize_it);
+
+				RollbackBoundEnterWorld_(
+					finalize.enter_pending,
+					"OnZoneMapAssignResponse rolled back because zone rejected map assign.");
+
+				FailPendingEnterWorldConsumeRequest_(
+					finalize.enter_pending,
+					pt_w::EnterWorldResultCode::internal_error,
+					"OnZoneMapAssignResponse rejected.");
+			}
+			return;
+		}
+
+		map_assignments_[MakeMapAssignmentKey_(res.map_template_id, res.instance_id)] =
+ 				MapAssignmentEntry{ res.zone_id, res.map_template_id, res.instance_id };
+
+		if (finalize_it != pending_enter_world_finalize_by_assign_request_.end()) {
+			auto finalize = std::move(finalize_it->second);
+			pending_enter_world_finalize_by_assign_request_.erase(finalize_it);
+
+			FinalizeEnterWorldSuccess_(
+				finalize.enter_pending,
+				finalize.enter_pending.account_id,
+				finalize.enter_pending.char_id,
+				finalize.enter_pending.login_session,
+				finalize.enter_pending.world_token,
+				res.zone_id,
+				finalize.map_template_id,
+				finalize.instance_id,
+				finalize.cached_state_blob);
+ 		}
+ 	}
 
 
 	std::optional<WorldRuntime::ZoneRouteInfo> WorldRuntime::TrySelectZoneRoute_(bool dungeon_instance) const
@@ -2376,9 +2515,9 @@ namespace svr {
 			return result;
 		}
 
-		result.kind = AssignMapInstanceResultKind::Ok;
-		result.zone_id = zone->zone_id;
-		map_assignments_[key] = MapAssignmentEntry{ zone->zone_id, map_template_id, instance_id };
+		result.kind = AssignMapInstanceResultKind::Pending;
+		result.request_id = request_id;
+		result.zone_id = 0;
 		return result;
 	}
 
@@ -2659,55 +2798,48 @@ namespace svr {
 			constexpr std::uint32_t kDefaultInstanceId = 0;
 			const auto map_assignment = AssignMapInstance(kDefaultMapTemplateId, kDefaultInstanceId, true, false);
 
-			const std::uint32_t assigned_zone_id = map_assignment.zone_id != 0 ? map_assignment.zone_id : 1;
+			switch (map_assignment.kind) {
+			case AssignMapInstanceResultKind::Ok:
+				FinalizeEnterWorldSuccess_(
+					pending,
+					account_id,
+					char_id,
+					pending.login_session,
+					pending.world_token,
+					map_assignment.zone_id,
+					kDefaultMapTemplateId,
+					kDefaultInstanceId,
+					out_blob);
+				return;
 
-			PostActor(char_id, [this, char_id, sid = pending.sid, serial = pending.serial, assigned_zone_id]() {
-				auto& a = GetOrCreatePlayerActor(char_id);
-				a.bind_session(sid, serial);
-				a.combat.hp = 100;
-				a.combat.max_hp = 100;
-				a.combat.atk = 20;
-				a.combat.def = 3;
-				a.combat.gold = 1000;
-				a.zone_id = assigned_zone_id;
-				a.map_template_id = kDefaultMapTemplateId;
-				a.map_instance_id = kDefaultInstanceId;
-				a.pos = { 0,0 };
+			case AssignMapInstanceResultKind::Pending:
+			{
+				PendingEnterWorldFinalize finalize{};
+				finalize.assign_request_id = map_assignment.request_id;
+				finalize.enter_pending = pending;
+				finalize.map_template_id = kDefaultMapTemplateId;
+				finalize.instance_id = kDefaultInstanceId;
+				finalize.cached_state_blob = out_blob;
 
-				PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial, assigned_zone_id]() {
-					auto& z = GetOrCreateZoneActor(assigned_zone_id);
-					z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
-				});
-			});
+				pending_enter_world_finalize_by_assign_request_[map_assignment.request_id] = std::move(finalize);
+				return;
+			}
 
-			SendZonePlayerEnter_(static_cast<std::uint16_t>(assigned_zone_id), char_id, kDefaultMapTemplateId, kDefaultInstanceId);
-
-			CacheCharacterState(world_code, char_id, out_blob);
-
-			proto::S2C_actor_bound bound{};
-			bound.actor_id = char_id;
-			auto bh = proto::make_header(
-				static_cast<std::uint16_t>(proto::S2CMsg::actor_bound),
-				static_cast<std::uint16_t>(sizeof(bound)));
-			handler->Send(0, pending.sid, pending.serial, bh, reinterpret_cast<const char*>(&bound));
-
-			if (!NotifyAccountWorldEnterSuccess(account_id, char_id, pending.login_session, pending.world_token)) {
-				const auto rollback = UnbindAuthenticatedWorldSessionBySid(pending.sid, pending.serial);
-				ClosedAuthedSessionContext rollback_ctx{};
-				rollback_ctx.unbind_kind = rollback.kind;
-				rollback_ctx.sid = pending.sid;
-				rollback_ctx.serial = pending.serial;
-				CleanupClosedWorldSessionActors_(rollback_ctx);
+			case AssignMapInstanceResultKind::NoZoneAvailable:
+			case AssignMapInstanceResultKind::RequestSendFailed:
+			case AssignMapInstanceResultKind::ResponseTimeout:
+			case AssignMapInstanceResultKind::Rejected:
+			default:
+				RollbackBoundEnterWorld_(
+					pending,
+					"OnWorldAuthTicketConsumeResponse rolled back because map assignment failed.");
 
 				FailPendingEnterWorldConsumeRequest_(
 					pending,
 					pt_w::EnterWorldResultCode::internal_error,
-					"OnWorldAuthTicketConsumeResponse rolled back because account world_enter_success_notify send failed.");
+					"OnWorldAuthTicketConsumeResponse map assignment failed.");
 				return;
 			}
-
-			res.ok = 1;
-			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::success);
 		}
 
 		const auto h = proto::make_header(
@@ -3300,24 +3432,32 @@ namespace svr {
 			}
 		}
 
-		for (auto it = pending_zone_assign_requests_.begin(); it != pending_zone_assign_requests_.end();) {
-			if (now - it->second.issued_at > std::chrono::seconds(3)) {
-				it = pending_zone_assign_requests_.erase(it);
-			}
-			else {
-				++it;
-			}
-		}
+ 		for (auto it = pending_zone_assign_requests_.begin(); it != pending_zone_assign_requests_.end();) {
+ 			if (now - it->second.issued_at > std::chrono::seconds(3)) {
+				const auto request_id = it->first;
 
-		for (auto it = pending_zone_assign_requests_.begin(); it != pending_zone_assign_requests_.end();) {
-			if (now - it->second.issued_at > std::chrono::seconds(3)) {
-				it = pending_zone_assign_requests_.erase(it);
-			}
-			else {
-				++it;
-			}
-		}
-	}
+				auto finalize_it = pending_enter_world_finalize_by_assign_request_.find(request_id);
+				if (finalize_it != pending_enter_world_finalize_by_assign_request_.end()) {
+					auto finalize = std::move(finalize_it->second);
+					pending_enter_world_finalize_by_assign_request_.erase(finalize_it);
+
+					RollbackBoundEnterWorld_(
+						finalize.enter_pending,
+						"ExpireStaleZoneRoutes_ rolled back because zone assign timed out.");
+
+					FailPendingEnterWorldConsumeRequest_(
+						finalize.enter_pending,
+						pt_w::EnterWorldResultCode::internal_error,
+						"ExpireStaleZoneRoutes_ zone assign timeout.");
+				}
+
+ 				it = pending_zone_assign_requests_.erase(it);
+ 			}
+ 			else {
+ 				++it;
+ 			}
+ 		}
+ 	}
 
 	void WorldRuntime::MarkAccountRegistered_(
 		std::uint32_t sid,

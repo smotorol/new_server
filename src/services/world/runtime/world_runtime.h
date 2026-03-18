@@ -209,6 +209,16 @@ namespace svr {
 			std::uint32_t instance_id = 0;
 			std::chrono::steady_clock::time_point issued_at{};
 		};
+
+		struct PendingEnterWorldFinalize
+		{
+			std::uint64_t assign_request_id = 0;
+			PendingEnterWorldConsumeRequest enter_pending{};
+			std::uint32_t map_template_id = 0;
+			std::uint32_t instance_id = 0;
+			std::string cached_state_blob;
+		};
+
 	public:
 		WorldRuntime();
 		~WorldRuntime();
@@ -354,6 +364,19 @@ namespace svr {
 			const PendingEnterWorldConsumeRequest& pending,
 			proto::world::EnterWorldResultCode reason,
 			std::string_view log_text);
+		void RollbackBoundEnterWorld_(
+			const PendingEnterWorldConsumeRequest& pending,
+			std::string_view reason_log);
+		void FinalizeEnterWorldSuccess_(
+			const PendingEnterWorldConsumeRequest& pending,
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::string_view login_session,
+			std::string_view world_token,
+			std::uint16_t assigned_zone_id,
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id,
+ 			std::string_view log_text);
 
 		static ClosedAuthedSessionContext MakeClosedAuthedSessionContext_(
 			const UnbindAuthedWorldSessionResult& unbind_result,
@@ -524,6 +547,7 @@ namespace svr {
 		std::unordered_map<std::uint64_t, PendingEnterWorldConsumeRequest> pending_enter_world_consume_;
 		std::unordered_map<std::uint64_t, MapAssignmentEntry> map_assignments_;
 		std::unordered_map<std::uint64_t, PendingZoneAssignRequest> pending_zone_assign_requests_;
+		std::unordered_map<std::uint64_t, PendingEnterWorldFinalize> pending_enter_world_finalize_by_assign_request_;
 		std::uint64_t next_zone_assign_request_id_ = 1;
 
 		mutable std::mutex world_session_mtx_;
