@@ -12,9 +12,11 @@
 #include "proto/common/proto_base.h"
 #include "proto/client/world_proto.h"
 #include "db/core/dqs_payloads.h"
+#include "server_common/session/session_key.h"
 #include "services/world/actors/world_actors.h"
 #include "services/world/common/demo_char_state.h"
 #include "services/world/common/string_utils.h"
+#include "server_common/session/session_key.h"
 
 namespace pt_w = proto::world;
 
@@ -51,6 +53,22 @@ namespace {
 			return pt_w::EnterWorldResultCode::internal_error;
 		}
 	}
+
+	pt_w::EnterWorldResultCode MapBeginEnterFailReason(
+		svr::BeginEnterWorldSessionResultKind kind) noexcept
+	{
+		switch (kind) {
+		case svr::BeginEnterWorldSessionResultKind::AlreadyPending:
+			return pt_w::EnterWorldResultCode::enter_already_pending;
+		case svr::BeginEnterWorldSessionResultKind::AlreadyInWorld:
+			return pt_w::EnterWorldResultCode::already_in_world;
+		case svr::BeginEnterWorldSessionResultKind::Closing:
+			return pt_w::EnterWorldResultCode::session_closing;
+		case svr::BeginEnterWorldSessionResultKind::InvalidInput:
+		default:
+			return pt_w::EnterWorldResultCode::internal_error;
+		}
+	}
 } // namespace
 
 void WorldHandler::OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
@@ -79,6 +97,29 @@ bool WorldHandler::HandleEnterWorldWithToken(
 	res.char_id = req->char_id;
 
 	const auto serial = GetLatestSerial(n);
+	const auto begin_result = runtime().TryBeginEnterWorldSession(
+		n,
+		serial,
+		req->account_id,
+		req->char_id);
+
+	if (!begin_result.started()) {
+		res.ok = 0;
+		res.reason = static_cast<std::uint16_t>(MapBeginEnterFailReason(begin_result.kind));
+		const auto h = proto::make_header(
+			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+			static_cast<std::uint16_t>(sizeof(res)));
+		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+		spdlog::warn(
+			"HandleEnterWorldWithToken rejected by enter-state machine. sid={} serial={} account_id={} char_id={} begin_kind={} stage={}",
+			n,
+			serial,
+			req->account_id,
+			req->char_id,
+			static_cast<int>(begin_result.kind),
+			static_cast<int>(begin_result.stage));
+		return true;
+	}
 
 	spdlog::info(
 		"HandleEnterWorldWithToken request sid={} serial={} account_id={} char_id={} login_session={} token={}",
@@ -103,6 +144,7 @@ bool WorldHandler::HandleEnterWorldWithToken(
 			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
 			static_cast<std::uint16_t>(sizeof(res)));
 		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+		runtime().CancelPendingEnterWorldSession(n, serial, req->char_id);
 		return true;
 	}
 
@@ -173,7 +215,7 @@ bool WorldHandler::HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32
 		const std::uint32_t serial = GetLatestSerial(sid);
 		if (serial != 0) {
 			Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
-		}
+ 		}
 	}
 
 	return true;
@@ -224,7 +266,7 @@ bool WorldHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid, 
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (serial != 0) {
 		Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
-	}
+ 	}
 	return true;
 }
 
@@ -248,7 +290,7 @@ bool WorldHandler::HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t sid)
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (serial != 0) {
 		Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
-	}
+ 	}
 	return true;
 }
 
@@ -281,6 +323,6 @@ bool WorldHandler::HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t sid,
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (serial != 0) {
 		Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
-	}
+ 	}
 	return true;
 }

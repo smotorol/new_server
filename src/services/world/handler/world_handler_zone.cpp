@@ -8,8 +8,10 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "server_common/session/session_key.h"
 #include "services/world/actors/world_actors.h"
 #include "services/world/metrics/world_metrics.h"
+#include "server_common/session/session_key.h"
 
 bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
@@ -51,13 +53,13 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			smsg.y = itp->second.pos.y;
 			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn, (std::uint16_t)sizeof(smsg));
 			self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&smsg));
-		}
+			}
 		for (auto oid : exited) {
 			proto::S2C_player_despawn dmsg{};
 			dmsg.char_id = oid;
 			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn, (std::uint16_t)sizeof(dmsg));
 			self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&dmsg));
-		}
+			}
 
 		proto::S2C_player_spawn self_spawn{};
 		self_spawn.char_id = char_id;
@@ -138,7 +140,7 @@ bool WorldHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid
 		const std::uint32_t serial = th->GetLatestSerial(sid);
 
 		auto& z = runtime().GetOrCreateZoneActor(zone_id);
-		if (serial != 0) {
+		if (dc::IsValidSessionKey(sid, serial)) {
 			z.MoveFastUpdate(char_id, { nx, ny }, sid, serial);
 			z.EnqueueBenchAck(sid, serial, seq, cts, zone_id);
 		}

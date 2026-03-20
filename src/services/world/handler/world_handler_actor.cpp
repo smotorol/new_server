@@ -7,6 +7,7 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "server_common/session/session_key.h"
 
 bool WorldHandler::HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {

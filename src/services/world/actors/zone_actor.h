@@ -18,6 +18,7 @@
 #include "services/world/actors/zone_aoi_types.h"
 #include "services/world/metrics/world_metrics.h"
 #include "server_common/handler/service_line_handler_base.h"
+#include "server_common/session/session_key.h"
 
 namespace svr {
 class ZoneActor final : public net::IActor {

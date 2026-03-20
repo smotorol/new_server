@@ -1,14 +1,303 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "services/world/common/string_utils.h"
+#include "server_common/session/session_key.h"
 
 namespace svr {
 
+	void WorldRuntime::ErasePendingEnterWorldConsumeRequestsBySession_(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		if (!dc::IsValidSessionKey(sid, serial)) {
+			return;
+		}
 
+		std::size_t erased = 0;
+		{
+			std::lock_guard lk(pending_enter_world_consume_mtx_);
+			for (auto it = pending_enter_world_consume_.begin(); it != pending_enter_world_consume_.end();) {
+				if (it->second.sid == sid && it->second.serial == serial) {
+					it = pending_enter_world_consume_.erase(it);
+					++erased;
+				}
+				else {
+					++it;
+				}
+			}
+		}
+
+		if (erased != 0) {
+			spdlog::info(
+				"ErasePendingEnterWorldConsumeRequestsBySession_ removed pending consume requests. sid={} serial={} erased={}",
+				sid,
+				serial,
+				erased);
+		}
+	}
+
+	void WorldRuntime::ErasePendingEnterWorldFinalizeBySession_(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		if (!dc::IsValidSessionKey(sid, serial)) {
+			return;
+		}
+
+		std::size_t erased = 0;
+		for (auto it = pending_enter_world_finalize_by_assign_request_.begin();
+			it != pending_enter_world_finalize_by_assign_request_.end();) {
+			auto& list = it->second;
+			const auto before = list.size();
+			list.erase(
+				std::remove_if(
+					list.begin(),
+					list.end(),
+					[sid, serial](const PendingEnterWorldFinalize& e) {
+				return e.enter_pending.sid == sid && e.enter_pending.serial == serial;
+			}),
+				list.end());
+
+			erased += (before - list.size());
+			if (list.empty()) {
+				auto pending_assign_it = pending_zone_assign_requests_.find(it->first);
+				if (pending_assign_it != pending_zone_assign_requests_.end()) {
+					pending_zone_assign_request_id_by_map_key_.erase(pending_assign_it->second.map_key);
+					pending_zone_assign_requests_.erase(pending_assign_it);
+				}
+
+				spdlog::info(
+					"ErasePendingEnterWorldFinalizeBySession_ removed orphan pending zone-assign request. sid={} serial={} request_id={}",
+					sid,
+					serial,
+					it->first);
+				it = pending_enter_world_finalize_by_assign_request_.erase(it);
+			}
+			else {
+				++it;
+			}
+		}
+
+		if (erased != 0) {
+			spdlog::info(
+				"ErasePendingEnterWorldFinalizeBySession_ removed pending finalize entries. sid={} serial={} erased={}",
+				sid,
+				serial,
+				erased);
+		}
+	}
+
+	void WorldRuntime::ErasePendingZonePlayerEnterRequestsBySession_(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		if (!dc::IsValidSessionKey(sid, serial)) {
+			return;
+		}
+
+		std::size_t erased = 0;
+		for (auto it = pending_zone_player_enter_requests_.begin();
+			it != pending_zone_player_enter_requests_.end();) {
+			if (it->second.enter_pending.sid == sid &&
+				it->second.enter_pending.serial == serial) {
+				it = pending_zone_player_enter_requests_.erase(it);
+				++erased;
+			}
+			else {
+				++it;
+			}
+		}
+
+		if (erased != 0) {
+			spdlog::info(
+				"ErasePendingZonePlayerEnterRequestsBySession_ removed pending zone-player-enter entries. sid={} serial={} erased={}",
+				sid,
+				serial,
+				erased);
+		}
+	}
+
+	void WorldRuntime::AbortEnterWorldFlowBySession_(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::string_view log_text)
+	{
+		if (!dc::IsValidSessionKey(sid, serial)) {
+			return;
+		}
+
+		{
+			std::lock_guard lk(world_session_mtx_);
+			world_enter_stage_by_sid_[sid] = WorldEnterStage::Closing;
+
+			for (auto it = pending_enter_sid_by_char_id_.begin();
+				it != pending_enter_sid_by_char_id_.end();) {
+				if (it->second == sid) {
+					it = pending_enter_sid_by_char_id_.erase(it);
+				}
+				else {
+					++it;
+				}
+			}
+		}
+
+		ErasePendingEnterWorldConsumeRequestsBySession_(sid, serial);
+		ErasePendingEnterWorldFinalizeBySession_(sid, serial);
+		ErasePendingZonePlayerEnterRequestsBySession_(sid, serial);
+
+		spdlog::info(
+			"{} sid={} serial={}",
+			log_text,
+			sid,
+			serial);
+	}
+
+	BeginEnterWorldSessionResult WorldRuntime::TryBeginEnterWorldSession(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t account_id,
+		std::uint64_t char_id)
+	{
+		BeginEnterWorldSessionResult result{};
+		if (!dc::IsValidSessionKey(sid, serial) || account_id == 0 || char_id == 0) {
+			result.kind = BeginEnterWorldSessionResultKind::InvalidInput;
+			return result;
+		}
+
+		std::lock_guard lk(world_session_mtx_);
+
+		if (auto it = world_enter_stage_by_sid_.find(sid); it != world_enter_stage_by_sid_.end()) {
+			result.stage = it->second;
+			switch (it->second) {
+			case WorldEnterStage::EnterPending:
+				result.kind = BeginEnterWorldSessionResultKind::AlreadyPending;
+				return result;
+			case WorldEnterStage::InWorld:
+				result.kind = BeginEnterWorldSessionResultKind::AlreadyInWorld;
+				return result;
+			case WorldEnterStage::Closing:
+				result.kind = BeginEnterWorldSessionResultKind::Closing;
+				return result;
+			case WorldEnterStage::None:
+			default:
+				break;
+			}
+		}
+
+		if (auto pending_it = pending_enter_sid_by_char_id_.find(char_id);
+			pending_it != pending_enter_sid_by_char_id_.end() && pending_it->second != sid) {
+			result.kind = BeginEnterWorldSessionResultKind::AlreadyPending;
+			result.stage = WorldEnterStage::EnterPending;
+			return result;
+		}
+
+		world_enter_stage_by_sid_[sid] = WorldEnterStage::EnterPending;
+		pending_enter_sid_by_char_id_[char_id] = sid;
+		result.kind = BeginEnterWorldSessionResultKind::Started;
+		result.stage = WorldEnterStage::EnterPending;
+		return result;
+	}
+
+	void WorldRuntime::CancelPendingEnterWorldSession(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id)
+	{
+		if (!dc::IsValidSessionKey(sid, serial)) {
+			return;
+		}
+
+		std::lock_guard lk(world_session_mtx_);
+		auto it = world_enter_stage_by_sid_.find(sid);
+		if (it != world_enter_stage_by_sid_.end() && it->second == WorldEnterStage::EnterPending) {
+			world_enter_stage_by_sid_.erase(it);
+		}
+
+		if (char_id != 0) {
+			auto pending_it = pending_enter_sid_by_char_id_.find(char_id);
+			if (pending_it != pending_enter_sid_by_char_id_.end() && pending_it->second == sid) {
+				pending_enter_sid_by_char_id_.erase(pending_it);
+			}
+		}
+	}
+
+	bool WorldRuntime::IsEnterWorldSessionPending(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id) const
+	{
+		if (!dc::IsValidSessionKey(sid, serial) || char_id == 0) {
+			return false;
+		}
+
+		std::lock_guard lk(world_session_mtx_);
+		auto st_it = world_enter_stage_by_sid_.find(sid);
+		if (st_it == world_enter_stage_by_sid_.end() || st_it->second != WorldEnterStage::EnterPending) {
+			return false;
+		}
+
+		auto session_it = authed_sessions_by_sid_.find(sid);
+		if (session_it == authed_sessions_by_sid_.end() || session_it->second.serial != serial || session_it->second.char_id != char_id) {
+			return false;
+		}
+
+		auto pending_it = pending_enter_sid_by_char_id_.find(char_id);
+		return pending_it != pending_enter_sid_by_char_id_.end() && pending_it->second == sid;
+	}
+
+	bool WorldRuntime::PromoteEnterWorldSessionToInWorld(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id)
+	{
+		if (!dc::IsValidSessionKey(sid, serial) || char_id == 0) {
+			return false;
+		}
+
+		std::lock_guard lk(world_session_mtx_);
+		auto st_it = world_enter_stage_by_sid_.find(sid);
+		if (st_it == world_enter_stage_by_sid_.end() || st_it->second != WorldEnterStage::EnterPending) {
+			return false;
+		}
+
+		auto session_it = authed_sessions_by_sid_.find(sid);
+		if (session_it == authed_sessions_by_sid_.end() || session_it->second.serial != serial || session_it->second.char_id != char_id) {
+			return false;
+		}
+
+		auto pending_it = pending_enter_sid_by_char_id_.find(char_id);
+		if (pending_it == pending_enter_sid_by_char_id_.end() || pending_it->second != sid) {
+			return false;
+		}
+
+		pending_enter_sid_by_char_id_.erase(pending_it);
+		st_it->second = WorldEnterStage::InWorld;
+		return true;
+	}
+
+	void WorldRuntime::MarkEnterWorldSessionClosing(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		if (!dc::IsValidSessionKey(sid, serial)) {
+			return;
+		}
+
+		std::lock_guard lk(world_session_mtx_);
+		world_enter_stage_by_sid_[sid] = WorldEnterStage::Closing;
+
+		auto authed_it = authed_sessions_by_sid_.find(sid);
+		if (authed_it != authed_sessions_by_sid_.end() && authed_it->second.serial == serial) {
+			auto pending_it = pending_enter_sid_by_char_id_.find(authed_it->second.char_id);
+			if (pending_it != pending_enter_sid_by_char_id_.end() && pending_it->second == sid) {
+				pending_enter_sid_by_char_id_.erase(pending_it);
+			}
+		}
+	}
 	bool WorldRuntime::TryReserveDelayedWorldClose_(
 		std::uint32_t sid,
 		std::uint32_t serial) noexcept
 	{
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			return false;
 		}
 
@@ -20,8 +309,6 @@ namespace svr {
 		return inserted;
 	}
 
-
-
 	bool WorldRuntime::ArmReservedDelayedWorldClose_(
 		std::uint32_t sid,
 		std::uint32_t serial,
@@ -29,7 +316,7 @@ namespace svr {
 		std::uint64_t trace_id,
 		std::uint64_t char_id)
 	{
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			return false;
 		}
 
@@ -120,15 +407,13 @@ namespace svr {
 		return true;
 	}
 
-
-
 	bool WorldRuntime::UpdateReservedDelayedWorldCloseContext_(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
 		std::uint64_t char_id) noexcept
 	{
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			return false;
 		}
 
@@ -147,14 +432,12 @@ namespace svr {
 		return true;
 	}
 
-
-
 	bool WorldRuntime::ReleaseDelayedWorldCloseReservation_(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		DelayedCloseEntry* released_entry) noexcept
 	{
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			return false;
 		}
 
@@ -184,8 +467,6 @@ namespace svr {
 		return true;
 	}
 
-
-
 	void WorldRuntime::CancelDelayedWorldClose(
 		std::uint32_t sid,
 		std::uint32_t serial)
@@ -199,20 +480,22 @@ namespace svr {
 		}
 	}
 
-
-
 	void WorldRuntime::HandleWorldSessionClosed(
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
+		AbortEnterWorldFlowBySession_(
+			sid,
+			serial,
+			"HandleWorldSessionClosed aborted pending enter-world flow before close processing.");
+
+		MarkEnterWorldSessionClosing(sid, serial);
 		boost::asio::dispatch(
 			duplicate_session_strand_,
 			[this, sid, serial]() {
 			ProcessWorldSessionClosedOnIo_(sid, serial);
 		});
 	}
-
-
 
 	void WorldRuntime::ProcessDuplicateLoginSessionClosedOnIo_(
 		const DelayedCloseEntry& released_entry,
@@ -250,8 +533,6 @@ namespace svr {
 			log_ctx);
 	}
 
-
-
 	void WorldRuntime::ProcessNormalSessionClosedOnIo_(
 		const ClosedAuthedSessionContext& closed_ctx)
 	{
@@ -265,7 +546,53 @@ namespace svr {
 			log_ctx);
 	}
 
+	void WorldRuntime::BeginLeaveWorld_(
+		const LeaveWorldContext& ctx,
+		std::string_view reason_log)
+	{
+		if (ctx.char_id == 0) {
+			return;
+		}
 
+		PostActor(
+			ctx.char_id,
+			[this, ctx, reason = std::string(reason_log)]() {
+			auto& a = GetOrCreatePlayerActor(ctx.char_id);
+
+			if (dc::IsValidSessionKey(ctx.sid, ctx.serial)) {
+				a.unbind_session(ctx.sid, ctx.serial);
+			}
+
+			if (ctx.zone_id != 0) {
+				SendZonePlayerLeave_(ctx.zone_id, ctx.char_id, ctx.map_template_id, ctx.instance_id);
+				PostActor(
+					svr::MakeZoneActorId(ctx.zone_id),
+					[this, char_id = ctx.char_id, zone_id = ctx.zone_id]() {
+					auto& z = GetOrCreateZoneActor(zone_id);
+					z.Leave(char_id);
+				});
+			}
+
+			if (static_cast<std::uint16_t>(a.zone_id) == ctx.zone_id &&
+				a.map_template_id == ctx.map_template_id &&
+				a.map_instance_id == ctx.instance_id) {
+				a.zone_id = 0;
+				a.map_template_id = 0;
+				a.map_instance_id = 0;
+				a.pos = {};
+			}
+
+			spdlog::info(
+				"{} char_id={} sid={} serial={} zone_id={} map_template_id={} instance_id={}",
+				reason,
+				ctx.char_id,
+				ctx.sid,
+				ctx.serial,
+				ctx.zone_id,
+				ctx.map_template_id,
+				ctx.instance_id);
+		});
+	}
 
 	void WorldRuntime::CleanupClosedWorldSessionActors_(
 		const ClosedAuthedSessionContext& closed_ctx)
@@ -281,23 +608,15 @@ namespace svr {
 			close_sid = closed_ctx.sid,
 			close_serial = closed_ctx.serial]() {
 			auto& a = GetOrCreatePlayerActor(close_char_id);
-
-			if (a.sid == close_sid && a.serial == close_serial) {
-				a.unbind_session(close_sid, close_serial);
-			}
-
-			if (a.zone_id != 0) {
-				const auto zone_id = a.zone_id;
-				const auto map_template_id = a.map_template_id;
-				const auto map_instance_id = a.map_instance_id;
-				SendZonePlayerLeave_(static_cast<std::uint16_t>(zone_id), close_char_id, map_template_id, map_instance_id);
-				PostActor(
-					svr::MakeZoneActorId(zone_id),
-					[this, close_char_id, zone_id]() {
-					auto& z = GetOrCreateZoneActor(zone_id);
-					z.Leave(close_char_id);
-				});
-			}
+			const LeaveWorldContext leave_ctx{
+				.char_id = close_char_id,
+				.sid = close_sid,
+				.serial = close_serial,
+				.zone_id = static_cast<std::uint16_t>(a.zone_id),
+				.map_template_id = a.map_template_id,
+				.instance_id = a.map_instance_id,
+			};
+			BeginLeaveWorld_(leave_ctx, "CleanupClosedWorldSessionActors_ started leave cleanup.");
 		});
 	}
 
@@ -319,13 +638,11 @@ namespace svr {
 			log_ctx.trace_id);
 	}
 
-
-
 	void WorldRuntime::ProcessWorldSessionClosedOnIo_(
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			return;
 		}
 
@@ -356,8 +673,6 @@ namespace svr {
 
 		ProcessNormalSessionClosedOnIo_(closed_ctx);
 	}
-
-
 
 	void WorldRuntime::LogWorldSessionClosePostState_(
 		const ClosedAuthedSessionContext& closed_ctx,
@@ -412,12 +727,10 @@ namespace svr {
 		}
 	}
 
-
-
 	void WorldRuntime::ProcessDuplicateWorldSessionKickOnIo_(
 		DuplicateLoginLogContext ctx)
 	{
-		if (ctx.char_id == 0 || ctx.sid == 0 || ctx.serial == 0) {
+		if (ctx.char_id == 0 || !dc::IsValidSessionKey(ctx.sid, ctx.serial)) {
 			return;
 		}
 
@@ -697,15 +1010,13 @@ namespace svr {
 		return result;
 	}
 
-
-
 	UnbindAuthedWorldSessionResult WorldRuntime::UnbindAuthenticatedWorldSessionBySid(
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
 		UnbindAuthedWorldSessionResult result{};
 
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			result.kind = UnbindAuthedWorldSessionResultKind::InvalidInput;
 			spdlog::warn(
 				"UnbindAuthenticatedWorldSessionBySid invalid input. sid={} serial={}",
@@ -757,6 +1068,16 @@ namespace svr {
 			}
 
 			authed_sessions_by_sid_.erase(it);
+			world_enter_stage_by_sid_.erase(sid);
+			for (auto pending_it = pending_enter_sid_by_char_id_.begin();
+				pending_it != pending_enter_sid_by_char_id_.end();) {
+				if (pending_it->second == sid) {
+					pending_it = pending_enter_sid_by_char_id_.erase(pending_it);
+				}
+				else {
+					++pending_it;
+				}
+			}
 			result.kind = UnbindAuthedWorldSessionResultKind::Removed;
 		}
 
@@ -867,12 +1188,10 @@ namespace svr {
 		return MakeSessionCloseLogContext_(closed_ctx);
 	}
 
-
-
 	void WorldRuntime::EnqueueDuplicateWorldSessionKickClose_(
 		DuplicateLoginLogContext ctx)
 	{
-		if (ctx.char_id == 0 || ctx.sid == 0 || ctx.serial == 0) {
+		if (ctx.char_id == 0 || !dc::IsValidSessionKey(ctx.sid, ctx.serial)) {
 			return;
 		}
 
@@ -900,7 +1219,7 @@ namespace svr {
 		DuplicateSessionCause log_cause,
 		SessionKickStatCategory stat_category)
 	{
-		if (victim.sid == 0 || victim.serial == 0) {
+		if (!dc::IsValidSessionKey(victim.sid, victim.serial)) {
 			return;
 		}
 
@@ -952,6 +1271,11 @@ namespace svr {
 	bool WorldRuntime::TryBeginDuplicateWorldSessionKickClose_(
 		const DuplicateLoginLogContext& ctx)
 	{
+		AbortEnterWorldFlowBySession_(
+			ctx.sid,
+			ctx.serial,
+			"TryBeginDuplicateWorldSessionKickClose_ aborted pending enter-world flow for duplicate-login victim.");
+
 		if (!TryReserveDelayedWorldClose_(ctx.sid, ctx.serial)) {
 			LogDuplicateWorldSessionEvent_(
 				spdlog::level::info,
@@ -1024,13 +1348,11 @@ namespace svr {
 			ctx.serial);
 	}
 
-
-
 	bool WorldRuntime::CancelDelayedWorldCloseTimer_(
 		std::uint32_t sid,
 		std::uint32_t serial) noexcept
 	{
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			return false;
 		}
 

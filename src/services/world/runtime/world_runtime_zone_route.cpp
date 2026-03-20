@@ -7,6 +7,11 @@ namespace svr {
 		{
 			return result_code == static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::ok);
 		}
+
+		static bool IsZonePlayerEnterOk_(std::uint16_t result_code) noexcept
+		{
+			return result_code == static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok);
+		}
 	}
 
 	std::uint64_t WorldRuntime::MakeMapAssignmentKey_(std::uint32_t map_template_id, std::uint32_t instance_id) const noexcept
@@ -14,14 +19,10 @@ namespace svr {
 		return (static_cast<std::uint64_t>(map_template_id) << 32) | static_cast<std::uint64_t>(instance_id);
 	}
 
-
-
 	void WorldRuntime::RegisterZoneRoute(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneServerHello& req)
 	{
 		RegisterZoneRoute(sid, serial, req.server_id, req.zone_id, req.world_id, req.channel_id, req.map_instance_capacity, req.active_map_instance_count, req.active_player_count, req.load_score, req.flags, req.server_name);
 	}
-
-
 
 	void WorldRuntime::OnZoneRouteHeartbeat(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneServerRouteHeartbeat& req)
 	{
@@ -69,21 +70,35 @@ namespace svr {
 
 				FailPendingEnterWorldConsumeRequest_(
 					finalize.enter_pending,
-					pt_w::EnterWorldResultCode::internal_error,
+					pt_w::EnterWorldResultCode::zone_assign_route_lost,
 					"OnZoneMapAssignResponse map key mismatch.");
 			}
 			return;
 		}
 
 		if (!IsZoneAssignOk_(res.result_code)) {
+			const auto reject_reason = MapZoneAssignRejectCodeToEnterWorldReason_(res.result_code);
 			for (auto& finalize : finalize_list) {
+				if (!IsEnterWorldSessionPending(
+					finalize.enter_pending.sid,
+					finalize.enter_pending.serial,
+					finalize.enter_pending.char_id)) {
+					spdlog::warn(
+						"OnZoneMapAssignResponse stale pending finalize dropped after reject. request_id={} world_sid={} world_serial={} char_id={}",
+						res.request_id,
+						finalize.enter_pending.sid,
+						finalize.enter_pending.serial,
+						finalize.enter_pending.char_id);
+					continue;
+				}
+
 				RollbackBoundEnterWorld_(
 					finalize.enter_pending,
 					"OnZoneMapAssignResponse rolled back because zone rejected map assign.");
 
 				FailPendingEnterWorldConsumeRequest_(
 					finalize.enter_pending,
-					pt_w::EnterWorldResultCode::internal_error,
+					reject_reason,
 					"OnZoneMapAssignResponse rejected.");
 			}
 			return;
@@ -98,6 +113,19 @@ namespace svr {
 		};
 
 		for (auto& finalize : finalize_list) {
+			if (!IsEnterWorldSessionPending(
+				finalize.enter_pending.sid,
+				finalize.enter_pending.serial,
+				finalize.enter_pending.char_id)) {
+				spdlog::warn(
+					"OnZoneMapAssignResponse stale pending finalize dropped after success. request_id={} world_sid={} world_serial={} char_id={}",
+					res.request_id,
+					finalize.enter_pending.sid,
+					finalize.enter_pending.serial,
+					finalize.enter_pending.char_id);
+				continue;
+			}
+
 			FinalizeEnterWorldSuccess_(
 				finalize.enter_pending,
 				finalize.enter_pending.account_id,
@@ -111,15 +139,97 @@ namespace svr {
 		}
 	}
 
+	void WorldRuntime::OnZonePlayerEnterAck(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack)
+	{
+		auto it = pending_zone_player_enter_requests_.find(ack.request_id);
+		if (it == pending_zone_player_enter_requests_.end()) {
+			return;
+		}
 
+		PendingZonePlayerEnterRequest pending_enter = it->second;
+		if (pending_enter.target_sid != sid || pending_enter.target_serial != serial) {
+			return;
+		}
 
+		if (!IsEnterWorldSessionPending(
+			pending_enter.enter_pending.sid,
+			pending_enter.enter_pending.serial,
+			pending_enter.enter_pending.char_id)) {
+			pending_zone_player_enter_requests_.erase(it);
+			spdlog::warn(
+				"OnZonePlayerEnterAck stale enter pending dropped. request_id={} sid={} serial={} world_sid={} world_serial={} char_id={}",
+				ack.request_id,
+				sid,
+				serial,
+				pending_enter.enter_pending.sid,
+				pending_enter.enter_pending.serial,
+				pending_enter.enter_pending.char_id);
+			return;
+		}
 
+		pending_zone_player_enter_requests_.erase(it);
+
+		if (pending_enter.enter_pending.char_id != ack.char_id ||
+			pending_enter.map_template_id != ack.map_template_id ||
+			pending_enter.instance_id != ack.instance_id ||
+			pending_enter.target_zone_id != ack.zone_id) {
+			spdlog::warn(
+				"OnZonePlayerEnterAck mismatch. request_id={} sid={} serial={} pending_char_id={} ack_char_id={} pending_zone_id={} ack_zone_id={} pending_map_template_id={} ack_map_template_id={} pending_instance_id={} ack_instance_id={}",
+				ack.request_id,
+				sid,
+				serial,
+				pending_enter.enter_pending.char_id,
+				ack.char_id,
+				pending_enter.target_zone_id,
+				ack.zone_id,
+				pending_enter.map_template_id,
+				ack.map_template_id,
+				pending_enter.instance_id,
+				ack.instance_id);
+
+			RollbackBoundEnterWorld_(
+				pending_enter.enter_pending,
+				"OnZonePlayerEnterAck rolled back because response payload mismatched.");
+			FailPendingEnterWorldConsumeRequest_(
+				pending_enter.enter_pending,
+				pt_w::EnterWorldResultCode::internal_error,
+				"OnZonePlayerEnterAck mismatch.");
+			return;
+		}
+
+		if (!IsZonePlayerEnterOk_(ack.result_code)) {
+			if (!IsEnterWorldSessionPending(
+				pending_enter.enter_pending.sid,
+				pending_enter.enter_pending.serial,
+				pending_enter.enter_pending.char_id)) {
+				spdlog::warn(
+					"OnZonePlayerEnterAck stale reject dropped. request_id={} world_sid={} world_serial={} char_id={}",
+					ack.request_id,
+					pending_enter.enter_pending.sid,
+					pending_enter.enter_pending.serial,
+					pending_enter.enter_pending.char_id);
+				return;
+			}
+
+			RollbackBoundEnterWorld_(
+				pending_enter.enter_pending,
+				"OnZonePlayerEnterAck rolled back because zone rejected player enter.");
+			FailPendingEnterWorldConsumeRequest_(
+				pending_enter.enter_pending,
+				MapZonePlayerEnterRejectCodeToEnterWorldReason_(ack.result_code),
+				"OnZonePlayerEnterAck rejected.");
+			return;
+		}
+
+		CompleteEnterWorldSuccessAfterZoneAck_(pending_enter);
+	}
 
 	std::optional<ZoneRouteInfo> WorldRuntime::TrySelectZoneRoute_(bool dungeon_instance) const
 	{
+		std::lock_guard lk(service_line_mtx_);
 		std::optional<ZoneRouteInfo> best;
 		for (const auto& [sid, route] : zone_routes_by_sid_) {
-			if (route.serial == 0) {
+			if (!route.registered || route.serial == 0 || route.zone_id == 0) {
 				continue;
 			}
 
@@ -129,6 +239,7 @@ namespace svr {
 			current.zone_server_id = route.server_id;
 			current.zone_id = route.zone_id;
 			current.active_map_instance_count = route.active_map_instance_count;
+			current.active_player_count = route.active_player_count;
 			current.load_score = route.load_score;
 			current.flags = route.flags;
 			current.last_heartbeat_at = route.last_heartbeat_at;
@@ -177,9 +288,7 @@ namespace svr {
 		return std::nullopt;
 	}
 
-
-
-	bool WorldRuntime::SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
+	bool WorldRuntime::SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
 	{
 		auto route = FindZoneRouteByZoneId_(zone_id);
 		if (!route.has_value()) {
@@ -189,10 +298,8 @@ namespace svr {
 		if (!handler) {
 			return false;
 		}
-		return handler->SendPlayerEnter(0, route->sid, route->serial, char_id, map_template_id, instance_id, zone_id);
+		return handler->SendPlayerEnter(0, route->sid, route->serial, request_id, char_id, map_template_id, instance_id, zone_id);
 	}
-
-
 
 	bool WorldRuntime::SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
 	{
@@ -320,12 +427,49 @@ namespace svr {
 				pending_enter_world_finalize_by_assign_request_.erase(finalize_it);
 
 				for (auto& finalize : finalize_list) {
+					if (!IsEnterWorldSessionPending(
+						finalize.enter_pending.sid,
+						finalize.enter_pending.serial,
+						finalize.enter_pending.char_id)) {
+						continue;
+					}
+
 					RollbackBoundEnterWorld_(finalize.enter_pending, rollback_log);
 					FailPendingEnterWorldConsumeRequest_(finalize.enter_pending, reason, log_text);
 				}
 			}
 
 			it = pending_zone_assign_requests_.erase(it);
+		}
+	}
+
+	void WorldRuntime::FailPendingZonePlayerEnterRequestsByZoneSid_(
+		std::uint32_t sid,
+		proto::world::EnterWorldResultCode reason,
+		std::string_view log_text,
+		std::string_view rollback_log)
+	{
+		for (auto it = pending_zone_player_enter_requests_.begin(); it != pending_zone_player_enter_requests_.end();) {
+			if (it->second.target_sid != sid) {
+				++it;
+				continue;
+			}
+
+			auto pending_enter = std::move(it->second);
+			it = pending_zone_player_enter_requests_.erase(it);
+
+			if (!IsEnterWorldSessionPending(
+				pending_enter.enter_pending.sid,
+				pending_enter.enter_pending.serial,
+				pending_enter.enter_pending.char_id)) {
+				spdlog::warn(
+					"FailPendingZonePlayerEnterRequestsByZoneSid_ stale pending enter dropped. zone_sid={} request_id={} world_sid={} world_serial={} char_id={}",
+					sid, pending_enter.request_id, pending_enter.enter_pending.sid, pending_enter.enter_pending.serial, pending_enter.enter_pending.char_id);
+				continue;
+			}
+
+			RollbackBoundEnterWorld_(pending_enter.enter_pending, rollback_log);
+			FailPendingEnterWorldConsumeRequest_(pending_enter.enter_pending, reason, log_text);
 		}
 	}
 
@@ -430,9 +574,15 @@ namespace svr {
 		RemoveMapAssignmentsByZoneSid_(sid);
 		FailPendingZoneAssignRequestsByZoneSid_(
 			sid,
-			pt_w::EnterWorldResultCode::internal_error,
+			pt_w::EnterWorldResultCode::zone_assign_route_lost,
 			"UnregisterZoneRoute zone disconnected during map assign.",
 			"UnregisterZoneRoute rolled back because zone disconnected during map assign.");
+		FailPendingZonePlayerEnterRequestsByZoneSid_(
+			sid,
+			pt_w::EnterWorldResultCode::zone_player_enter_route_lost,
+			"UnregisterZoneRoute zone disconnected during player enter ack.",
+			"UnregisterZoneRoute rolled back because zone disconnected during player enter ack.");
+
 		zone_routes_by_sid_.erase(it);
 	}
 
@@ -443,7 +593,7 @@ namespace svr {
 		std::lock_guard lk(service_line_mtx_);
 		for (auto it = zone_routes_by_sid_.begin(); it != zone_routes_by_sid_.end();) {
 			if (it->second.last_heartbeat_at != std::chrono::steady_clock::time_point{} &&
-				now - it->second.last_heartbeat_at > std::chrono::seconds(8)) {
+				now - it->second.last_heartbeat_at > dc::k_ExpireStaleZoneRoutes) {
 				const auto expired_sid = it->second.sid;
 
 				spdlog::warn(
@@ -452,9 +602,14 @@ namespace svr {
 				RemoveMapAssignmentsByZoneSid_(expired_sid);
 				FailPendingZoneAssignRequestsByZoneSid_(
 					expired_sid,
-					pt_w::EnterWorldResultCode::internal_error,
+					pt_w::EnterWorldResultCode::zone_assign_route_lost,
 					"ExpireStaleZoneRoutes_ zone route expired during map assign.",
 					"ExpireStaleZoneRoutes_ rolled back because zone route expired during map assign.");
+				FailPendingZonePlayerEnterRequestsByZoneSid_(
+					expired_sid,
+					pt_w::EnterWorldResultCode::zone_player_enter_route_lost,
+					"ExpireStaleZoneRoutes_ zone route expired during player enter ack.",
+					"ExpireStaleZoneRoutes_ rolled back because zone route expired during player enter ack.");
 				it = zone_routes_by_sid_.erase(it);
 			}
 			else {
@@ -462,33 +617,36 @@ namespace svr {
 			}
 		}
 
-		for (auto it = pending_zone_assign_requests_.begin(); it != pending_zone_assign_requests_.end();) {
-			if (now - it->second.issued_at > std::chrono::seconds(3)) {
-				const auto request_id = it->first;
-				pending_zone_assign_request_id_by_map_key_.erase(it->second.map_key);
+		for (auto it = pending_zone_player_enter_requests_.begin(); it != pending_zone_player_enter_requests_.end();) {
+			if (now - it->second.issued_at > dc::k_pending_zone_player_enter_requests) {
+				auto pending_enter = std::move(it->second);
+				it = pending_zone_player_enter_requests_.erase(it);
 
-				auto finalize_it = pending_enter_world_finalize_by_assign_request_.find(request_id);
-				if (finalize_it != pending_enter_world_finalize_by_assign_request_.end()) {
-					auto finalize_list = std::move(finalize_it->second);
-					pending_enter_world_finalize_by_assign_request_.erase(finalize_it);
-
-					for (auto& finalize : finalize_list) {
-						RollbackBoundEnterWorld_(
-							finalize.enter_pending,
-							"ExpireStaleZoneRoutes_ rolled back because zone assign timed out.");
-
-						FailPendingEnterWorldConsumeRequest_(
-							finalize.enter_pending,
-							pt_w::EnterWorldResultCode::internal_error,
-							"ExpireStaleZoneRoutes_ zone assign timeout.");
-					}
+				if (!IsEnterWorldSessionPending(
+					pending_enter.enter_pending.sid,
+					pending_enter.enter_pending.serial,
+					pending_enter.enter_pending.char_id)) {
+					spdlog::warn(
+						"ExpireStaleZoneRoutes_ stale zone-player-enter timeout dropped. request_id={} world_sid={} world_serial={} char_id={}",
+						pending_enter.request_id,
+						pending_enter.enter_pending.sid,
+						pending_enter.enter_pending.serial,
+						pending_enter.enter_pending.char_id);
+					continue;
 				}
 
-				it = pending_zone_assign_requests_.erase(it);
+				RollbackBoundEnterWorld_(
+					pending_enter.enter_pending,
+					"ExpireStaleZoneRoutes_ rolled back because zone player enter ack timed out.");
+
+				FailPendingEnterWorldConsumeRequest_(
+					pending_enter.enter_pending,
+					pt_w::EnterWorldResultCode::zone_player_enter_timeout,
+					"ExpireStaleZoneRoutes_ zone player enter ack timeout.");
 			}
 			else {
 				++it;
-			}
+ 			}
 		}
 	}
 } // namespace svr

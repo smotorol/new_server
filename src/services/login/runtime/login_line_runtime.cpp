@@ -12,6 +12,9 @@
 #include "proto/common/packet_util.h"
 #include "server_common/runtime/line_client_start_helper.h"
 #include "server_common/runtime/line_start_helper.h"
+#include "server_common/session/session_key.h"
+
+#include "shared/constants.h"
 
 namespace pt_l = proto::login;
 
@@ -374,7 +377,7 @@ namespace dc {
 		const auto cur_sid = account_sid_.load(std::memory_order_relaxed);
 		const auto cur_serial = account_serial_.load(std::memory_order_relaxed);
 
-		if (cur_sid != 0 && (cur_sid != sid || cur_serial != serial)) {
+		if (cur_sid != 0 && !dc::IsSameSessionKey(cur_sid, cur_serial, sid, serial)) {
 			return;
 		}
 
@@ -392,6 +395,9 @@ namespace dc {
 
 		const auto sid = account_sid_.load(std::memory_order_relaxed);
 		const auto serial = account_serial_.load(std::memory_order_relaxed);
+		if (!dc::IsValidSessionKey(sid, serial)) {
+			return false;
+		}
 
 		return account_handler_->SendAccountAuthRequest(
 			2,
@@ -475,7 +481,7 @@ namespace dc {
 			st.login_session.assign(login_session.data(), login_session.size());
 			st.world_token.assign(world_token.data(), world_token.size());
 			st.issued_at = std::chrono::steady_clock::now();
-			st.expires_at = st.issued_at + std::chrono::seconds(30);
+			st.expires_at = st.issued_at + dc::k_login_sessions_pending_client_sid;
 
 			account_session_index_[account_id] = pending.client_sid;
 			char_session_index_[char_id] = pending.client_sid;
@@ -558,7 +564,7 @@ namespace dc {
 		{
 			std::lock_guard lk(pending_login_mtx_);
 			for (auto it = pending_login_requests_.begin(); it != pending_login_requests_.end();) {
-				if (now - it->second.issued_at >= std::chrono::seconds(5)) {
+				if (now - it->second.issued_at >= dc::k_login_request_timeout) {
 					expired.push_back(std::move(it->second));
 					it = pending_login_requests_.erase(it);
 				}

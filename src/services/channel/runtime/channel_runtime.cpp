@@ -24,6 +24,8 @@
 #include "db/core/db_utils.h"
 #include "db/odbc/odbc_wrapper.h"
 
+#include "server_common/session/session_key.h"
+
 namespace svr {
 	namespace {
 		std::string fmt_u64(std::uint64_t v) { return std::to_string(v); }
@@ -234,7 +236,7 @@ namespace svr {
 
 	std::uint64_t ChannelRuntime::FindCharIdBySession(std::uint32_t sid) const
 	{
-		if (sid == 0) {
+		if (!dc::IsValidSessionKey(sid, 1)) {
 			return 0;
 		}
 

@@ -77,6 +77,7 @@ namespace svr {
 	using DelayedCloseEntry = svr::DelayedCloseEntry;
 	using ClosedAuthedSessionContext = svr::ClosedAuthedSessionContext;
 	using PendingEnterWorldConsumeRequest = svr::PendingEnterWorldConsumeRequest;
+	using PendingZonePlayerEnterRequest = svr::PendingZonePlayerEnterRequest;
 	using ZoneRouteInfo = svr::ZoneRouteInfo;
 	using MapAssignmentEntry = svr::MapAssignmentEntry;
 	using PendingZoneAssignRequest = svr::PendingZoneAssignRequest;
@@ -125,6 +126,31 @@ namespace svr {
 			std::uint64_t char_id,
 			std::string_view login_session,
 			std::string_view token) override;
+
+		BeginEnterWorldSessionResult TryBeginEnterWorldSession(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t account_id,
+			std::uint64_t char_id) override;
+
+		void CancelPendingEnterWorldSession(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id) override;
+
+		bool IsEnterWorldSessionPending(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id) const override;
+
+		bool PromoteEnterWorldSessionToInWorld(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id) override;
+
+		void MarkEnterWorldSessionClosing(
+			std::uint32_t sid,
+			std::uint32_t serial) override;
 
 		bool NotifyAccountWorldEnterSuccess(
 			std::uint64_t account_id,
@@ -219,13 +245,17 @@ namespace svr {
 			const ClosedAuthedSessionContext& closed_ctx);
 		void CleanupClosedWorldSessionActors_(
 			const ClosedAuthedSessionContext& closed_ctx);
+		void BeginLeaveWorld_(
+			const LeaveWorldContext& ctx,
+			std::string_view reason_log);
 		void FailPendingEnterWorldConsumeRequest_(
 			const PendingEnterWorldConsumeRequest& pending,
 			proto::world::EnterWorldResultCode reason,
 			std::string_view log_text);
 		void RollbackBoundEnterWorld_(
 			const PendingEnterWorldConsumeRequest& pending,
-			std::string_view reason_log);
+			std::string_view reason_log,
+			const LeaveWorldContext* leave_ctx = nullptr);
 		void FinalizeEnterWorldSuccess_(
 			const PendingEnterWorldConsumeRequest& pending,
 			std::uint64_t account_id,
@@ -236,6 +266,8 @@ namespace svr {
 			std::uint32_t map_template_id,
 			std::uint32_t instance_id,
 			std::string_view cached_state_blob);
+		void CompleteEnterWorldSuccessAfterZoneAck_(
+			const PendingZonePlayerEnterRequest& pending_enter);
 
 		static ClosedAuthedSessionContext MakeClosedAuthedSessionContext_(
 			const UnbindAuthedWorldSessionResult& unbind_result,
@@ -331,9 +363,10 @@ namespace svr {
 		void OnZoneRouteHeartbeat(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneServerRouteHeartbeat& req);
 		void UnregisterZoneRoute(std::uint32_t sid, std::uint32_t serial);
 		void OnZoneMapAssignResponse(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res);
+		void OnZonePlayerEnterAck(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack);
 		std::optional<ZoneRouteInfo> TrySelectZoneRoute_(bool dungeon_instance) const;
 		std::optional<ZoneRouteInfo> FindZoneRouteByZoneId_(std::uint16_t zone_id) const;
-		bool SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
+		bool SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		bool SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		void RemoveMapAssignmentsByZoneSid_(std::uint32_t sid);
 		void FailPendingZoneAssignRequestsByZoneSid_(
@@ -341,6 +374,31 @@ namespace svr {
 			proto::world::EnterWorldResultCode reason,
 			std::string_view log_text,
 			std::string_view rollback_log);
+		static proto::world::EnterWorldResultCode MapAssignFailureToEnterWorldReason_(
+			AssignMapInstanceResultKind kind,
+			std::uint16_t reject_result_code = 0) noexcept;
+		static proto::world::EnterWorldResultCode MapZoneAssignRejectCodeToEnterWorldReason_(
+			std::uint16_t zone_result_code) noexcept;
+		static proto::world::EnterWorldResultCode MapZonePlayerEnterRejectCodeToEnterWorldReason_(
+			std::uint16_t zone_result_code) noexcept;
+		void FailPendingZonePlayerEnterRequestsByZoneSid_(
+			std::uint32_t sid,
+			proto::world::EnterWorldResultCode reason,
+			std::string_view log_text,
+			std::string_view rollback_log);
+		void ErasePendingEnterWorldConsumeRequestsBySession_(
+			std::uint32_t sid,
+			std::uint32_t serial);
+		void ErasePendingEnterWorldFinalizeBySession_(
+			std::uint32_t sid,
+			std::uint32_t serial);
+		void ErasePendingZonePlayerEnterRequestsBySession_(
+			std::uint32_t sid,
+			std::uint32_t serial);
+		void AbortEnterWorldFlowBySession_(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::string_view log_text);
 
 		bool InitRedis();
 		void ScheduleFlush_();
@@ -413,7 +471,9 @@ namespace svr {
 		std::unordered_map<std::uint64_t, PendingZoneAssignRequest> pending_zone_assign_requests_;
 		std::unordered_map<std::uint64_t, std::uint64_t> pending_zone_assign_request_id_by_map_key_;
 		std::unordered_map<std::uint64_t, std::vector<PendingEnterWorldFinalize>> pending_enter_world_finalize_by_assign_request_;
+		std::unordered_map<std::uint64_t, PendingZonePlayerEnterRequest> pending_zone_player_enter_requests_;
 		std::uint64_t next_zone_assign_request_id_ = 1;
+		std::uint64_t next_zone_player_enter_request_id_ = 1;
 
 		mutable std::mutex world_session_mtx_;
 
@@ -421,6 +481,9 @@ namespace svr {
 		std::unordered_map<std::uint32_t, WorldAuthedSession> authed_sessions_by_sid_;
 		std::unordered_map<std::uint64_t, std::uint32_t> authed_sid_by_char_id_;
 		std::unordered_map<std::uint64_t, std::uint32_t> authed_sid_by_account_id_;
+		std::unordered_map<std::uint32_t, WorldEnterStage> world_enter_stage_by_sid_;
+		std::unordered_map<std::uint64_t, std::uint32_t> pending_enter_sid_by_char_id_;
+
 
 		std::mutex delayed_world_close_mtx_;
 		std::unordered_map<

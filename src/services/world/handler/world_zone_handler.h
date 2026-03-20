@@ -42,12 +42,15 @@ public:
 
 	using UnregisterCallback = std::function<void(std::uint32_t sid, std::uint32_t serial)>;
 	using MapAssignResponseCallback = std::function<void(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse&)>;
+	using PlayerEnterAckCallback = std::function<void(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck&)>;
+
 
 	WorldZoneHandler(
 		RegisterCallback on_register,
 		HeartbeatCallback on_heartbeat,
 		UnregisterCallback on_unregister,
-		MapAssignResponseCallback on_map_assign_response);
+		MapAssignResponseCallback on_map_assign_response,
+		PlayerEnterAckCallback on_player_enter_ack);
 
 	bool SendMapAssignRequest(
 		std::uint32_t dwProID,
@@ -63,6 +66,7 @@ public:
 		std::uint32_t dwProID,
 		std::uint32_t dwIndex,
 		std::uint32_t dwSerial,
+		std::uint64_t request_id,
 		std::uint64_t char_id,
 		std::uint32_t map_template_id,
 		std::uint32_t instance_id,
@@ -104,4 +108,5 @@ private:
 	HeartbeatCallback on_heartbeat_;
 	UnregisterCallback on_unregister_;
 	MapAssignResponseCallback on_map_assign_response_;
+	PlayerEnterAckCallback on_player_enter_ack_;
 };

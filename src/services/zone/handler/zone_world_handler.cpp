@@ -105,6 +105,30 @@ bool ZoneWorldHandler::SendMapAssignResponse(
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
+bool ZoneWorldHandler::SendPlayerEnterAck(
+	std::uint32_t dwProID,
+	std::uint32_t dwIndex,
+	std::uint32_t dwSerial,
+	std::uint64_t request_id,
+	std::uint16_t result_code,
+	std::uint16_t zone_id,
+	std::uint64_t char_id,
+	std::uint32_t map_template_id,
+	std::uint32_t instance_id)
+{
+	pt_wz::ZoneWorldPlayerEnterAck pkt{};
+	pkt.request_id = request_id;
+	pkt.result_code = result_code;
+	pkt.zone_id = zone_id;
+	pkt.char_id = char_id;
+	pkt.map_template_id = map_template_id;
+	pkt.instance_id = instance_id;
+	auto h = proto::make_header(
+		static_cast<std::uint16_t>(pt_wz::WorldZoneMsg::zone_world_player_enter_ack),
+		static_cast<std::uint16_t>(sizeof(pkt)));
+	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
 bool ZoneWorldHandler::DataAnalysis(std::uint32_t, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
 {
 	if (!pMsgHeader) {

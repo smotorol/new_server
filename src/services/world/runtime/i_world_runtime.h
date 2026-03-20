@@ -7,6 +7,7 @@
 #include <string_view>
 
 #include "services/world/actors/world_actors.h"
+#include "server_common/session/session_key.h"
 #include "db/core/dqs_results.h"
 #include "proto/internal/world_zone_proto.h"
 
@@ -20,6 +21,34 @@ namespace svr {
 		std::uint64_t char_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+	};
+
+	enum class WorldEnterStage
+	{
+		None = 0,
+		EnterPending,
+		InWorld,
+		Closing,
+	};
+
+	enum class BeginEnterWorldSessionResultKind
+	{
+		InvalidInput = 0,
+		Started,
+		AlreadyPending,
+		AlreadyInWorld,
+		Closing,
+	};
+
+	struct BeginEnterWorldSessionResult
+	{
+		BeginEnterWorldSessionResultKind kind = BeginEnterWorldSessionResultKind::InvalidInput;
+		WorldEnterStage stage = WorldEnterStage::None;
+
+		[[nodiscard]] bool started() const noexcept
+		{
+			return kind == BeginEnterWorldSessionResultKind::Started;
+		}
 	};
 
 	enum class BindAuthedWorldSessionResultKind
@@ -115,6 +144,7 @@ namespace svr {
 		AssignMapInstanceResultKind kind = AssignMapInstanceResultKind::NoZoneAvailable;
 		std::uint64_t request_id = 0;
 		std::uint16_t zone_id = 0;
+		std::uint16_t reject_result_code = 0;
 		std::uint32_t map_template_id = 0;
 		std::uint32_t instance_id = 0;
 
@@ -182,6 +212,31 @@ namespace svr {
 			std::uint64_t char_id,
 			std::string_view login_session,
 			std::string_view token) = 0;
+
+		virtual BeginEnterWorldSessionResult TryBeginEnterWorldSession(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t account_id,
+			std::uint64_t char_id) = 0;
+
+		virtual void CancelPendingEnterWorldSession(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id) = 0;
+
+		virtual bool IsEnterWorldSessionPending(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id) const = 0;
+
+		virtual bool PromoteEnterWorldSessionToInWorld(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id) = 0;
+
+		virtual void MarkEnterWorldSessionClosing(
+			std::uint32_t sid,
+			std::uint32_t serial) = 0;
 
 		virtual void OnWorldAuthTicketConsumeResponse(
 			std::uint64_t request_id,

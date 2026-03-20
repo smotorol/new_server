@@ -50,6 +50,16 @@ public:
 		std::uint16_t zone_id,
 		std::uint32_t map_template_id,
 		std::uint32_t instance_id);
+	bool SendPlayerEnterAck(
+		std::uint32_t dwProID,
+		std::uint32_t dwIndex,
+		std::uint32_t dwSerial,
+		std::uint64_t request_id,
+		std::uint16_t result_code,
+		std::uint16_t zone_id,
+		std::uint64_t char_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id);
 protected:
 	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg) override;
 	void OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial) override;

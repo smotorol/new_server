@@ -17,7 +17,15 @@ namespace proto::internal::world_zone {
         zone_world_map_assign_response = 3412,
 		world_zone_player_enter = 3413,
 		world_zone_player_leave = 3414,
+		zone_world_player_enter_ack = 3415,
 	};
+
+	enum class ZonePlayerEnterResultCode : std::uint16_t
+	{
+		ok = 0,
+		map_not_found = 1,
+		internal_error = 2,
+ 	};
 
 	enum class ZoneMapAssignResultCode : std::uint16_t
 	{
@@ -73,6 +81,7 @@ namespace proto::internal::world_zone {
 
 	struct WorldZonePlayerEnter
 	{
+		std::uint64_t request_id = 0;
 		std::uint64_t char_id = 0;
 		std::uint32_t map_template_id = 0;
 		std::uint32_t instance_id = 0;
@@ -87,6 +96,16 @@ namespace proto::internal::world_zone {
 		std::uint32_t instance_id = 0;
 		std::uint16_t zone_id = 0;
 		std::uint16_t reserved = 0;
+	};
+
+	struct ZoneWorldPlayerEnterAck
+	{
+		std::uint64_t request_id = 0;
+		std::uint16_t result_code = 0;
+		std::uint16_t zone_id = 0;
+		std::uint64_t char_id = 0;
+		std::uint32_t map_template_id = 0;
+		std::uint32_t instance_id = 0;
 	};
 
     struct WorldZoneMapAssignRequest

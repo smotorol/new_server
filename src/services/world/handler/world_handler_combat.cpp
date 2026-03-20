@@ -4,6 +4,7 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "server_common/session/session_key.h"
 #include "services/world/actors/world_actors.h"
 
 bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
@@ -16,7 +17,7 @@ bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t
 	const std::uint32_t attacker_atk = attacker.combat.atk;
 	const std::uint32_t zone_id = attacker.zone_id;
 	const std::uint32_t serial = GetLatestSerial(sid);
-	if (serial == 0) return true;
+	if (!dc::IsValidSessionKey(sid, serial)) return true;
 	const std::uint64_t monster_id = req->monster_id;
 	auto self = shared_from_this();
 
@@ -120,13 +121,13 @@ bool WorldHandler::HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t 
 	const std::uint32_t a_serial = GetLatestSerial(sid);
 	if (a_serial != 0) {
 		Send(dwProID, sid, a_serial, h, reinterpret_cast<const char*>(&res));
-	}
+ 	}
 	if (target_sid != 0) {
 		const std::uint32_t t_serial = GetLatestSerial(target_sid);
 		if (t_serial != 0) {
 			Send(dwProID, target_sid, t_serial, h, reinterpret_cast<const char*>(&res));
-		}
-	}
+ 		}
+ 	}
 
 	return true;
 }

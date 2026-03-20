@@ -13,6 +13,7 @@
 #include "net/handler/net_handler.h"
 #include "net/tcp/tcp_server.h"
 #include "net/tcp/tcp_client.h"
+#include "server_common/session/session_key.h"
 
 namespace dc {
 
@@ -115,9 +116,9 @@ namespace dc {
 					s->async_send_lossy(header, body);
 					return true;
 				}
-			}
-			return false;
 		}
+				return false;
+			}
 
 		// ========== net::INetHandler ==========
 		void on_connected(std::uint32_t idx, std::uint32_t serial) override

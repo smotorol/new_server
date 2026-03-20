@@ -1,16 +1,13 @@
 #include "services/world/runtime/world_runtime_private.h"
+#include "server_common/session/session_key.h"
 #include "server_common/config/aoi_config.h"
 
 namespace svr {
 
-
 	void WorldRuntime::CloseWorldServer(std::uint32_t world_socket_index) {
 		if (!lines_.host(svr::WorldLineId::World).server()) return;
 		lines_.host(svr::WorldLineId::World).server()->close(world_socket_index);
-
 	}
-
-
 
 	void WorldRuntime::RegisterControlLine(
 		std::uint32_t sid, std::uint32_t serial,
@@ -30,8 +27,6 @@ namespace svr {
 			"WorldRuntime registered control line. sid={} serial={} server_id={} name={} listen_port={}",
 			sid, serial, server_id, server_name, listen_port);
 	}
-
-
 
 	void WorldRuntime::UnregisterControlLine(std::uint32_t sid, std::uint32_t serial)
 	{
@@ -53,9 +48,6 @@ namespace svr {
 
 		control_line_state_ = {};
 	}
-
-
-
 
 	bool WorldRuntime::LoadIniFile()
 	{
@@ -283,8 +275,6 @@ namespace svr {
 		return true;
 	}
 
-
-
 	bool WorldRuntime::DatabaseInit()
 	{
 		world_pools_.clear();
@@ -374,8 +364,6 @@ namespace svr {
 		return true;
 	}
 
-
-
 	bool WorldRuntime::EnsureAccountHandler_()
 	{
 		if (world_account_handler_) {
@@ -401,8 +389,6 @@ namespace svr {
 
 		return true;
 	}
-
-
 
 	bool WorldRuntime::NetworkInit()
 	{
@@ -441,7 +427,10 @@ namespace svr {
 		},
 				[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res) {
 			OnZoneMapAssignResponse(sid, serial, res);
-		}),
+		},
+				[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack) {
+			OnZonePlayerEnterAck(sid, serial, ack);
+ 		}),
 			dispatch)) {
 			return false;
 		}
@@ -512,8 +501,6 @@ namespace svr {
 		return true;
 	}
 
-
-
 	void WorldRuntime::SendAccountRouteHeartbeat_()
 	{
 		if (!account_ready_.load(std::memory_order_acquire)) {
@@ -527,7 +514,7 @@ namespace svr {
 
 		const auto sid = account_sid_.load(std::memory_order_relaxed);
 		const auto serial = account_serial_.load(std::memory_order_relaxed);
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			return;
 		}
 
@@ -535,8 +522,6 @@ namespace svr {
 			spdlog::debug("WorldRuntime failed to send account route heartbeat. sid={} serial={}", sid, serial);
 		}
 	}
-
-
 
 	void WorldRuntime::MarkAccountRegistered_(
 		std::uint32_t sid,
@@ -554,15 +539,13 @@ namespace svr {
 		account_sid_.store(sid, std::memory_order_relaxed);
 		account_serial_.store(serial, std::memory_order_relaxed);
 		account_ready_.store(true, std::memory_order_release);
-		next_account_route_heartbeat_tp_ = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+		next_account_route_heartbeat_tp_ = std::chrono::steady_clock::now() + dc::k_next_account_route_heartbeat_tp;
 
 		spdlog::info(
 
 			"WorldRuntime account line ready. sid={} serial={} server_id={} world_id={} channel_id={} zones={} load_score={} flags={} server_name={} public_host={} public_port={}",
 			sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
 	}
-
-
 
 	void WorldRuntime::MarkAccountDisconnected_(
 		std::uint32_t sid,
@@ -579,8 +562,6 @@ namespace svr {
 		account_sid_.store(0, std::memory_order_relaxed);
 		account_serial_.store(0, std::memory_order_relaxed);
 	}
-
-
 
 	bool WorldRuntime::NotifyAccountWorldEnterSuccess(
 		std::uint64_t account_id,
@@ -613,6 +594,4 @@ namespace svr {
 			login_session,
 			world_token);
 	}
-
-
 } // namespace svr

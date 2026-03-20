@@ -190,6 +190,7 @@ bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pM
 
 			std::cout << "[World] enter_world_result sid=" << n
 				<< " ok=" << static_cast<int>(res->ok)
+				<< " reason=" << res->reason
 				<< " account_id=" << res->account_id
 				<< " char_id=" << res->char_id
 				<< "\n";

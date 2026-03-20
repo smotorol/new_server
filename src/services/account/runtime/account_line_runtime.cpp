@@ -638,7 +638,7 @@ namespace dc {
 			return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::TokenNotFound);
 		}
 
-		if (std::chrono::steady_clock::now() - it->second.issued_at >= std::chrono::seconds(30)) {
+		if (std::chrono::steady_clock::now() - it->second.issued_at >= dc::k_account_world_expire) {
 			pending_world_upserts_.erase(it);
 			return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::Expired);
 		}
@@ -803,7 +803,7 @@ namespace dc {
 	{
 		std::lock_guard lk(pending_world_upsert_mtx_);
 		for (auto it = pending_world_upserts_.begin(); it != pending_world_upserts_.end();) {
-			if (now - it->second.issued_at >= std::chrono::seconds(30)) {
+			if (now - it->second.issued_at >= dc::k_pending_world_upserts_expire) {
 				it = pending_world_upserts_.erase(it);
 			}
 			else {
@@ -812,7 +812,7 @@ namespace dc {
 		}
 
 		for (auto it = consumed_world_enters_awaiting_notify_.begin(); it != consumed_world_enters_awaiting_notify_.end();) {
-			if (now - it->second.consumed_at >= std::chrono::seconds(30)) {
+			if (now - it->second.consumed_at >= dc::k_consumed_world_enters_awaiting_notify_expire) {
 				spdlog::warn(
 					"AccountLineRuntime expired consumed world ticket waiting for success notify. account_id={} char_id={} token={}",
 					it->second.account_id,

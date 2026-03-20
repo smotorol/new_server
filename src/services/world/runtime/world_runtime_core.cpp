@@ -70,7 +70,7 @@ namespace svr {
 		ScheduleFlush_();
 		EnqueueFlushDirty_(true);
 
-		next_stat_tp_ = std::chrono::steady_clock::now() + std::chrono::seconds(1);
+		next_stat_tp_ = std::chrono::steady_clock::now() + dc::k_next_stat_tp_;
 		last_move_pkts_ = 0;
 		last_move_items_ = 0;
 
@@ -219,14 +219,14 @@ namespace svr {
 		}
 
 		if (account_ready_.load(std::memory_order_acquire) && now >= next_account_route_heartbeat_tp_) {
-			next_account_route_heartbeat_tp_ = now + std::chrono::seconds(3);
+			next_account_route_heartbeat_tp_ = now + dc::k_next_account_route_heartbeat_tp;
 			SendAccountRouteHeartbeat_();
 		}
 
 		ExpireStaleZoneRoutes_(now);
 
 		if (now >= next_stat_tp_) {
-			next_stat_tp_ = now + std::chrono::seconds(1);
+			next_stat_tp_ = now + dc::k_next_stat_tp_;
 
 			const auto cur_pkts = svr::metrics::g_s2c_move_pkts_sent.load(std::memory_order_relaxed);
 			const auto cur_items = svr::metrics::g_s2c_move_items_sent.load(std::memory_order_relaxed);

@@ -7,6 +7,7 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/internal/login_world_proto.h"
+#include "server_common/session/session_key.h"
 
 namespace pt_lw = proto::internal::login_world;
 

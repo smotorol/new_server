@@ -6,6 +6,7 @@
 
 #include "server_common/runtime/line_client_start_helper.h"
 #include "server_common/runtime/line_start_helper.h"
+#include "server_common/session/session_key.h"
 
 namespace dc {
 
@@ -45,7 +46,7 @@ namespace dc {
         const auto cur_sid = world_sid_.load(std::memory_order_relaxed);
         const auto cur_serial = world_serial_.load(std::memory_order_relaxed);
 
-        if (cur_sid != 0 && (cur_sid != sid || cur_serial != serial)) {
+        if (cur_sid != 0 && !dc::IsSameSessionKey(cur_sid, cur_serial, sid, serial)) {
             spdlog::debug(
                 "ControlLineRuntime ignore stale world disconnect. sid={} serial={} current_sid={} current_serial={}",
                 sid, serial, cur_sid, cur_serial);

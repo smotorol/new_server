@@ -3,6 +3,7 @@
 #include <spdlog/spdlog.h>
 
 #include "services/zone/handler/zone_world_handler.h"
+#include "server_common/session/session_key.h"
 
 namespace svr {
 
@@ -56,11 +57,11 @@ namespace svr {
 	void ZoneRuntime::OnMainLoopTick(std::chrono::steady_clock::time_point now)
 	{
 		if (world_ready_.load(std::memory_order_acquire) && now >= next_world_heartbeat_tp_) {
-			next_world_heartbeat_tp_ = now + std::chrono::seconds(2);
+			next_world_heartbeat_tp_ = now + dc::k_next_world_heartbeat_tp;
 			SendWorldHeartbeat_();
 		}
 		if (now >= next_reap_tp_) {
-			next_reap_tp_ = now + std::chrono::seconds(10);
+			next_reap_tp_ = now + dc::k_next_reap_tp;
 			ReapEmptyDungeonInstances_(now);
 		}
 	}
@@ -112,14 +113,15 @@ namespace svr {
 		world_sid_.store(sid, std::memory_order_relaxed);
 		world_serial_.store(serial, std::memory_order_relaxed);
 		world_ready_.store(true, std::memory_order_release);
-		next_world_heartbeat_tp_ = std::chrono::steady_clock::now() + std::chrono::seconds(2);
-		next_reap_tp_ = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+		next_world_heartbeat_tp_ = std::chrono::steady_clock::now() + dc::k_next_world_heartbeat_tp;
+		next_reap_tp_ = std::chrono::steady_clock::now() + dc::k_next_reap_tp;
 	}
 
 	void ZoneRuntime::MarkWorldDisconnected_(std::uint32_t sid, std::uint32_t serial)
 	{
-		if (world_sid_.load(std::memory_order_relaxed) != sid ||
-			world_serial_.load(std::memory_order_relaxed) != serial) {
+		const auto cur_sid = world_sid_.load(std::memory_order_relaxed);
+		const auto cur_serial = world_serial_.load(std::memory_order_relaxed);
+		if (!dc::IsSameSessionKey(cur_sid, cur_serial, sid, serial)) {
 			return;
 		}
 
@@ -136,7 +138,7 @@ namespace svr {
 
 		const auto sid = world_sid_.load(std::memory_order_relaxed);
 		const auto serial = world_serial_.load(std::memory_order_relaxed);
-		if (sid == 0 || serial == 0) {
+		if (!dc::IsValidSessionKey(sid, serial)) {
 			return;
 		}
 
@@ -225,14 +227,27 @@ namespace svr {
 	}
 
 	void ZoneRuntime::OnPlayerEnterRequest_(
-		std::uint32_t /*sid*/,
-		std::uint32_t /*serial*/,
+		std::uint32_t sid,
+		std::uint32_t serial,
 		const pt_wz::WorldZonePlayerEnter& req)
 	{
-		EnsureMapInstance_(req.map_template_id, req.instance_id, true, IsDungeonMapTemplate_(req.map_template_id));
+		auto* handler = zone_world_handler_.get();
+		if (!handler) {
+			return;
+		}
 		const auto key = MakeMapInstanceKey_(req.map_template_id, req.instance_id);
 		auto it = map_instances_.find(key);
 		if (it == map_instances_.end()) {
+			handler->SendPlayerEnterAck(
+				0,
+				sid,
+				serial,
+				req.request_id,
+				static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::map_not_found),
+				zone_id_,
+				req.char_id,
+				req.map_template_id,
+				req.instance_id);
 			return;
 		}
 
@@ -240,6 +255,10 @@ namespace svr {
 		if (bind_it != player_bindings_.end()) {
 			if (bind_it->second.map_key == key) {
 				it->second.last_access_at = std::chrono::steady_clock::now();
+				handler->SendPlayerEnterAck(
+					0, sid, serial, req.request_id,
+					static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok),
+					zone_id_, req.char_id, req.map_template_id, req.instance_id);
 				return;
 			}
 			auto old_it = map_instances_.find(bind_it->second.map_key);
@@ -253,6 +272,17 @@ namespace svr {
 		it->second.last_access_at = std::chrono::steady_clock::now();
 		player_bindings_[req.char_id] = PlayerBindingState{ key, req.map_template_id, req.instance_id };
 		RefreshMetrics_();
+
+		handler->SendPlayerEnterAck(
+			0,
+			sid,
+			serial,
+			req.request_id,
+			static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok),
+			zone_id_,
+			req.char_id,
+			req.map_template_id,
+			req.instance_id);
 	}
 
 	void ZoneRuntime::OnPlayerLeaveRequest_(
@@ -281,7 +311,7 @@ namespace svr {
 		bool changed = false;
 		for (auto it = map_instances_.begin(); it != map_instances_.end();) {
 			const auto& inst = it->second;
-			if (inst.dungeon_instance && inst.active_player_count == 0 && (now - inst.last_access_at) >= std::chrono::seconds(30)) {
+			if (inst.dungeon_instance && inst.active_player_count == 0 && (now - inst.last_access_at) >= dc::k_ReapEmptyDungeonInstances_) {
 				it = map_instances_.erase(it);
 				changed = true;
 				continue;

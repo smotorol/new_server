@@ -227,7 +227,7 @@ namespace dc {
         std::shared_ptr<AccountLoginHandler> login_handler_;
         std::shared_ptr<AccountWorldHandler> world_handler_;
 
-        static constexpr auto kWorldRouteHeartbeatTimeout_ = std::chrono::seconds(10);
+        static constexpr auto kWorldRouteHeartbeatTimeout_ = dc::kWorldRouteHeartbeatTimeout_;
 
         std::mutex pending_world_upsert_mtx_;
         std::unordered_map<std::string, PendingWorldTicketUpsert> pending_world_upserts_;

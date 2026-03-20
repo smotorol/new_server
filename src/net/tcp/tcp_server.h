@@ -13,6 +13,8 @@
 #include <vector>
 #include <algorithm>
 
+#include "server_common/session/session_key.h"
+
 namespace net {
 	namespace asio = boost::asio;
 	using tcp = asio::ip::tcp;
@@ -28,6 +30,10 @@ namespace net {
 			, acceptor_(asio::make_strand(io_))
 			, handler_(std::move(handler))
 		{
+			// sid/index 0은 invalid reserved 값으로 통일한다.
+			// 서버 세션 슬롯은 1부터 실제 할당되도록 0번 슬롯을 미리 예약한다.
+			slots_.push_back({});
+			slot_serials_.push_back(0);
 			boost::system::error_code ec;
 
 			const auto endpoint = boost::asio::ip::tcp::endpoint(
@@ -69,6 +75,7 @@ namespace net {
 		// sid로 세션 종료(레거시 CloseSocket 대체)
 		void close(std::uint32_t index, std::uint32_t serial)
 		{
+			if (!dc::IsValidSessionKey(index, serial)) return;
 			if (auto s = try_get_session_(index, serial)) {
 				s->close();
 			}
@@ -77,6 +84,7 @@ namespace net {
 		// (관리/테스트용) serial 없이 강제 종료
 		void close(std::uint32_t index)
 		{
+			if (index == 0) return;
 			std::lock_guard<std::mutex> lk(slots_mtx_);
 			if (index >= slots_.size()) return;
 			if (auto s = slots_[index].lock()) s->close();
@@ -86,6 +94,7 @@ namespace net {
 		// body는 nullable. header.m_wSize는 (헤더+바디) 전체 크기로 세팅되어 있어야 함.
 		bool send(std::uint32_t index, std::uint32_t serial, const _MSG_HEADER& header, const char* body)
 		{
+			if (!dc::IsValidSessionKey(index, serial)) return false;
 			if (auto s = try_get_session_(index, serial)) {
 				s->async_send(header, body);
 				return true;
@@ -96,6 +105,7 @@ namespace net {
 		// ✅ Lossy send (AOI/bench/move): if the session send queue is saturated, DO NOT close; just report failure.
 		bool try_send_lossy(std::uint32_t index, std::uint32_t serial, const _MSG_HEADER& header, const char* body)
 		{
+			if (!dc::IsValidSessionKey(index, serial)) return false;
 			if (auto s = try_get_session_(index, serial)) {
 				const std::size_t msg_bytes = (std::size_t)header.m_wSize;
 				if (!s->can_accept_send(msg_bytes)) return false;
@@ -108,6 +118,7 @@ namespace net {
 		// (관리/테스트용) serial 없이 송신 (현재 슬롯에 매달린 세션으로 보냄)
 		bool send(std::uint32_t index, const _MSG_HEADER& header, const char* body)
 		{
+			if (index == 0) return false;
 			std::lock_guard<std::mutex> lk(slots_mtx_);
 			if (index >= slots_.size()) return false;
 			if (auto s = slots_[index].lock()) { s->async_send(header, body); return true; }
@@ -210,6 +221,7 @@ namespace net {
 				free_list_.pop_back();
 				return idx;
 			}
+			// 0번 슬롯은 invalid reserved 이므로 실제 세션 sid/index는 항상 1부터 시작한다.
 			const std::uint32_t idx = static_cast<std::uint32_t>(slots_.size());
 			slots_.push_back({});
 			slot_serials_.push_back(0);
@@ -218,6 +230,7 @@ namespace net {
 		std::shared_ptr<TcpSession> try_get_session_(std::uint32_t index, std::uint32_t serial)
 		{
 			std::lock_guard<std::mutex> lk(slots_mtx_);
+			if (!dc::IsValidSessionKey(index, serial)) return {};
 			if (index >= slots_.size()) return {};
 			auto sp = slots_[index].lock();
 			if (!sp) return {};

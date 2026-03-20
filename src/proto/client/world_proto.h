@@ -34,6 +34,22 @@ namespace proto::world {
         auth_ticket_mismatch = 5,
         bind_invalid_input = 6,
         internal_error = 7,
+        zone_not_available = 8,
+        zone_assign_send_failed = 9,
+        zone_assign_timeout = 10,
+        zone_assign_route_lost = 11,
+        zone_assign_rejected = 12,
+        zone_map_not_found = 13,
+        zone_map_capacity_full = 14,
+        zone_player_enter_send_failed = 15,
+        account_enter_notify_failed = 16,
+        zone_player_enter_timeout = 17,
+        zone_player_enter_route_lost = 18,
+        zone_player_enter_rejected = 19,
+        zone_player_map_not_found = 20,
+        enter_already_pending = 21,
+        already_in_world = 22,
+        session_closing = 23,
     };
 
 #pragma pack(push, 1)

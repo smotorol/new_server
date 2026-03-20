@@ -7,11 +7,12 @@
 
 #include "proto/common/packet_util.h"
 
-WorldZoneHandler::WorldZoneHandler(RegisterCallback on_register, HeartbeatCallback on_heartbeat, UnregisterCallback on_unregister, MapAssignResponseCallback on_map_assign_response)
+WorldZoneHandler::WorldZoneHandler(RegisterCallback on_register, HeartbeatCallback on_heartbeat, UnregisterCallback on_unregister, MapAssignResponseCallback on_map_assign_response, PlayerEnterAckCallback on_player_enter_ack)
 	: on_register_(std::move(on_register))
 	, on_heartbeat_(std::move(on_heartbeat))
 	, on_unregister_(std::move(on_unregister))
 	, on_map_assign_response_(std::move(on_map_assign_response))
+	, on_player_enter_ack_(std::move(on_player_enter_ack))
 {
 }
 
@@ -79,12 +80,14 @@ bool WorldZoneHandler::SendPlayerEnter(
 	std::uint32_t dwProID,
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial,
+	std::uint64_t request_id,
 	std::uint64_t char_id,
 	std::uint32_t map_template_id,
 	std::uint32_t instance_id,
 	std::uint16_t zone_id)
 {
 	pt_wz::WorldZonePlayerEnter pkt{};
+	pkt.request_id = request_id;
 	pkt.char_id = char_id;
 	pkt.map_template_id = map_template_id;
 	pkt.instance_id = instance_id;
@@ -168,6 +171,18 @@ bool WorldZoneHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG
 			}
 			if (on_map_assign_response_) {
 				on_map_assign_response_(n, GetLatestSerial(n), *res);
+			}
+			return true;
+		}
+	case pt_wz::WorldZoneMsg::zone_world_player_enter_ack:
+		{
+			const auto* ack = proto::as<pt_wz::ZoneWorldPlayerEnterAck>(pMsg, body_len);
+			if (!ack) {
+				spdlog::error("WorldZoneHandler invalid zone_world_player_enter_ack sid={}", n);
+				return false;
+			}
+			if (on_player_enter_ack_) {
+				on_player_enter_ack_(n, GetLatestSerial(n), *ack);
 			}
 			return true;
 		}

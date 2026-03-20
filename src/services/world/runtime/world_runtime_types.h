@@ -79,4 +79,27 @@ namespace svr {
 		std::string cached_state_blob;
 	};
 
+	struct PendingZonePlayerEnterRequest
+	{
+		std::uint64_t request_id = 0;
+		std::uint32_t target_sid = 0;
+		std::uint32_t target_serial = 0;
+		std::uint32_t target_zone_server_id = 0;
+		std::uint16_t target_zone_id = 0;
+		PendingEnterWorldConsumeRequest enter_pending{};
+		std::uint32_t map_template_id = 0;
+		std::uint32_t instance_id = 0;
+		std::string cached_state_blob;
+		std::chrono::steady_clock::time_point issued_at{};
+	};
+
+	struct LeaveWorldContext
+	{
+		std::uint64_t char_id = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint16_t zone_id = 0;
+		std::uint32_t map_template_id = 0;
+		std::uint32_t instance_id = 0;
+	};
 } // namespace svr
