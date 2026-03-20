@@ -25,6 +25,47 @@
 namespace pt_aw = proto::internal::account_world;
 
 namespace {
+	enum class AccountFlowEvent
+	{
+		LoginCoordinatorReady,
+		LoginCoordinatorDisconnected,
+		WorldRouteRegistered,
+		WorldRouteDisconnected,
+		WorldRouteHeartbeatStale,
+		WorldRouteHeartbeatMismatch,
+		AuthRejected,
+		AuthWorldRouteUnavailable,
+		WorldTicketIssued,
+		WorldTicketConsumeAccepted,
+		WorldTicketConsumeRejected,
+		WorldEnterNotifyDropped,
+		WorldEnterNotifyRelayed,
+		WorldTicketAwaitNotifyExpired,
+		WorldRouteExpired,
+	};
+
+	const char* ToString(AccountFlowEvent e)
+	{
+		switch (e) {
+		case AccountFlowEvent::LoginCoordinatorReady: return "ACC_LOGIN_READY";
+		case AccountFlowEvent::LoginCoordinatorDisconnected: return "ACC_LOGIN_DISC";
+		case AccountFlowEvent::WorldRouteRegistered: return "ACC_WORLD_ROUTE_REG";
+		case AccountFlowEvent::WorldRouteDisconnected: return "ACC_WORLD_ROUTE_DISC";
+		case AccountFlowEvent::WorldRouteHeartbeatStale: return "ACC_WORLD_ROUTE_HB_STALE";
+		case AccountFlowEvent::WorldRouteHeartbeatMismatch: return "ACC_WORLD_ROUTE_HB_MISMATCH";
+		case AccountFlowEvent::AuthRejected: return "ACC_AUTH_REJECT";
+		case AccountFlowEvent::AuthWorldRouteUnavailable: return "ACC_AUTH_ROUTE_UNAVAILABLE";
+		case AccountFlowEvent::WorldTicketIssued: return "ACC_WORLD_TICKET_ISSUED";
+		case AccountFlowEvent::WorldTicketConsumeAccepted: return "ACC_WORLD_TICKET_CONSUMED";
+		case AccountFlowEvent::WorldTicketConsumeRejected: return "ACC_WORLD_TICKET_REJECTED";
+		case AccountFlowEvent::WorldEnterNotifyDropped: return "ACC_WORLD_ENTER_NOTIFY_DROP";
+		case AccountFlowEvent::WorldEnterNotifyRelayed: return "ACC_WORLD_ENTER_NOTIFY_RELAY";
+		case AccountFlowEvent::WorldTicketAwaitNotifyExpired: return "ACC_WORLD_TICKET_NOTIFY_EXPIRE";
+		case AccountFlowEvent::WorldRouteExpired: return "ACC_WORLD_ROUTE_EXPIRE";
+		default: return "ACC_UNKNOWN";
+		}
+	}
+
 	std::string ToHexToken_(std::uint64_t a, std::uint64_t b)
 	{
 		std::ostringstream oss;
@@ -46,7 +87,7 @@ namespace dc {
 	{
 	}
 
-	void AccountLineRuntime::MarkLoginRegistered(
+	void AccountLineRuntime::OnLoginCoordinatorRegistered_(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint32_t server_id,
@@ -58,7 +99,8 @@ namespace dc {
 		login_ready_.store(true, std::memory_order_release);
 
 		spdlog::info(
-			"AccountLineRuntime login ready sid={} serial={} server_id={} server_name={} listen_port={}",
+			"[{}] login coordinator ready sid={} serial={} server_id={} server_name={} listen_port={}",
+			ToString(AccountFlowEvent::LoginCoordinatorReady),
 			sid, serial, server_id, server_name, listen_port);
 
 		if (login_handler_) {
@@ -66,7 +108,7 @@ namespace dc {
 		}
 	}
 
-	void AccountLineRuntime::MarkLoginDisconnected(
+	void AccountLineRuntime::OnLoginCoordinatorDisconnected_(
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
@@ -80,9 +122,15 @@ namespace dc {
 		login_ready_.store(false, std::memory_order_release);
 		login_sid_.store(0, std::memory_order_relaxed);
 		login_serial_.store(0, std::memory_order_relaxed);
+
+		spdlog::info(
+			"[{}] login coordinator disconnected sid={} serial={}",
+			ToString(AccountFlowEvent::LoginCoordinatorDisconnected),
+			sid,
+			serial);
 	}
 
-	void AccountLineRuntime::MarkWorldRegistered(
+	void AccountLineRuntime::OnWorldRouteRegistered_(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint32_t server_id,
@@ -126,8 +174,10 @@ namespace dc {
 			world_count = worlds_by_sid_.size();
 		}
 
+
 		spdlog::info(
-			"AccountLineRuntime world coordinator registered sid={} serial={} server_id={} world_id={} channel_id={} zones={} load_score={} flags={} server_name={} public_host={} public_port={} world_count={}",
+			"[{}] world route registered sid={} serial={} server_id={} world_id={} channel_id={} zones={} load_score={} flags={} server_name={} public_host={} public_port={} world_count={}",
+			ToString(AccountFlowEvent::WorldRouteRegistered),
 			sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port, world_count);
 
 		if (world_handler_) {
@@ -148,7 +198,7 @@ namespace dc {
 		}
 	}
 
-	void AccountLineRuntime::MarkWorldDisconnected(
+	void AccountLineRuntime::OnWorldRouteDisconnected_(
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
@@ -180,14 +230,15 @@ namespace dc {
 		}
 
 		spdlog::info(
-			"AccountLineRuntime world disconnected sid={} serial={} server_id={} remaining_worlds={}",
-			sid,
+			"[{}] world route disconnected sid={} serial={} server_id={} remaining_worlds={}",
+			ToString(AccountFlowEvent::WorldRouteDisconnected), sid,
 			serial,
 			removed_server_id,
 			world_count);
 	}
 
-	void AccountLineRuntime::OnWorldRouteHeartbeat(
+	void AccountLineRuntime::OnWorldRouteHeartbeatReceived_(
+
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint32_t server_id,
@@ -201,8 +252,8 @@ namespace dc {
 		const auto it = worlds_by_sid_.find(sid);
 		if (it == worlds_by_sid_.end() || it->second.serial != serial) {
 			spdlog::debug(
-				"AccountLineRuntime ignored stale world route heartbeat. sid={} serial={} server_id={} world_id={} channel_id={}",
-				sid,
+				"[{}] ignored stale world route heartbeat sid={} serial={} server_id={} world_id={} channel_id={}",
+				ToString(AccountFlowEvent::WorldRouteHeartbeatStale), sid,
 				serial,
 				server_id,
 				world_id,
@@ -213,7 +264,8 @@ namespace dc {
 		auto& endpoint = it->second;
 		if (endpoint.server_id != server_id) {
 			spdlog::warn(
-				"AccountLineRuntime ignored world heartbeat with mismatched server_id. sid={} serial={} endpoint_server_id={} heartbeat_server_id={}",
+				"[{}] ignored world heartbeat with mismatched server_id sid={} serial={} endpoint_server_id={} heartbeat_server_id={}",
+				ToString(AccountFlowEvent::WorldRouteHeartbeatMismatch),
 				sid,
 				serial,
 				endpoint.server_id,
@@ -246,7 +298,8 @@ namespace dc {
 		return true;
 	}
 
-	bool AccountLineRuntime::TryGetWorldEndpoint_(
+
+	bool AccountLineRuntime::TrySelectWorldRouteEndpoint_(
 		std::string& out_host,
 		std::uint16_t& out_port,
 		std::uint32_t& out_server_id,
@@ -284,7 +337,7 @@ namespace dc {
 		return true;
 	}
 
-	bool AccountLineRuntime::TryGetRegisteredWorldServerId_(
+	bool AccountLineRuntime::TryResolveRegisteredWorldServerId_(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint32_t& out_server_id) const
@@ -534,6 +587,14 @@ namespace dc {
 			(rr.result == svr::dqs::ResultCode::success);
 
 		if (!auth_ok) {
+			spdlog::warn(
+				"[{}] auth rejected request_id={} sid={} serial={} fail_reason={} result={}",
+				ToString(AccountFlowEvent::AuthRejected),
+				rr.request_id,
+				rr.sid,
+				rr.serial,
+				rr.fail_reason,
+				static_cast<int>(rr.result));
 			login_handler_->SendAccountAuthResult(
 				0,
 				rr.sid,
@@ -556,7 +617,13 @@ namespace dc {
 		std::uint16_t target_world_id = 0;
 		std::uint16_t target_channel_id = 0;
 
-		if (!TryGetWorldEndpoint_(world_host, world_port, target_world_server_id, target_world_id, target_channel_id)) {
+		if (!TrySelectWorldRouteEndpoint_(world_host, world_port, target_world_server_id, target_world_id, target_channel_id)) {
+			spdlog::warn(
+				"[{}] auth cannot issue world ticket because no selectable world route exists request_id={} account_id={} char_id={}",
+				ToString(AccountFlowEvent::AuthWorldRouteUnavailable),
+				rr.request_id,
+				rr.account_id,
+				rr.char_id);
 
 			login_handler_->SendAccountAuthResult(
 				0, rr.sid, rr.serial, rr.request_id,
@@ -602,8 +669,8 @@ namespace dc {
 			pending.world_port);
 
 		spdlog::info(
-			"AccountLineRuntime issued world ticket request_id={} account_id={} char_id={} login_sid={} target_world_server_id={} world_id={} channel_id={} endpoint={}:{}",
-			rr.request_id,
+			"[{}] issued world ticket request_id={} account_id={} char_id={} login_sid={} target_world_server_id={} world_id={} channel_id={} endpoint={}:{}",
+			ToString(AccountFlowEvent::WorldTicketIssued), rr.request_id,
 			rr.account_id,
 			rr.char_id,
 			rr.sid,
@@ -614,8 +681,7 @@ namespace dc {
 			world_port);
 	}
 
-	std::uint16_t AccountLineRuntime::ConsumeWorldAuthTicketBrokered_(
-		std::uint32_t sid,
+	std::uint16_t AccountLineRuntime::ConsumeIssuedWorldTicket_(std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t account_id,
 		std::uint64_t char_id,
@@ -624,7 +690,7 @@ namespace dc {
 		ConsumedWorldTicketAwaitingNotify& out_consumed)
 	{
 		std::uint32_t sender_world_server_id = 0;
-		if (!TryGetRegisteredWorldServerId_(sid, serial, sender_world_server_id)) {
+		if (!TryResolveRegisteredWorldServerId_(sid, serial, sender_world_server_id)) {
 			return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::WorldServerMismatch);
 		}
 
@@ -673,8 +739,7 @@ namespace dc {
 		return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::Ok);
 	}
 
-	void AccountLineRuntime::HandleWorldAuthTicketConsume(
-		std::uint32_t sid,
+	void AccountLineRuntime::HandleWorldTicketConsumeRequest_(std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t request_id,
 		std::uint64_t account_id,
@@ -688,7 +753,7 @@ namespace dc {
 
 		ConsumedWorldTicketAwaitingNotify consumed{};
 
-		const auto result_code = ConsumeWorldAuthTicketBrokered_(
+		const auto result_code = ConsumeIssuedWorldTicket_(
 			sid,
 			serial,
 			account_id,
@@ -696,6 +761,30 @@ namespace dc {
 			login_session,
 			world_token,
 			consumed);
+
+		if (result_code == static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::Ok)) {
+			spdlog::info(
+				"[{}] world ticket consume accepted request_id={} sid={} serial={} account_id={} char_id={} token={}",
+				ToString(AccountFlowEvent::WorldTicketConsumeAccepted),
+				request_id,
+				sid,
+				serial,
+				consumed.account_id,
+				consumed.char_id,
+				consumed.world_token);
+		}
+		else {
+			spdlog::warn(
+				"[{}] world ticket consume rejected request_id={} sid={} serial={} account_id={} char_id={} token={} result_code={}",
+				ToString(AccountFlowEvent::WorldTicketConsumeRejected),
+				request_id,
+				sid,
+				serial,
+				account_id,
+				char_id,
+				world_token,
+				result_code);
+		}
 
 		world_handler_->SendWorldAuthTicketConsumeResponse(
 			0,
@@ -709,7 +798,8 @@ namespace dc {
 			consumed.world_token);
 	}
 
-	bool AccountLineRuntime::TryFinalizeConsumedWorldEnterSuccess_(
+	bool AccountLineRuntime::TryMatchConsumedWorldEnterSuccessNotify_(
+
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t account_id,
@@ -719,7 +809,7 @@ namespace dc {
 		ConsumedWorldTicketAwaitingNotify& out_consumed)
 	{
 		std::uint32_t sender_world_server_id = 0;
-		if (!TryGetRegisteredWorldServerId_(sid, serial, sender_world_server_id)) {
+		if (!TryResolveRegisteredWorldServerId_(sid, serial, sender_world_server_id)) {
 			return false;
 		}
 
@@ -742,7 +832,7 @@ namespace dc {
 		return true;
 	}
 
-	void AccountLineRuntime::OnWorldEnterSuccessNotify(
+	void AccountLineRuntime::HandleWorldEnterSuccessNotify_(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t account_id,
@@ -751,9 +841,10 @@ namespace dc {
 		std::string_view world_token)
 	{
 		ConsumedWorldTicketAwaitingNotify consumed{};
-		if (!TryFinalizeConsumedWorldEnterSuccess_(sid, serial, account_id, char_id, login_session, world_token, consumed)) {
+		if (!TryMatchConsumedWorldEnterSuccessNotify_(sid, serial, account_id, char_id, login_session, world_token, consumed)) {
 			spdlog::warn(
-				"AccountLineRuntime dropped world_enter_success_notify without matching consumed ticket. sid={} serial={} account_id={} char_id={} token={}",
+				"[{}] dropped world_enter_success_notify without matching consumed ticket sid={} serial={} account_id={} char_id={} token={}",
+				ToString(AccountFlowEvent::WorldEnterNotifyDropped),
 				sid,
 				serial,
 				account_id,
@@ -764,7 +855,8 @@ namespace dc {
 
 		if (!login_ready_.load(std::memory_order_acquire) || !login_handler_) {
 			spdlog::warn(
-				"AccountLineRuntime cannot relay world_enter_success_notify because login is not ready. account_id={} char_id={} token={}",
+				"[{}] cannot relay world_enter_success_notify because login is not ready account_id={} char_id={} token={}",
+				ToString(AccountFlowEvent::WorldEnterNotifyDropped),
 				account_id,
 				char_id,
 				world_token);
@@ -780,7 +872,8 @@ namespace dc {
 			login_session,
 			world_token)) {
 			spdlog::warn(
-				"AccountLineRuntime failed to relay world_enter_success_notify to login. account_id={} char_id={} token={}",
+				"[{}] failed to relay world_enter_success_notify to login account_id={} char_id={} token={}",
+				ToString(AccountFlowEvent::WorldEnterNotifyDropped),
 				account_id,
 				char_id,
 				world_token);
@@ -793,7 +886,8 @@ namespace dc {
 		}
 
 		spdlog::info(
-			"AccountLineRuntime relayed world_enter_success_notify to login. account_id={} char_id={} token={}",
+			"[{}] relayed world_enter_success_notify to login account_id={} char_id={} token={}",
+			ToString(AccountFlowEvent::WorldEnterNotifyRelayed),
 			account_id,
 			char_id,
 			world_token);
@@ -814,7 +908,8 @@ namespace dc {
 		for (auto it = consumed_world_enters_awaiting_notify_.begin(); it != consumed_world_enters_awaiting_notify_.end();) {
 			if (now - it->second.consumed_at >= dc::k_consumed_world_enters_awaiting_notify_expire) {
 				spdlog::warn(
-					"AccountLineRuntime expired consumed world ticket waiting for success notify. account_id={} char_id={} token={}",
+					"[{}] expired consumed world ticket waiting for success notify account_id={} char_id={} token={}",
+					ToString(AccountFlowEvent::WorldTicketAwaitNotifyExpired),
 					it->second.account_id,
 					it->second.char_id,
 					it->second.world_token);
@@ -838,7 +933,8 @@ namespace dc {
 				}
 
 				spdlog::warn(
-					"AccountLineRuntime expired stale world route. sid={} serial={} server_id={} world_id={} channel_id={} last_load={} zones={}",
+					"[{}] expired stale world route sid={} serial={} server_id={} world_id={} channel_id={} last_load={} zones={}",
+					ToString(AccountFlowEvent::WorldRouteExpired),
 					it->second.sid,
 					it->second.serial,
 					it->second.server_id,
@@ -864,6 +960,7 @@ namespace dc {
 		}
 	}
 
+
 	void AccountLineRuntime::DrainDqsResults_()
 	{
 		std::deque<svr::dqs_result::Result> local;
@@ -882,7 +979,7 @@ namespace dc {
 		}
 	}
 
-	void AccountLineRuntime::HandleAccountAuthRequest(
+	void AccountLineRuntime::HandleLoginAuthRequest_(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t request_id,
@@ -966,13 +1063,13 @@ namespace dc {
 
 		login_handler_ = std::make_shared<AccountLoginHandler>(
 			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::string_view server_name, std::uint16_t listen_port) {
-			MarkLoginRegistered(sid, serial, server_id, server_name, listen_port);
+			OnLoginCoordinatorRegistered_(sid, serial, server_id, server_name, listen_port);
 		},
 			[this](std::uint32_t sid, std::uint32_t serial) {
-			MarkLoginDisconnected(sid, serial);
+			OnLoginCoordinatorDisconnected_(sid, serial);
 		},
 			[this](std::uint32_t sid, std::uint32_t serial, std::uint64_t request_id, std::string_view login_id, std::string_view password, std::uint64_t selected_char_id) {
-			HandleAccountAuthRequest(sid, serial, request_id, login_id, password, selected_char_id);
+			HandleLoginAuthRequest_(sid, serial, request_id, login_id, password, selected_char_id);
 		});
 
 		if (!dc::StartHostedLine(
@@ -995,15 +1092,15 @@ namespace dc {
 				std::uint16_t world_id, std::uint16_t channel_id,
 				std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags,
 				std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
-			MarkWorldRegistered(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
+			OnWorldRouteRegistered_(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
 		},
 			[this](std::uint32_t sid, std::uint32_t serial) {
-			MarkWorldDisconnected(sid, serial);
+			OnWorldRouteDisconnected_(sid, serial);
 		},
 			[this](std::uint32_t sid, std::uint32_t serial, std::uint64_t request_id,
 				std::uint64_t account_id, std::uint64_t char_id,
 				std::string_view login_session, std::string_view world_token) {
-			HandleWorldAuthTicketConsume(
+			HandleWorldTicketConsumeRequest_(
 				sid,
 				serial,
 				request_id,
@@ -1015,12 +1112,12 @@ namespace dc {
 			[this](std::uint32_t sid, std::uint32_t serial,
 				std::uint64_t account_id, std::uint64_t char_id,
 				std::string_view login_session, std::string_view world_token) {
-			OnWorldEnterSuccessNotify(sid, serial, account_id, char_id, login_session, world_token);
+			HandleWorldEnterSuccessNotify_(sid, serial, account_id, char_id, login_session, world_token);
 		},
 			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
 				std::uint16_t world_id, std::uint16_t channel_id,
 				std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags) {
-			OnWorldRouteHeartbeat(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags);
+			OnWorldRouteHeartbeatReceived_(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags);
 		});
 
 		if (!dc::StartHostedLine(

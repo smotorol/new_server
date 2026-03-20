@@ -3,8 +3,6 @@
 #include <cstdio>
 #include <ctime>
 #include <memory>
-#include <random>
-#include <sstream>
 
 #include <spdlog/spdlog.h>
 
@@ -20,17 +18,6 @@ namespace pt_l = proto::login;
 
 namespace dc {
 
-	namespace {
-		std::string ToHexToken_(std::uint64_t a, std::uint64_t b)
-		{
-			std::ostringstream oss;
-			oss << std::hex << a << b;
-			auto s = oss.str();
-			if (s.size() > 32) s.resize(32);
-			if (s.size() < 32) s.append(32 - s.size(), '0');
-			return s;
-		}
-	}
 
 	LoginLineRuntime::LoginLineRuntime(
 		std::uint16_t port,
@@ -42,34 +29,23 @@ namespace dc {
 	{
 	}
 
+	bool LoginLineRuntime::IsValidAuthIdentity_(
+		std::uint64_t account_id,
+		std::uint64_t char_id,
+		std::string_view login_session,
+		std::string_view world_token) const noexcept
+	{
+		return account_id != 0 &&
+			char_id != 0 &&
+			!login_session.empty() &&
+			!world_token.empty();
+	}
+
 	bool LoginLineRuntime::IsWorldReady() const noexcept
 	{
 		return true;
 	}
 
-	std::string LoginLineRuntime::GenerateWorldToken_() const
-	{
-		static thread_local std::mt19937_64 rng{ std::random_device{}() };
-		return ToHexToken_(rng(), rng());
-	}
-
-	std::uint64_t LoginLineRuntime::ResolveAccountId_(std::string_view login_id) const
-	{
-		std::uint64_t h = 1469598103934665603ull;
-		for (char c : login_id) {
-			h ^= static_cast<unsigned char>(c);
-			h *= 1099511628211ull;
-		}
-		return h ? h : 1;
-	}
-
-	std::uint64_t LoginLineRuntime::ResolveCharId_(std::uint64_t selected_char_id, std::uint64_t account_id) const
-	{
-		if (selected_char_id != 0) {
-			return selected_char_id;
-		}
-		return (account_id << 8) | 1ull;
-	}
 
 	void LoginLineRuntime::RemoveLoginSession_NoLock_(std::uint32_t sid, std::uint32_t serial)
 	{
@@ -93,6 +69,20 @@ namespace dc {
 			auto ic = char_session_index_.find(it->second.char_id);
 			if (ic != char_session_index_.end() && ic->second == sid) {
 				char_session_index_.erase(ic);
+			}
+		}
+
+		if (!it->second.login_session.empty()) {
+			auto ils = login_session_index_.find(it->second.login_session);
+			if (ils != login_session_index_.end() && ils->second == sid) {
+				login_session_index_.erase(ils);
+			}
+		}
+
+		if (!it->second.world_token.empty()) {
+			auto iwt = world_token_index_.find(it->second.world_token);
+			if (iwt != world_token_index_.end() && iwt->second == sid) {
+				world_token_index_.erase(iwt);
 			}
 		}
 
@@ -332,6 +322,8 @@ namespace dc {
 			login_sessions_.clear();
 			account_session_index_.clear();
 			char_session_index_.clear();
+			login_session_index_.clear();
+			world_token_index_.clear();
 		}
 
 		{
@@ -462,15 +454,20 @@ namespace dc {
 			return;
 		}
 
-		if (world_token.empty()) {
-			SendLoginResultFail_(pending.client_sid, pending.client_serial, "invalid_world_token");
+		if (!IsValidAuthIdentity_(account_id, char_id, login_session, world_token)) {
+			SendLoginResultFail_(pending.client_sid, pending.client_serial, "invalid_auth_identity");
 			return;
 		}
 
+		std::vector<DuplicateSessionRef> victims;
 		{
 			std::lock_guard lk(login_sessions_mtx_);
 
 			RemoveLoginSession_NoLock_(pending.client_sid, pending.client_serial);
+			victims = CollectDuplicateSessions_NoLock_(account_id, char_id, pending.client_sid, pending.client_serial);
+			for (const auto& v : victims) {
+				RemoveLoginSession_NoLock_(v.sid, v.serial);
+			}
 
 			auto& st = login_sessions_[pending.client_sid];
 			st.sid = pending.client_sid;
@@ -485,6 +482,12 @@ namespace dc {
 
 			account_session_index_[account_id] = pending.client_sid;
 			char_session_index_[char_id] = pending.client_sid;
+			login_session_index_[st.login_session] = pending.client_sid;
+			world_token_index_[st.world_token] = pending.client_sid;
+		}
+
+		if (!victims.empty()) {
+			CloseDuplicateLoginSessions_(victims);
 		}
 
 		SendLoginResultSuccess_(
@@ -512,19 +515,37 @@ namespace dc {
 	{
 		std::lock_guard lk(login_sessions_mtx_);
 
-		const auto ia = account_session_index_.find(account_id);
-		if (ia == account_session_index_.end()) {
+		std::uint32_t sid = 0;
+		if (!world_token.empty()) {
+			const auto iwt = world_token_index_.find(std::string(world_token));
+			if (iwt != world_token_index_.end()) {
+				sid = iwt->second;
+			}
+		}
+
+		if (sid == 0 && !login_session.empty()) {
+			const auto ils = login_session_index_.find(std::string(login_session));
+			if (ils != login_session_index_.end()) {
+				sid = ils->second;
+			}
+		}
+
+		if (sid == 0) {
 			spdlog::warn(
-				"OnWorldEnterSuccessNotify account session not found. account_id={} char_id={}",
+				"OnWorldEnterSuccessNotify exact session not found. account_id={} char_id={} login_session={} token={}",
 				account_id,
-				char_id);
+				char_id,
+				login_session,
+				world_token);
 			return;
 		}
 
-		const auto sid = ia->second;
 		auto it = login_sessions_.find(sid);
 		if (it == login_sessions_.end()) {
-			account_session_index_.erase(ia);
+			const auto ia = account_session_index_.find(account_id);
+			if (ia != account_session_index_.end() && ia->second == sid) {
+				account_session_index_.erase(ia);
+			}
 			spdlog::warn(
 				"OnWorldEnterSuccessNotify session map miss. sid={} account_id={} char_id={}",
 				sid,

@@ -61,16 +61,6 @@ namespace dc {
 			std::uint16_t world_port = 0;
 		};
 
-		struct PendingWorldTicketUpsert
-		{
-			PendingLoginRequest pending{};
-			std::uint64_t account_id = 0;
-			std::uint64_t char_id = 0;
-			std::string login_session;
-			std::string world_token;
-			std::chrono::steady_clock::time_point issued_at{};
-		};
-
 		void MarkAccountRegistered(
 			std::uint32_t sid,
 			std::uint32_t serial,
@@ -111,6 +101,12 @@ namespace dc {
 			std::string_view world_token,
 			std::string_view fail_reason);
 
+		bool IsValidAuthIdentity_(
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::string_view login_session,
+			std::string_view world_token) const noexcept;
+
 		bool SendLoginResultSuccess_(
 			std::uint32_t sid,
 			std::uint32_t serial,
@@ -133,10 +129,6 @@ namespace dc {
 		void OnBeforeIoStop() override;
 		void OnAfterIoStop() override;
 		void OnMainLoopTick(std::chrono::steady_clock::time_point now) override;
-
-		std::string GenerateWorldToken_() const;
-		std::uint64_t ResolveAccountId_(std::string_view login_id) const;
-		std::uint64_t ResolveCharId_(std::uint64_t selected_char_id, std::uint64_t account_id) const;
 
 		void RemoveLoginSession_NoLock_(std::uint32_t sid, std::uint32_t serial);
 		void AddDuplicateCandidateBySid_NoLock_(
@@ -163,10 +155,9 @@ namespace dc {
 		std::unordered_map<std::uint32_t, LoginSessionAuthState> login_sessions_;
 		std::unordered_map<std::uint64_t, std::uint32_t> account_session_index_;
 		std::unordered_map<std::uint64_t, std::uint32_t> char_session_index_;
+		std::unordered_map<std::string, std::uint32_t> login_session_index_;
+		std::unordered_map<std::string, std::uint32_t> world_token_index_;
 		std::unordered_map<std::uint64_t, PendingLoginRequest> pending_login_requests_;
-
-		std::mutex pending_world_upsert_mtx_;
-		std::unordered_map<std::string, PendingWorldTicketUpsert> pending_world_ticket_upserts_;
 
 		HostedLineEntry client_line_{};
 		OutboundLineEntry world_line_{};
