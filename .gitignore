@@ -19,3 +19,4 @@
 /vcpkg_installed
 /.env.dev
 /dependence
+/Lib/Debug
