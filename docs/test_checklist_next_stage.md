@@ -28,6 +28,7 @@
 ## E. Auth hardening
 - [ ] Unauthenticated gameplay packets are rejected and counted.
 - [ ] `authstats` warning triggers when reject rate exceeds threshold.
+- [x] `smoke_persistence_shutdown` 정적 smoke에 unauth reject 계수 증가 코드/`authstats` 임계치 로그 코드 존재 점검 추가.
 
 ## F. CI gate
 - [x] `tests/run_ci_ctest.sh`로 기본 PR 게이트(`world_regression_tests`, `smoke_persistence_shutdown`) 묶음 실행.

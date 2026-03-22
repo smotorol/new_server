@@ -20,9 +20,11 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     core_cpp = repo_root / "src/services/world/runtime/world_runtime_core.cpp"
     persistence_cpp = repo_root / "src/services/world/runtime/world_runtime_persistence.cpp"
+    handler_core_cpp = repo_root / "src/services/world/handler/world_handler_core.cpp"
 
     core_text = core_cpp.read_text(encoding="utf-8")
     persist_text = persistence_cpp.read_text(encoding="utf-8")
+    handler_text = handler_core_cpp.read_text(encoding="utf-8")
 
     ok = True
 
@@ -49,6 +51,25 @@ def main() -> int:
     for needle in persistence_needles:
         if needle not in persist_text:
             print(f"[FAIL] flush-dirty-guard: missing '{needle}'")
+            ok = False
+
+    auth_needles_core = [
+        "g_world_unauth_packet_rejects.fetch_add(1, std::memory_order_relaxed);",
+        "g_world_unauth_last_sid.store(sid, std::memory_order_relaxed);",
+        "[auth] rejected unauthenticated world packet",
+    ]
+    for needle in auth_needles_core:
+        if needle not in handler_text:
+            print(f"[FAIL] auth-guard: missing '{needle}'")
+            ok = False
+
+    auth_needles_stats = [
+        "kUnauthWarnThresholdPerSec = 10",
+        "[authstats] unauth_packet_rejects/s={} threshold={} sampled_sid={}",
+    ]
+    for needle in auth_needles_stats:
+        if needle not in core_text:
+            print(f"[FAIL] authstats-threshold: missing '{needle}'")
             ok = False
 
     if not ok:
