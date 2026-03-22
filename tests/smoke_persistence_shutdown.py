@@ -107,6 +107,25 @@ def main() -> int:
             print(f"[FAIL] reconnect-grace: missing '{needle}'")
             ok = False
 
+    dup_needles_session = [
+        "g_dup_login_char.fetch_add(1, std::memory_order_relaxed);",
+        "g_dup_login_account.fetch_add(1, std::memory_order_relaxed);",
+        "g_dup_login_both.fetch_add(1, std::memory_order_relaxed);",
+        "g_dup_login_dedup_same_session.fetch_add(1, std::memory_order_relaxed);",
+    ]
+    for needle in dup_needles_session:
+        if needle not in session_text:
+            print(f"[FAIL] dup-metrics-session: missing '{needle}'")
+            ok = False
+
+    dup_needles_stats = [
+        "[dupstats] char/s={} account/s={} both/s={} dedup_same/s={}",
+    ]
+    for needle in dup_needles_stats:
+        if needle not in core_text:
+            print(f"[FAIL] dupstats-log: missing '{needle}'")
+            ok = False
+
     if not ok:
         return 1
 
