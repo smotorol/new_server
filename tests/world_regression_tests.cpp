@@ -108,6 +108,7 @@ namespace {
 	{
 		svr::dqs_result::FlushDirtyCharsResult res{};
 		res.world_code = 7;
+		res.shard_id = 3;
 		res.max_batch = 64;
 		res.pulled = 10;
 		res.saved = 7;
@@ -115,6 +116,9 @@ namespace {
 		res.conflicts = 2;
 		res.result = svr::dqs::ResultCode::db_error;
 
+		if (res.shard_id != 3) {
+			return false;
+		}
 		if (res.conflicts != 2) {
 			return false;
 		}
