@@ -1,5 +1,6 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "server_common/config/aoi_config.h"
+#include <thread>
 
 namespace svr {
 
@@ -90,6 +91,18 @@ namespace svr {
 
 		spdlog::info("[shutdown] step=3 enqueue_final_dirty_flush");
 		EnqueueFlushDirty_(/*immediate=*/true);
+
+		spdlog::info("[shutdown] step=3.1 wait_dqs_drain_begin");
+		const auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+		std::size_t last_in_flight = CountInFlightDqs_();
+		while (last_in_flight != 0 && std::chrono::steady_clock::now() < drain_deadline) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			last_in_flight = CountInFlightDqs_();
+		}
+		spdlog::info(
+			"[shutdown] step=3.2 wait_dqs_drain_end in_flight={} timed_out={}",
+			last_in_flight,
+			(last_in_flight != 0 ? 1 : 0));
 
 		spdlog::info("[shutdown] step=4 cancel_delayed_close_timers");
 		CancelDelayedWorldCloseTimers_();

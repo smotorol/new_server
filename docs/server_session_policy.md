@@ -58,3 +58,14 @@ This keeps DB/cache/inventory/combat persistence keyed by real character identit
 - `flush_one_char` payload/result includes version fields and returns `conflict` on stale version mismatch.
 - Spawn/Despawn notify path to mover uses batch packets (`player_spawn_batch` / `player_despawn_batch`).
 - Auth reject logging now has threshold warning mode (`>=10/s`) with sampled source sid.
+
+## 11) Planned follow-up (mobile/pc reconnect resilience)
+- Reconnect resume token flow for IP/network path changes:
+  - short-lived resume token bound to `(account_id, char_id, device/session fingerprint)`,
+  - old transport sid/serial invalidation with grace window.
+- Session takeover policy for intermittent disconnect:
+  - hold authoritative actor state for N seconds before final teardown,
+  - allow seamless reclaim by same identity during grace period.
+- Multi-platform policy:
+  - per-account concurrent platform rules (mobile+pc allowed or exclusive),
+  - explicit conflict/kick semantics and audit logs.

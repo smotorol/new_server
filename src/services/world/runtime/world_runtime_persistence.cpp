@@ -171,6 +171,18 @@ namespace svr {
 		return true;
 	}
 
+	std::size_t WorldRuntime::CountInFlightDqs_() const
+	{
+		std::lock_guard lk(dqs_mtx_);
+		std::size_t in_flight = 0;
+		for (const auto& slot : dqs_slots_) {
+			if (slot.in_use) {
+				++in_flight;
+			}
+		}
+		return in_flight;
+	}
+
 
 
 	std::uint32_t WorldRuntime::RouteShard_(std::uint8_t qry_case, const char* data, int size) const

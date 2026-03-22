@@ -404,6 +404,7 @@ namespace svr {
 		void ScheduleFlush_();
 		void EnqueueFlushDirty_(bool immediate);
 		void EnqueueFlushDirtyWorld_(std::uint32_t world_code, std::uint32_t batch);
+		std::size_t CountInFlightDqs_() const;
 
 		bool InitDQS();
 		void OnDQSRunOne(std::uint32_t slot_index);
