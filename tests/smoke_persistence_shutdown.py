@@ -72,6 +72,25 @@ def main() -> int:
             print(f"[FAIL] authstats-threshold: missing '{needle}'")
             ok = False
 
+    shutdown_drain_needles = [
+        "std::size_t last_in_flight = CountInFlightDqs_();",
+        "last_in_flight = CountInFlightDqs_();",
+        "[shutdown] step=3.2 wait_dqs_drain_end in_flight={} timed_out={}",
+    ]
+    for needle in shutdown_drain_needles:
+        if needle not in core_text:
+            print(f"[FAIL] shutdown-drain: missing '{needle}'")
+            ok = False
+
+    conflict_log_needles = [
+        "[FlushOneCharConflict] world={} char_id={} expected_ver={} actual_ver={}",
+        "[FlushDirtyCharsConflict] world={} shard={} char_id={} expected_ver={} actual_ver={}",
+    ]
+    for needle in conflict_log_needles:
+        if needle not in persist_text:
+            print(f"[FAIL] conflict-log-shape: missing '{needle}'")
+            ok = False
+
     if not ok:
         return 1
 

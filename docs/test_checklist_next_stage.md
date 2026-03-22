@@ -18,12 +18,14 @@
 - [ ] conflict logs contain world/char/expected/actual version fields.
 - [ ] `flush_dirty_chars` version conflict 경로(충돌 카운트/dirty 재마킹) 및 throughput 회귀 확인.
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 `flush_dirty_chars` conflict-guard 코드 경로 존재를 자동 점검.
+- [x] `smoke_persistence_shutdown` 정적 smoke에 `FlushOneCharConflict`/`FlushDirtyCharsConflict` 로그 포맷(핵심 필드) 존재 점검 추가.
 
 ## D. Shutdown
 - [ ] `OnBeforeIoStop` emits ordered shutdown logs.
 - [ ] DQS in-flight count drains to zero before DB worker stop (or timeout flag appears).
 - [ ] Timeout path leaves deterministic logs and no deadlock.
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 shutdown step 로그 marker 순서를 정적 smoke 검증.
+- [x] `smoke_persistence_shutdown` 정적 smoke에 `wait_dqs_drain_end in_flight/timed_out` 로그 경로 존재 점검 추가.
 
 ## E. Auth hardening
 - [ ] Unauthenticated gameplay packets are rejected and counted.
