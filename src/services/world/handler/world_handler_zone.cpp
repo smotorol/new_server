@@ -31,9 +31,10 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 		auto& z = runtime().GetOrCreateZoneActor(zone_id);
 		auto diff = z.Move(char_id, { nx, ny }, sid, serial);
 
-		std::vector<std::uint64_t> entered;
-		std::vector<std::uint64_t> exited;
-		{
+		std::vector<std::uint64_t> entered = std::move(diff.entered_vis);
+		std::vector<std::uint64_t> exited = std::move(diff.exited_vis);
+		if (entered.empty() && exited.empty() &&
+			(!diff.old_vis.empty() || !diff.new_vis.empty())) {
 			auto oldv = diff.old_vis;
 			auto newv = diff.new_vis;
 			std::sort(oldv.begin(), oldv.end());

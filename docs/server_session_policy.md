@@ -37,3 +37,7 @@ This keeps DB/cache/inventory/combat persistence keyed by real character identit
 ## 6) Implementation progress (Phase 2)
 - World auth session reverse indexes now store packed session key `(sid, serial)` instead of sid-only.
 - Old-session lookup validates both sid and serial before considering a duplicate/eviction target.
+
+## 7) Implementation progress (Phase 3)
+- ZoneActor move path now uses entered/left edge-cell based visibility delta for 1-cell moves.
+- World move handler consumes precomputed `entered_vis` / `exited_vis` first, and only falls back to full old/new set-diff for non-local jumps.
