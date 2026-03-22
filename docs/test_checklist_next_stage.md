@@ -16,7 +16,7 @@
 - [ ] `flush_one_char` succeeds when expected_version == actual_version.
 - [ ] `flush_one_char` returns `conflict` when expected_version != actual_version.
 - [ ] conflict logs contain world/char/expected/actual version fields.
-- [ ] `flush_dirty_chars` throughput/regression check (still no per-char version guard).
+- [ ] `flush_dirty_chars` version conflict 경로(충돌 카운트/dirty 재마킹) 및 throughput 회귀 확인.
 
 ## D. Shutdown
 - [ ] `OnBeforeIoStop` emits ordered shutdown logs.

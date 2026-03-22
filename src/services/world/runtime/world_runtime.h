@@ -405,6 +405,9 @@ namespace svr {
 		void EnqueueFlushDirty_(bool immediate);
 		void EnqueueFlushDirtyWorld_(std::uint32_t world_code, std::uint32_t batch);
 		std::size_t CountInFlightDqs_() const;
+		void UpdateExpectedCharVersion_(std::uint32_t world_code, std::uint64_t char_id, std::uint32_t version);
+		std::uint32_t TryGetExpectedCharVersion_(std::uint32_t world_code, std::uint64_t char_id) const;
+		void EraseExpectedCharVersion_(std::uint32_t world_code, std::uint64_t char_id);
 
 		bool InitDQS();
 		void OnDQSRunOne(std::uint32_t slot_index);
@@ -495,6 +498,8 @@ namespace svr {
 		static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
 		static constexpr std::chrono::milliseconds kReconnectGraceCloseDelay_{ 5000 };
 		std::atomic<std::uint64_t> duplicate_login_trace_seq_{ 1 };
+		mutable std::mutex expected_char_ver_mtx_;
+		std::unordered_map<std::uint64_t, std::uint32_t> expected_char_version_by_key_;
 
 		static constexpr std::uint32_t MAX_DB_SYC_DATA_NUM = 200000;
 		std::vector<svr::dqs::DqsSlot> dqs_slots_;

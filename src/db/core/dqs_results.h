@@ -27,6 +27,7 @@ namespace svr::dqs_result {
 		std::uint32_t pulled = 0;   // dirty set에서 뽑은 개수
 		std::uint32_t saved = 0;    // DB 저장 성공
 		std::uint32_t failed = 0;   // DB 저장 실패
+		std::uint32_t conflicts = 0; // 버전 충돌로 저장 스킵
 		svr::dqs::ResultCode result = svr::dqs::ResultCode::success;
 
 	};
