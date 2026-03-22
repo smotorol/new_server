@@ -35,17 +35,32 @@ def main() -> int:
         print("SKIP: world_server binary not found (set WORLD_SERVER_BIN to enable runtime smoke)")
         return 0
 
-    proc = subprocess.Popen(
-        [str(world_bin)],
-        cwd=str(repo_root),
-        stdout=subprocess.PIPE,
-        stderr=subprocess.STDOUT,
-        text=True,
-    )
+    run_cwd_env = os.environ.get("WORLD_SERVER_CWD", "").strip()
+    run_cwd = Path(run_cwd_env).expanduser() if run_cwd_env else world_bin.parent
+    if not run_cwd.exists():
+        print(f"[FAIL] invalid WORLD_SERVER_CWD: {run_cwd}")
+        return 1
+
+    popen_kwargs = {
+        "cwd": str(run_cwd),
+        "stdout": subprocess.PIPE,
+        "stderr": subprocess.STDOUT,
+        "text": True,
+    }
+    if os.name == "nt":
+        popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+
+    print(f"[INFO] runtime smoke launch: bin={world_bin} cwd={run_cwd}")
+    proc = subprocess.Popen([str(world_bin)], **popen_kwargs)
 
     time.sleep(2.0)
 
-    proc.send_signal(signal.SIGTERM)
+    if os.name == "nt":
+        # Windows에서 SIGTERM은 강제 종료에 가까워 shutdown marker 로그를 남길 기회가 없음.
+        # 콘솔 프로세스 그룹에 CTRL_BREAK_EVENT를 전달해 앱의 graceful shutdown 경로를 타도록 유도.
+        proc.send_signal(signal.CTRL_BREAK_EVENT)
+    else:
+        proc.send_signal(signal.SIGTERM)
     try:
         out, _ = proc.communicate(timeout=10.0)
     except subprocess.TimeoutExpired:
