@@ -11,6 +11,7 @@
 - [ ] Mover receives `player_spawn_batch` / `player_despawn_batch` with valid count/body size.
 - [ ] Recipients around mover still receive expected self spawn/despawn + move stream.
 - [ ] Validate no malformed/zeroed entries are emitted in normal populated cases.
+- [x] `world_regression_tests`에서 spawn/despawn batch 메모리 레이아웃 및 count/item 접근 검증(정적/로컬 회귀).
 
 ## C. Persistence / flush
 - [ ] `flush_one_char` succeeds when expected_version == actual_version.

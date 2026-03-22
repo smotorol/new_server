@@ -55,6 +55,27 @@ namespace {
 		return true;
 	}
 
+	bool TestDespawnBatchLayout()
+	{
+		const std::uint16_t count = 4;
+		const std::size_t body_size = sizeof(proto::S2C_player_despawn_batch)
+			+ (static_cast<std::size_t>(count) - 1) * sizeof(proto::S2C_player_despawn_item);
+
+		std::vector<char> body(body_size);
+		auto* pkt = reinterpret_cast<proto::S2C_player_despawn_batch*>(body.data());
+		pkt->count = count;
+		for (std::uint16_t i = 0; i < count; ++i) {
+			pkt->items[i].char_id = static_cast<std::uint64_t>(100 + i);
+		}
+
+		for (std::uint16_t i = 0; i < count; ++i) {
+			if (pkt->items[i].char_id != static_cast<std::uint64_t>(100 + i)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
 	bool TestFlushOneCharVersionFields()
 	{
 		svr::dqs_payload::FlushOneChar payload{};
@@ -109,14 +130,16 @@ int main()
 {
 	const bool ok_session = TestSessionKeyPackUnpack();
 	const bool ok_batch = TestSpawnBatchLayout();
+	const bool ok_despawn_batch = TestDespawnBatchLayout();
 	const bool ok_flush = TestFlushOneCharVersionFields();
 	const bool ok_dirty = TestFlushDirtyCharsConflictFields();
 
-	if (!ok_session || !ok_batch || !ok_flush || !ok_dirty) {
+	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_flush || !ok_dirty) {
 		std::cerr
 			<< "world_regression_tests failed:"
 			<< " session=" << ok_session
 			<< " batch=" << ok_batch
+			<< " despawn_batch=" << ok_despawn_batch
 			<< " flush=" << ok_flush
 			<< " dirty=" << ok_dirty
 			<< "\n";
