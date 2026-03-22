@@ -71,10 +71,14 @@ namespace svr {
 
 			}
 
-			// 2) flush_dirty_chars 결과 처리: 로그 + 추가 flush 결정은 메인에서만
-				if constexpr (std::is_same_v<T, svr::dqs_result::FlushDirtyCharsResult>) {
-					spdlog::info("[FlushDirtyChars] world={}, pulled={}, saved={}, failed={}, conflicts={}, batch={}, result={}",
-						rr.world_code, rr.pulled, rr.saved, rr.failed, rr.conflicts, rr.max_batch, (int)rr.result);
+				// 2) flush_dirty_chars 결과 처리: 로그 + 추가 flush 결정은 메인에서만
+					if constexpr (std::is_same_v<T, svr::dqs_result::FlushDirtyCharsResult>) {
+						spdlog::info("[FlushDirtyChars] world={}, shard={}, pulled={}, saved={}, failed={}, conflicts={}, batch={}, result={}",
+							rr.world_code, rr.shard_id, rr.pulled, rr.saved, rr.failed, rr.conflicts, rr.max_batch, (int)rr.result);
+						if (rr.conflicts > 0) {
+							svr::metrics::g_flush_dirty_conflicts_total.fetch_add(rr.conflicts, std::memory_order_relaxed);
+							svr::metrics::g_flush_dirty_conflicted_batches.fetch_add(1, std::memory_order_relaxed);
+						}
 
 				// ✅ batch만큼 꽉 찼으면 남은 dirty가 더 있을 확률이 높다
 				// - 과도 루프 방지 위해: 결과가 꽉 찬 경우에만 “추가 1회” enqueue
@@ -306,24 +310,26 @@ namespace svr {
 							std::uint32_t failed = 0;
 							std::uint32_t conflicts = 0;
 
-							if (world_code >= world_pools_.size() || !world_pools_[world_code] || world_pools_[world_code]->conns.empty())
-							{
-								slot.result = svr::dqs::ResultCode::db_error;
-								svr::dqs_result::FlushDirtyCharsResult r{};
-									r.world_code = world_code;
-									r.max_batch = (std::uint32_t)max_batch;
-									r.pulled = 0; r.saved = 0; r.failed = 0; r.conflicts = 0;
-									r.result = slot.result;
-									PostDqsResult(std::move(r));
-								break;
+								if (world_code >= world_pools_.size() || !world_pools_[world_code] || world_pools_[world_code]->conns.empty())
+								{
+									slot.result = svr::dqs::ResultCode::db_error;
+									svr::dqs_result::FlushDirtyCharsResult r{};
+										r.world_code = world_code;
+										r.shard_id = shard_id;
+										r.max_batch = (std::uint32_t)max_batch;
+										r.pulled = 0; r.saved = 0; r.failed = 0; r.conflicts = 0;
+										r.result = slot.result;
+										PostDqsResult(std::move(r));
+									break;
 							}
 
 							auto& conn = world_pools_[world_code]->next();
 
-							auto ids = redis_cache_->take_dirty_batch(world_code, shard_id, max_batch);
-							pulled = (std::uint32_t)ids.size();
-								for (auto char_id : ids)
-								{
+								auto ids = redis_cache_->take_dirty_batch(world_code, shard_id, max_batch);
+								pulled = (std::uint32_t)ids.size();
+								bool conflict_logged = false;
+									for (auto char_id : ids)
+									{
 									auto blob = redis_cache_->get_character_blob(world_code, char_id);
 									if (!blob)
 										continue;
@@ -334,13 +340,26 @@ namespace svr {
 										actual_version = parsed.version;
 									}
 									const auto expected_version = TryGetExpectedCharVersion_(world_code, char_id);
-									if (expected_version != 0 &&
-										actual_version != 0 &&
-										actual_version != expected_version) {
-										++conflicts;
-										redis_cache_->mark_dirty(world_code, char_id);
-										slot.result = svr::dqs::ResultCode::conflict;
-										continue;
+										if (expected_version != 0 &&
+											actual_version != 0 &&
+											actual_version != expected_version) {
+											++conflicts;
+											if (!conflict_logged) {
+												conflict_logged = true;
+												svr::metrics::g_flush_dirty_conflict_world_sample.store(world_code, std::memory_order_relaxed);
+												svr::metrics::g_flush_dirty_conflict_shard_sample.store(shard_id, std::memory_order_relaxed);
+												svr::metrics::g_flush_dirty_conflict_char_sample.store(char_id, std::memory_order_relaxed);
+												spdlog::warn(
+													"[FlushDirtyCharsConflict] world={} shard={} char_id={} expected_ver={} actual_ver={}",
+													world_code,
+													shard_id,
+													char_id,
+													expected_version,
+													actual_version);
+											}
+											redis_cache_->mark_dirty(world_code, char_id);
+											slot.result = svr::dqs::ResultCode::conflict;
+											continue;
 									}
 
 									try
@@ -359,9 +378,10 @@ namespace svr {
 							}
 
 							// ✅ 워커는 결과만 만들고, 로그/재스케줄/추가 flush는 메인에서
-							svr::dqs_result::FlushDirtyCharsResult r{};
-							r.world_code = world_code;
-							r.max_batch = (std::uint32_t)max_batch;
+								svr::dqs_result::FlushDirtyCharsResult r{};
+								r.world_code = world_code;
+								r.shard_id = shard_id;
+								r.max_batch = (std::uint32_t)max_batch;
 								r.pulled = pulled;
 								r.saved = saved;
 								r.failed = failed;

@@ -24,7 +24,11 @@
 - [ ] DQS in-flight count drains to zero before DB worker stop (or timeout flag appears).
 - [ ] Timeout path leaves deterministic logs and no deadlock.
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 shutdown step 로그 marker 순서를 정적 smoke 검증.
+- [x] `runtime_smoke_world_shutdown` 실행 기반 smoke 추가 (바이너리 미존재 시 CTest SKIP).
 
 ## E. Auth hardening
 - [ ] Unauthenticated gameplay packets are rejected and counted.
 - [ ] `authstats` warning triggers when reject rate exceeds threshold.
+
+## F. CI gate
+- [x] `tests/run_ci_ctest.sh`로 기본 PR 게이트(`world_regression_tests`, `smoke_persistence_shutdown`) + runtime smoke(옵션) 묶음 실행.

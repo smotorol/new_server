@@ -265,30 +265,36 @@ namespace svr {
 			const auto cur_fanout = svr::metrics::g_aoi_move_fanout.load(std::memory_order_relaxed);
 			const auto cur_events = svr::metrics::g_aoi_move_events.load(std::memory_order_relaxed);
 			const auto cur_unauth_rejects = svr::metrics::g_world_unauth_packet_rejects.load(std::memory_order_relaxed);
-			const auto cur_dup_char = svr::metrics::g_dup_login_char.load(std::memory_order_relaxed);
-			const auto cur_dup_account = svr::metrics::g_dup_login_account.load(std::memory_order_relaxed);
-			const auto cur_dup_both = svr::metrics::g_dup_login_both.load(std::memory_order_relaxed);
-			const auto cur_dup_dedup = svr::metrics::g_dup_login_dedup_same_session.load(std::memory_order_relaxed);
+				const auto cur_dup_char = svr::metrics::g_dup_login_char.load(std::memory_order_relaxed);
+				const auto cur_dup_account = svr::metrics::g_dup_login_account.load(std::memory_order_relaxed);
+				const auto cur_dup_both = svr::metrics::g_dup_login_both.load(std::memory_order_relaxed);
+				const auto cur_dup_dedup = svr::metrics::g_dup_login_dedup_same_session.load(std::memory_order_relaxed);
+				const auto cur_flush_dirty_conflicts = svr::metrics::g_flush_dirty_conflicts_total.load(std::memory_order_relaxed);
+				const auto cur_flush_dirty_conflicted_batches = svr::metrics::g_flush_dirty_conflicted_batches.load(std::memory_order_relaxed);
 
 			const auto d_entered = cur_entered - last_aoi_entered_entities_;
 			const auto d_exited = cur_exited - last_aoi_exited_entities_;
 			const auto d_fanout = cur_fanout - last_aoi_move_fanout_;
 			const auto d_events = cur_events - last_aoi_move_events_;
 			const auto d_unauth_rejects = cur_unauth_rejects - last_unauth_packet_rejects_;
-			const auto d_dup_char = cur_dup_char - last_dup_login_char_;
-			const auto d_dup_account = cur_dup_account - last_dup_login_account_;
-			const auto d_dup_both = cur_dup_both - last_dup_login_both_;
-			const auto d_dup_dedup = cur_dup_dedup - last_dup_login_dedup_same_session_;
+				const auto d_dup_char = cur_dup_char - last_dup_login_char_;
+				const auto d_dup_account = cur_dup_account - last_dup_login_account_;
+				const auto d_dup_both = cur_dup_both - last_dup_login_both_;
+				const auto d_dup_dedup = cur_dup_dedup - last_dup_login_dedup_same_session_;
+				const auto d_flush_dirty_conflicts = cur_flush_dirty_conflicts - last_flush_dirty_conflicts_total_;
+				const auto d_flush_dirty_conflicted_batches = cur_flush_dirty_conflicted_batches - last_flush_dirty_conflicted_batches_;
 
 			last_aoi_entered_entities_ = cur_entered;
 			last_aoi_exited_entities_ = cur_exited;
 			last_aoi_move_fanout_ = cur_fanout;
 			last_aoi_move_events_ = cur_events;
 			last_unauth_packet_rejects_ = cur_unauth_rejects;
-			last_dup_login_char_ = cur_dup_char;
-			last_dup_login_account_ = cur_dup_account;
-			last_dup_login_both_ = cur_dup_both;
-			last_dup_login_dedup_same_session_ = cur_dup_dedup;
+				last_dup_login_char_ = cur_dup_char;
+				last_dup_login_account_ = cur_dup_account;
+				last_dup_login_both_ = cur_dup_both;
+				last_dup_login_dedup_same_session_ = cur_dup_dedup;
+				last_flush_dirty_conflicts_total_ = cur_flush_dirty_conflicts;
+				last_flush_dirty_conflicted_batches_ = cur_flush_dirty_conflicted_batches;
 
 			if (d_events > 0 || d_entered > 0 || d_exited > 0) {
 				const double avg_fanout = (d_events == 0)
@@ -339,15 +345,38 @@ namespace svr {
 				spdlog::info("[authstats] unauth_packet_rejects/s={}", d_unauth_rejects);
 			}
 
-			if (d_dup_char > 0 || d_dup_account > 0 || d_dup_both > 0 || d_dup_dedup > 0) {
-				spdlog::info(
-					"[dupstats] char/s={} account/s={} both/s={} dedup_same/s={}",
-					d_dup_char,
-					d_dup_account,
-					d_dup_both,
-					d_dup_dedup);
+				if (d_dup_char > 0 || d_dup_account > 0 || d_dup_both > 0 || d_dup_dedup > 0) {
+					spdlog::info(
+						"[dupstats] char/s={} account/s={} both/s={} dedup_same/s={}",
+						d_dup_char,
+						d_dup_account,
+						d_dup_both,
+						d_dup_dedup);
+				}
+
+				if (d_flush_dirty_conflicts > 0 || d_flush_dirty_conflicted_batches > 0) {
+					spdlog::info(
+						"[flushstats] dirty_conflicts/s={} conflicted_batches/s={} est_conflicts/min={}",
+						d_flush_dirty_conflicts,
+						d_flush_dirty_conflicted_batches,
+						d_flush_dirty_conflicts * 60ULL);
+				}
+
+				constexpr std::uint64_t kFlushDirtyConflictWarnThresholdPerMin = 60;
+				const auto est_conflicts_per_min = d_flush_dirty_conflicts * 60ULL;
+				if (est_conflicts_per_min >= kFlushDirtyConflictWarnThresholdPerMin) {
+					const auto sample_world = svr::metrics::g_flush_dirty_conflict_world_sample.load(std::memory_order_relaxed);
+					const auto sample_shard = svr::metrics::g_flush_dirty_conflict_shard_sample.load(std::memory_order_relaxed);
+					const auto sample_char = svr::metrics::g_flush_dirty_conflict_char_sample.load(std::memory_order_relaxed);
+					spdlog::warn(
+						"[flushstats] high_conflict_rate est_conflicts/min={} threshold={} sample_world={} sample_shard={} sample_char={}",
+						est_conflicts_per_min,
+						kFlushDirtyConflictWarnThresholdPerMin,
+						sample_world,
+						sample_shard,
+						sample_char);
+				}
 			}
 		}
-	}
 
 } // namespace svr

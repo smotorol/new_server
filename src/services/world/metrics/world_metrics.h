@@ -20,5 +20,10 @@ namespace svr::metrics {
 	inline std::atomic<std::uint64_t> g_dup_login_account{ 0 };
 	inline std::atomic<std::uint64_t> g_dup_login_both{ 0 };
 	inline std::atomic<std::uint64_t> g_dup_login_dedup_same_session{ 0 };
+	inline std::atomic<std::uint64_t> g_flush_dirty_conflicts_total{ 0 };
+	inline std::atomic<std::uint64_t> g_flush_dirty_conflicted_batches{ 0 };
+	inline std::atomic<std::uint32_t> g_flush_dirty_conflict_world_sample{ 0 };
+	inline std::atomic<std::uint32_t> g_flush_dirty_conflict_shard_sample{ 0 };
+	inline std::atomic<std::uint64_t> g_flush_dirty_conflict_char_sample{ 0 };
 
 } // namespace svr::metrics

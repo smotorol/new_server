@@ -23,6 +23,13 @@ if(Python3_Interpreter_FOUND)
         NAME smoke_persistence_shutdown
         COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/smoke_persistence_shutdown.py
     )
+    add_test(
+        NAME runtime_smoke_world_shutdown
+        COMMAND ${Python3_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/runtime_smoke_world_shutdown.py
+    )
+    set_tests_properties(runtime_smoke_world_shutdown PROPERTIES
+        SKIP_REGULAR_EXPRESSION "^SKIP:"
+    )
 else()
-    message(WARNING "Python3 interpreter not found; smoke_persistence_shutdown test is skipped.")
+    message(WARNING "Python3 interpreter not found; smoke_persistence_shutdown/runtime_smoke_world_shutdown tests are skipped.")
 endif()

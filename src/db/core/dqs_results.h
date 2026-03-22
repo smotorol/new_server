@@ -23,6 +23,7 @@ namespace svr::dqs_result {
 	// 2) 주기 flush 결과
 	struct FlushDirtyCharsResult final {
 		std::uint32_t world_code = 0;
+		std::uint32_t shard_id = 0;
 		std::uint32_t max_batch = 0;
 		std::uint32_t pulled = 0;   // dirty set에서 뽑은 개수
 		std::uint32_t saved = 0;    // DB 저장 성공
