@@ -186,3 +186,4 @@ Windows:
 
 - 운영형 세션 정책 문서: `docs/server_session_policy.md`
 - Login/World/Control 경계, 중복 로그인 처리, `(account_id, char_id)` authoritative 바인딩 원칙을 정리했다.
+- 다음 단계 테스트 체크리스트: `docs/test_checklist_next_stage.md`
