@@ -60,24 +60,33 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			std::memory_order_relaxed);
 
 		if (!entered.empty()) {
-			const auto count = static_cast<std::uint16_t>(entered.size());
-			const std::size_t body_size = sizeof(proto::S2C_player_spawn_batch) +
-				((std::size_t)count - 1) * sizeof(proto::S2C_player_spawn_item);
-			std::vector<char> body(body_size);
-			auto* pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(body.data());
-			pkt->count = count;
-			for (std::size_t i = 0; i < entered.size(); ++i) {
-				auto itp = z.players.find(entered[i]);
+			std::vector<proto::S2C_player_spawn_item> spawn_items;
+			spawn_items.reserve(entered.size());
+			for (auto oid : entered) {
+				auto itp = z.players.find(oid);
 				if (itp == z.players.end()) {
-					pkt->items[i] = proto::S2C_player_spawn_item{};
 					continue;
 				}
-				pkt->items[i].char_id = entered[i];
-				pkt->items[i].x = itp->second.pos.x;
-				pkt->items[i].y = itp->second.pos.y;
+				proto::S2C_player_spawn_item item{};
+				item.char_id = oid;
+				item.x = itp->second.pos.x;
+				item.y = itp->second.pos.y;
+				spawn_items.push_back(item);
 			}
-			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn_batch, (std::uint16_t)body_size);
-			self->Send(dwProID, sid, serial, h, body.data());
+
+			if (!spawn_items.empty()) {
+				const auto count = static_cast<std::uint16_t>(spawn_items.size());
+				const std::size_t body_size = sizeof(proto::S2C_player_spawn_batch) +
+					((std::size_t)count - 1) * sizeof(proto::S2C_player_spawn_item);
+				std::vector<char> body(body_size);
+				auto* pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(body.data());
+				pkt->count = count;
+				for (std::size_t i = 0; i < spawn_items.size(); ++i) {
+					pkt->items[i] = spawn_items[i];
+				}
+				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn_batch, (std::uint16_t)body_size);
+				self->Send(dwProID, sid, serial, h, body.data());
+			}
 		}
 
 		if (!exited.empty()) {
