@@ -33,3 +33,7 @@
 
 ## 5) Why this policy
 This keeps DB/cache/inventory/combat persistence keyed by real character identity and prevents sid reuse from corrupting account/character ownership.
+
+## 6) Implementation progress (Phase 2)
+- World auth session reverse indexes now store packed session key `(sid, serial)` instead of sid-only.
+- Old-session lookup validates both sid and serial before considering a duplicate/eviction target.

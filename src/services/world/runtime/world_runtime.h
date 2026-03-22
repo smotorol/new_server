@@ -479,8 +479,8 @@ namespace svr {
 
 		// 신규 인증 세션 바인딩(account_id + char_id + sid + serial)
 		std::unordered_map<std::uint32_t, WorldAuthedSession> authed_sessions_by_sid_;
-		std::unordered_map<std::uint64_t, std::uint32_t> authed_sid_by_char_id_;
-		std::unordered_map<std::uint64_t, std::uint32_t> authed_sid_by_account_id_;
+		std::unordered_map<std::uint64_t, std::uint64_t> authed_session_key_by_char_id_;
+		std::unordered_map<std::uint64_t, std::uint64_t> authed_session_key_by_account_id_;
 		std::unordered_map<std::uint32_t, WorldEnterStage> world_enter_stage_by_sid_;
 		std::unordered_map<std::uint64_t, std::uint32_t> pending_enter_sid_by_char_id_;
 
