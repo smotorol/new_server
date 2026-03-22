@@ -83,6 +83,26 @@ namespace {
 		return true;
 	}
 
+	bool TestFlushDirtyCharsConflictFields()
+	{
+		svr::dqs_result::FlushDirtyCharsResult res{};
+		res.world_code = 7;
+		res.max_batch = 64;
+		res.pulled = 10;
+		res.saved = 7;
+		res.failed = 1;
+		res.conflicts = 2;
+		res.result = svr::dqs::ResultCode::partial;
+
+		if (res.conflicts != 2) {
+			return false;
+		}
+		if (res.saved + res.failed + res.conflicts != 10) {
+			return false;
+		}
+		return true;
+	}
+
 } // namespace
 
 int main()
@@ -90,13 +110,15 @@ int main()
 	const bool ok_session = TestSessionKeyPackUnpack();
 	const bool ok_batch = TestSpawnBatchLayout();
 	const bool ok_flush = TestFlushOneCharVersionFields();
+	const bool ok_dirty = TestFlushDirtyCharsConflictFields();
 
-	if (!ok_session || !ok_batch || !ok_flush) {
+	if (!ok_session || !ok_batch || !ok_flush || !ok_dirty) {
 		std::cerr
 			<< "world_regression_tests failed:"
 			<< " session=" << ok_session
 			<< " batch=" << ok_batch
 			<< " flush=" << ok_flush
+			<< " dirty=" << ok_dirty
 			<< "\n";
 		return 1;
 	}
