@@ -500,7 +500,7 @@ namespace svr {
 		boost::asio::dispatch(
 			duplicate_session_strand_,
 			[this, sid, serial, close_char_id]() {
-			if (ReserveDelayedWorldClose_(sid, serial)) {
+			if (TryReserveDelayedWorldClose_(sid, serial)) {
 				if (ArmReservedDelayedWorldClose_(
 					sid,
 					serial,
