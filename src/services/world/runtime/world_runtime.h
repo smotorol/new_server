@@ -503,7 +503,7 @@ namespace svr {
 
 		static constexpr std::uint32_t MAX_DB_SYC_DATA_NUM = 200000;
 		std::vector<svr::dqs::DqsSlot> dqs_slots_;
-		std::mutex dqs_mtx_;
+		mutable std::mutex dqs_mtx_;
 		std::deque<std::uint32_t> dqs_empty_;
 		std::atomic<std::uint64_t> dqs_drop_count_{ 0 };
 
