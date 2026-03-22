@@ -491,9 +491,36 @@ namespace svr {
 			"HandleWorldSessionClosed aborted pending enter-world flow before close processing.");
 
 		MarkEnterWorldSessionClosing(sid, serial);
+
+		std::uint64_t close_char_id = 0;
+		if (const auto current = FindAuthenticatedWorldSessionBySid_(sid); current.has_value()) {
+			close_char_id = current->char_id;
+		}
+
 		boost::asio::dispatch(
 			duplicate_session_strand_,
-			[this, sid, serial]() {
+			[this, sid, serial, close_char_id]() {
+			if (ReserveDelayedWorldClose_(sid, serial)) {
+				if (ArmReservedDelayedWorldClose_(
+					sid,
+					serial,
+					kReconnectGraceCloseDelay_,
+					0,
+					close_char_id))
+				{
+					spdlog::info(
+						"[session_close] reconnect grace close armed. char_id={} sid={} serial={} delay_ms={}",
+						close_char_id,
+						sid,
+						serial,
+						kReconnectGraceCloseDelay_.count());
+					return;
+				}
+
+				DelayedCloseEntry released_entry{};
+				ReleaseDelayedWorldCloseReservation_(sid, serial, &released_entry);
+			}
+
 			ProcessWorldSessionClosedOnIo_(sid, serial);
 		});
 	}

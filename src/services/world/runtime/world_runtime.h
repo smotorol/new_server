@@ -493,6 +493,7 @@ namespace svr {
 			DelayedCloseKeyHash> delayed_world_close_entries_;
 
 		static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
+		static constexpr std::chrono::milliseconds kReconnectGraceCloseDelay_{ 5000 };
 		std::atomic<std::uint64_t> duplicate_login_trace_seq_{ 1 };
 
 		static constexpr std::uint32_t MAX_DB_SYC_DATA_NUM = 200000;
