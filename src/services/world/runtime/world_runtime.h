@@ -515,6 +515,10 @@ namespace svr {
 		std::chrono::steady_clock::time_point next_stat_tp_{};
 		std::uint64_t last_move_pkts_ = 0;
 		std::uint64_t last_move_items_ = 0;
+		std::uint64_t last_aoi_entered_entities_ = 0;
+		std::uint64_t last_aoi_exited_entities_ = 0;
+		std::uint64_t last_aoi_move_fanout_ = 0;
+		std::uint64_t last_aoi_move_events_ = 0;
 
 		std::uint64_t bench_base_c2s_move_rx_ = 0;
 		std::uint64_t bench_base_s2c_ack_tx_ = 0;

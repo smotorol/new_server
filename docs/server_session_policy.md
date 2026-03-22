@@ -41,3 +41,8 @@ This keeps DB/cache/inventory/combat persistence keyed by real character identit
 ## 7) Implementation progress (Phase 3)
 - ZoneActor move path now uses entered/left edge-cell based visibility delta for 1-cell moves.
 - World move handler consumes precomputed `entered_vis` / `exited_vis` first, and only falls back to full old/new set-diff for non-local jumps.
+
+## 8) Implementation progress (Phase 4)
+- Added AOI operational counters:
+  - `moves/s`, `fanout/s`, `avg_fanout`, `entered/s`, `exited/s`
+- World main loop now emits `[aoistats]` log lines to support production bottleneck diagnosis with numeric signals.

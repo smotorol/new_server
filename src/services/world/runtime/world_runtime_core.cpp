@@ -239,6 +239,34 @@ namespace svr {
 				spdlog::info("[netstats] s2c_move pkts/s={} items/s={}", d_pkts, d_items);
 			}
 
+			const auto cur_entered = svr::metrics::g_aoi_entered_entities.load(std::memory_order_relaxed);
+			const auto cur_exited = svr::metrics::g_aoi_exited_entities.load(std::memory_order_relaxed);
+			const auto cur_fanout = svr::metrics::g_aoi_move_fanout.load(std::memory_order_relaxed);
+			const auto cur_events = svr::metrics::g_aoi_move_events.load(std::memory_order_relaxed);
+
+			const auto d_entered = cur_entered - last_aoi_entered_entities_;
+			const auto d_exited = cur_exited - last_aoi_exited_entities_;
+			const auto d_fanout = cur_fanout - last_aoi_move_fanout_;
+			const auto d_events = cur_events - last_aoi_move_events_;
+
+			last_aoi_entered_entities_ = cur_entered;
+			last_aoi_exited_entities_ = cur_exited;
+			last_aoi_move_fanout_ = cur_fanout;
+			last_aoi_move_events_ = cur_events;
+
+			if (d_events > 0 || d_entered > 0 || d_exited > 0) {
+				const double avg_fanout = (d_events == 0)
+					? 0.0
+					: static_cast<double>(d_fanout) / static_cast<double>(d_events);
+				spdlog::info(
+					"[aoistats] moves/s={} fanout/s={} avg_fanout={:.2f} entered/s={} exited/s={}",
+					d_events,
+					d_fanout,
+					avg_fanout,
+					d_entered,
+					d_exited);
+			}
+
 			const auto& world_line = lines_.host(svr::WorldLineId::World);
 			const auto& zone_line = lines_.host(svr::WorldLineId::Zone);
 			const auto& control_line = lines_.host(svr::WorldLineId::Control);

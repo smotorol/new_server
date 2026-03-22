@@ -45,6 +45,17 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			std::set_difference(oldv.begin(), oldv.end(), newv.begin(), newv.end(), std::back_inserter(exited));
 		}
 
+		svr::metrics::g_aoi_entered_entities.fetch_add(
+			static_cast<std::uint64_t>(entered.size()),
+			std::memory_order_relaxed);
+		svr::metrics::g_aoi_exited_entities.fetch_add(
+			static_cast<std::uint64_t>(exited.size()),
+			std::memory_order_relaxed);
+		svr::metrics::g_aoi_move_events.fetch_add(1, std::memory_order_relaxed);
+		svr::metrics::g_aoi_move_fanout.fetch_add(
+			static_cast<std::uint64_t>(diff.new_vis.size()),
+			std::memory_order_relaxed);
+
 		for (auto oid : entered) {
 			auto itp = z.players.find(oid);
 			if (itp == z.players.end()) continue;
