@@ -47,6 +47,17 @@ namespace dc {
 			std::uint64_t char_id = 0;
 		};
 
+		struct SessionRef
+		{
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+
+			[[nodiscard]] bool valid() const noexcept
+			{
+				return sid != 0 && serial != 0;
+			}
+		};
+
 		struct PendingLoginRequest
 		{
 			std::uint64_t request_id = 0;
@@ -132,7 +143,7 @@ namespace dc {
 
 		void RemoveLoginSession_NoLock_(std::uint32_t sid, std::uint32_t serial);
 		void AddDuplicateCandidateBySid_NoLock_(
-			std::uint32_t sid,
+			const SessionRef& ref,
 			std::uint32_t new_sid,
 			std::uint32_t new_serial,
 			std::vector<DuplicateSessionRef>& out);
@@ -153,10 +164,10 @@ namespace dc {
 		std::mutex login_sessions_mtx_;
 		std::mutex pending_login_mtx_;
 		std::unordered_map<std::uint32_t, LoginSessionAuthState> login_sessions_;
-		std::unordered_map<std::uint64_t, std::uint32_t> account_session_index_;
-		std::unordered_map<std::uint64_t, std::uint32_t> char_session_index_;
-		std::unordered_map<std::string, std::uint32_t> login_session_index_;
-		std::unordered_map<std::string, std::uint32_t> world_token_index_;
+		std::unordered_map<std::uint64_t, SessionRef> account_session_index_;
+		std::unordered_map<std::uint64_t, SessionRef> char_session_index_;
+		std::unordered_map<std::string, SessionRef> login_session_index_;
+		std::unordered_map<std::string, SessionRef> world_token_index_;
 		std::unordered_map<std::uint64_t, PendingLoginRequest> pending_login_requests_;
 
 		HostedLineEntry client_line_{};

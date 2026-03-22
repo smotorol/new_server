@@ -60,28 +60,32 @@ namespace dc {
 
 		if (it->second.account_id != 0) {
 			auto ia = account_session_index_.find(it->second.account_id);
-			if (ia != account_session_index_.end() && ia->second == sid) {
+			if (ia != account_session_index_.end() &&
+				dc::IsSameSessionKey(ia->second.sid, ia->second.serial, sid, serial)) {
 				account_session_index_.erase(ia);
 			}
 		}
 
 		if (it->second.char_id != 0) {
 			auto ic = char_session_index_.find(it->second.char_id);
-			if (ic != char_session_index_.end() && ic->second == sid) {
+			if (ic != char_session_index_.end() &&
+				dc::IsSameSessionKey(ic->second.sid, ic->second.serial, sid, serial)) {
 				char_session_index_.erase(ic);
 			}
 		}
 
 		if (!it->second.login_session.empty()) {
 			auto ils = login_session_index_.find(it->second.login_session);
-			if (ils != login_session_index_.end() && ils->second == sid) {
+			if (ils != login_session_index_.end() &&
+				dc::IsSameSessionKey(ils->second.sid, ils->second.serial, sid, serial)) {
 				login_session_index_.erase(ils);
 			}
 		}
 
 		if (!it->second.world_token.empty()) {
 			auto iwt = world_token_index_.find(it->second.world_token);
-			if (iwt != world_token_index_.end() && iwt->second == sid) {
+			if (iwt != world_token_index_.end() &&
+				dc::IsSameSessionKey(iwt->second.sid, iwt->second.serial, sid, serial)) {
 				world_token_index_.erase(iwt);
 			}
 		}
@@ -90,17 +94,25 @@ namespace dc {
 	}
 
 	void LoginLineRuntime::AddDuplicateCandidateBySid_NoLock_(
-		std::uint32_t sid,
+		const SessionRef& ref,
 		std::uint32_t new_sid,
 		std::uint32_t new_serial,
 		std::vector<DuplicateSessionRef>& out)
 	{
+		if (!ref.valid()) {
+			return;
+		}
+
+		const auto sid = ref.sid;
 		auto it = login_sessions_.find(sid);
 		if (it == login_sessions_.end()) {
 			return;
 		}
 
 		const auto& st = it->second;
+		if (st.serial != ref.serial) {
+			return;
+		}
 
 		if (st.sid == new_sid && st.serial == new_serial) {
 			return;
@@ -480,10 +492,10 @@ namespace dc {
 			st.issued_at = std::chrono::steady_clock::now();
 			st.expires_at = st.issued_at + dc::k_login_sessions_pending_client_sid;
 
-			account_session_index_[account_id] = pending.client_sid;
-			char_session_index_[char_id] = pending.client_sid;
-			login_session_index_[st.login_session] = pending.client_sid;
-			world_token_index_[st.world_token] = pending.client_sid;
+			account_session_index_[account_id] = SessionRef{ pending.client_sid, pending.client_serial };
+			char_session_index_[char_id] = SessionRef{ pending.client_sid, pending.client_serial };
+			login_session_index_[st.login_session] = SessionRef{ pending.client_sid, pending.client_serial };
+			world_token_index_[st.world_token] = SessionRef{ pending.client_sid, pending.client_serial };
 		}
 
 		if (!victims.empty()) {
@@ -519,14 +531,14 @@ namespace dc {
 		if (!world_token.empty()) {
 			const auto iwt = world_token_index_.find(std::string(world_token));
 			if (iwt != world_token_index_.end()) {
-				sid = iwt->second;
+				sid = iwt->second.sid;
 			}
 		}
 
 		if (sid == 0 && !login_session.empty()) {
 			const auto ils = login_session_index_.find(std::string(login_session));
 			if (ils != login_session_index_.end()) {
-				sid = ils->second;
+				sid = ils->second.sid;
 			}
 		}
 
@@ -543,7 +555,7 @@ namespace dc {
 		auto it = login_sessions_.find(sid);
 		if (it == login_sessions_.end()) {
 			const auto ia = account_session_index_.find(account_id);
-			if (ia != account_session_index_.end() && ia->second == sid) {
+			if (ia != account_session_index_.end() && ia->second.sid == sid) {
 				account_session_index_.erase(ia);
 			}
 			spdlog::warn(

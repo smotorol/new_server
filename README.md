@@ -179,3 +179,10 @@ Windows:
     setup_windows_oneclick.bat
     WSL Ubuntu 실행
     ./dev_env.sh
+
+------------------------------------------------------------------------
+
+## 12. 세션/인증/라인 책임 정책
+
+- 운영형 세션 정책 문서: `docs/server_session_policy.md`
+- Login/World/Control 경계, 중복 로그인 처리, `(account_id, char_id)` authoritative 바인딩 원칙을 정리했다.
