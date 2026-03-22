@@ -59,22 +59,40 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			static_cast<std::uint64_t>(diff.new_vis.size()),
 			std::memory_order_relaxed);
 
-		for (auto oid : entered) {
-			auto itp = z.players.find(oid);
-			if (itp == z.players.end()) continue;
-			proto::S2C_player_spawn smsg{};
-			smsg.char_id = oid;
-			smsg.x = itp->second.pos.x;
-			smsg.y = itp->second.pos.y;
-			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn, (std::uint16_t)sizeof(smsg));
-			self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&smsg));
+		if (!entered.empty()) {
+			const auto count = static_cast<std::uint16_t>(entered.size());
+			const std::size_t body_size = sizeof(proto::S2C_player_spawn_batch) +
+				((std::size_t)count - 1) * sizeof(proto::S2C_player_spawn_item);
+			std::vector<char> body(body_size);
+			auto* pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(body.data());
+			pkt->count = count;
+			for (std::size_t i = 0; i < entered.size(); ++i) {
+				auto itp = z.players.find(entered[i]);
+				if (itp == z.players.end()) {
+					pkt->items[i] = proto::S2C_player_spawn_item{};
+					continue;
+				}
+				pkt->items[i].char_id = entered[i];
+				pkt->items[i].x = itp->second.pos.x;
+				pkt->items[i].y = itp->second.pos.y;
 			}
-		for (auto oid : exited) {
-			proto::S2C_player_despawn dmsg{};
-			dmsg.char_id = oid;
-			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn, (std::uint16_t)sizeof(dmsg));
-			self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&dmsg));
+			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn_batch, (std::uint16_t)body_size);
+			self->Send(dwProID, sid, serial, h, body.data());
+		}
+
+		if (!exited.empty()) {
+			const auto count = static_cast<std::uint16_t>(exited.size());
+			const std::size_t body_size = sizeof(proto::S2C_player_despawn_batch) +
+				((std::size_t)count - 1) * sizeof(proto::S2C_player_despawn_item);
+			std::vector<char> body(body_size);
+			auto* pkt = reinterpret_cast<proto::S2C_player_despawn_batch*>(body.data());
+			pkt->count = count;
+			for (std::size_t i = 0; i < exited.size(); ++i) {
+				pkt->items[i].char_id = exited[i];
 			}
+			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn_batch, (std::uint16_t)body_size);
+			self->Send(dwProID, sid, serial, h, body.data());
+		}
 
 		proto::S2C_player_spawn self_spawn{};
 		self_spawn.char_id = char_id;

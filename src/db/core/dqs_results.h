@@ -35,6 +35,8 @@ namespace svr::dqs_result {
 	struct FlushOneCharResult final {
 		std::uint32_t world_code = 0;
 		std::uint64_t char_id = 0;
+		std::uint32_t expected_version = 0;
+		std::uint32_t actual_version = 0;
 		bool saved = false;
 		svr::dqs::ResultCode result = svr::dqs::ResultCode::success;
 

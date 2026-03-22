@@ -36,6 +36,7 @@ namespace svr::dqs {
 		success = 0,
 		db_error = 1,
 		invalid_data = 2,
+		conflict = 3,
 
 	};
 

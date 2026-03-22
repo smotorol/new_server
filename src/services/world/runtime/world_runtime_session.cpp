@@ -1,5 +1,6 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "services/world/common/string_utils.h"
+#include "services/world/metrics/world_metrics.h"
 #include "server_common/session/session_key.h"
 
 namespace svr {
@@ -1248,9 +1249,25 @@ namespace svr {
 			return;
 		}
 
-		// TODO:
-		// stat_category 기준 운영 카운터/메트릭 집계를 여기에 연결한다.
-		// 예: duplicate_char / duplicate_account / duplicate_both / deduplicated_same_session
+		switch (stat_category) {
+		case SessionKickStatCategory::DuplicateChar:
+			svr::metrics::g_dup_login_char.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case SessionKickStatCategory::DuplicateAccount:
+			svr::metrics::g_dup_login_account.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case SessionKickStatCategory::DuplicateBoth:
+			svr::metrics::g_dup_login_both.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case SessionKickStatCategory::DuplicateDeduplicatedSameSession:
+			svr::metrics::g_dup_login_dedup_same_session.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case SessionKickStatCategory::None:
+		case SessionKickStatCategory::Other:
+		default:
+			break;
+		}
+
 		DuplicateLoginLogContext ctx{};
 		ctx.trace_id = duplicate_login_trace_seq_.fetch_add(1, std::memory_order_relaxed);
 		ctx.account_id = victim.account_id != 0 ? victim.account_id : fallback_account_id;

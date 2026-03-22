@@ -520,6 +520,10 @@ namespace svr {
 		std::uint64_t last_aoi_move_fanout_ = 0;
 		std::uint64_t last_aoi_move_events_ = 0;
 		std::uint64_t last_unauth_packet_rejects_ = 0;
+		std::uint64_t last_dup_login_char_ = 0;
+		std::uint64_t last_dup_login_account_ = 0;
+		std::uint64_t last_dup_login_both_ = 0;
+		std::uint64_t last_dup_login_dedup_same_session_ = 0;
 
 		std::uint64_t bench_base_c2s_move_rx_ = 0;
 		std::uint64_t bench_base_s2c_ack_tx_ = 0;

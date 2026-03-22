@@ -79,11 +79,17 @@ namespace svr {
 
 			}
 
-			// 3) flush_one_char 결과 처리: 로그/추가 후처리(필요시)는 메인에서만
-			if constexpr (std::is_same_v<T, svr::dqs_result::FlushOneCharResult>) {
-				spdlog::info("[FlushOneChar] world={}, char_id={}, saved={}, result={}",
-					rr.world_code, rr.char_id, rr.saved, (int)rr.result);
-				return;
+				// 3) flush_one_char 결과 처리: 로그/추가 후처리(필요시)는 메인에서만
+				if constexpr (std::is_same_v<T, svr::dqs_result::FlushOneCharResult>) {
+					spdlog::info(
+						"[FlushOneChar] world={}, char_id={}, saved={}, result={}, expected_ver={}, actual_ver={}",
+						rr.world_code, rr.char_id, rr.saved, (int)rr.result, rr.expected_version, rr.actual_version);
+					if (rr.result == svr::dqs::ResultCode::conflict) {
+						spdlog::warn(
+							"[FlushOneCharConflict] world={} char_id={} expected_ver={} actual_ver={}",
+							rr.world_code, rr.char_id, rr.expected_version, rr.actual_version);
+					}
+					return;
 
 			}
 
@@ -340,6 +346,7 @@ namespace svr {
 
 							const std::uint32_t world_code = payload.world_code;
 							const std::uint64_t char_id = payload.char_id;
+							const std::uint32_t expected_version = payload.expected_version;
 							bool saved = false;
 
 							if (world_code >= world_pools_.size() || !world_pools_[world_code] || world_pools_[world_code]->conns.empty())
@@ -348,6 +355,7 @@ namespace svr {
 								svr::dqs_result::FlushOneCharResult r{};
 								r.world_code = world_code;
 								r.char_id = char_id;
+								r.expected_version = expected_version;
 								r.saved = false;
 								r.result = slot.result;
 								PostDqsResult(std::move(r));
@@ -360,6 +368,28 @@ namespace svr {
 								svr::dqs_result::FlushOneCharResult r{};
 								r.world_code = world_code;
 								r.char_id = char_id;
+								r.expected_version = expected_version;
+								r.saved = false;
+								r.result = slot.result;
+								PostDqsResult(std::move(r));
+								break;
+							}
+
+							std::uint32_t actual_version = 0;
+							svr::demo::DemoCharState parsed{};
+							if (svr::demo::TryDeserializeDemo(*blob, parsed) && parsed.char_id == char_id) {
+								actual_version = parsed.version;
+							}
+
+							if (expected_version != 0 &&
+								actual_version != 0 &&
+								actual_version != expected_version) {
+								slot.result = svr::dqs::ResultCode::conflict;
+								svr::dqs_result::FlushOneCharResult r{};
+								r.world_code = world_code;
+								r.char_id = char_id;
+								r.expected_version = expected_version;
+								r.actual_version = actual_version;
 								r.saved = false;
 								r.result = slot.result;
 								PostDqsResult(std::move(r));
@@ -383,6 +413,8 @@ namespace svr {
 							svr::dqs_result::FlushOneCharResult r{};
 							r.world_code = world_code;
 							r.char_id = char_id;
+							r.expected_version = expected_version;
+							r.actual_version = actual_version;
 							r.saved = saved;
 							r.result = slot.result;
 							PostDqsResult(std::move(r));
@@ -531,6 +563,14 @@ namespace svr {
 		svr::dqs_payload::FlushOneChar payload{};
 		payload.world_code = world_code;
 		payload.char_id = char_id;
+		payload.expected_version = 0;
+
+		if (auto blob = TryLoadCharacterState(world_code, char_id)) {
+			svr::demo::DemoCharState st{};
+			if (svr::demo::TryDeserializeDemo(*blob, st) && st.char_id == char_id) {
+				payload.expected_version = st.version;
+			}
+		}
 
 		(void)PushDQSData(
 			(std::uint8_t)svr::dqs::ProcessCode::world,

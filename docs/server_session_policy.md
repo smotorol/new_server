@@ -50,3 +50,11 @@ This keeps DB/cache/inventory/combat persistence keyed by real character identit
 ## 9) Implementation progress (Phase 5)
 - World handler now rejects gameplay packets from unauthenticated sessions (no fallback `sid -> actor` mapping).
 - Added `unauth_packet_rejects/s` operational warning log to detect auth/session race or abuse traffic.
+
+## 10) Implementation progress (Phase 6+)
+- Duplicate-login close path now increments operational counters by category:
+  `duplicate_char`, `duplicate_account`, `duplicate_both`, `deduplicated_same_session`.
+- Shutdown sequence is now logged step-by-step (accept stop → final dirty flush enqueue → DB stop → actor stop).
+- `flush_one_char` payload/result includes version fields and returns `conflict` on stale version mismatch.
+- Spawn/Despawn notify path to mover uses batch packets (`player_spawn_batch` / `player_despawn_batch`).
+- Auth reject logging now has threshold warning mode (`>=10/s`) with sampled source sid.

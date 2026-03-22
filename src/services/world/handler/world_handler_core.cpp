@@ -25,6 +25,7 @@ bool WorldHandler::ResolveAuthenticatedCharIdOrReject_(
 	}
 
 	svr::metrics::g_world_unauth_packet_rejects.fetch_add(1, std::memory_order_relaxed);
+	svr::metrics::g_world_unauth_last_sid.store(sid, std::memory_order_relaxed);
 	spdlog::warn(
 		"[auth] rejected unauthenticated world packet. op={} sid={}",
 		(op_name ? op_name : "unknown"),
