@@ -243,16 +243,19 @@ namespace svr {
 			const auto cur_exited = svr::metrics::g_aoi_exited_entities.load(std::memory_order_relaxed);
 			const auto cur_fanout = svr::metrics::g_aoi_move_fanout.load(std::memory_order_relaxed);
 			const auto cur_events = svr::metrics::g_aoi_move_events.load(std::memory_order_relaxed);
+			const auto cur_unauth_rejects = svr::metrics::g_world_unauth_packet_rejects.load(std::memory_order_relaxed);
 
 			const auto d_entered = cur_entered - last_aoi_entered_entities_;
 			const auto d_exited = cur_exited - last_aoi_exited_entities_;
 			const auto d_fanout = cur_fanout - last_aoi_move_fanout_;
 			const auto d_events = cur_events - last_aoi_move_events_;
+			const auto d_unauth_rejects = cur_unauth_rejects - last_unauth_packet_rejects_;
 
 			last_aoi_entered_entities_ = cur_entered;
 			last_aoi_exited_entities_ = cur_exited;
 			last_aoi_move_fanout_ = cur_fanout;
 			last_aoi_move_events_ = cur_events;
+			last_unauth_packet_rejects_ = cur_unauth_rejects;
 
 			if (d_events > 0 || d_entered > 0 || d_exited > 0) {
 				const double avg_fanout = (d_events == 0)
@@ -289,8 +292,11 @@ namespace svr {
 				control_line.stats().peak_sessions.load(std::memory_order_relaxed),
 				control_line.stats().session_open_count.load(std::memory_order_relaxed),
 				control_line.stats().session_close_count.load(std::memory_order_relaxed));
+
+			if (d_unauth_rejects > 0) {
+				spdlog::warn("[authstats] unauth_packet_rejects/s={}", d_unauth_rejects);
+			}
 		}
 	}
-
 
 } // namespace svr

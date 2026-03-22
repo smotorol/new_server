@@ -46,3 +46,7 @@ This keeps DB/cache/inventory/combat persistence keyed by real character identit
 - Added AOI operational counters:
   - `moves/s`, `fanout/s`, `avg_fanout`, `entered/s`, `exited/s`
 - World main loop now emits `[aoistats]` log lines to support production bottleneck diagnosis with numeric signals.
+
+## 9) Implementation progress (Phase 5)
+- World handler now rejects gameplay packets from unauthenticated sessions (no fallback `sid -> actor` mapping).
+- Added `unauth_packet_rejects/s` operational warning log to detect auth/session race or abuse traffic.

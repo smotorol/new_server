@@ -18,7 +18,10 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 	auto* req = proto::as<proto::C2S_move>(body, body_len);
 	if (!req) return false;
 
-	const std::uint64_t char_id = GetActorIdBySession(sid);
+	std::uint64_t char_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("move", sid, char_id)) {
+		return true;
+	}
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.zone_id;
 	a.pos = { req->x, req->y };
@@ -136,7 +139,10 @@ bool WorldHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid
 
 	svr::metrics::g_c2s_bench_move_rx.fetch_add(1, std::memory_order_relaxed);
 
-	const std::uint64_t char_id = GetActorIdBySession(sid);
+	std::uint64_t char_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("bench_move", sid, char_id)) {
+		return true;
+	}
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.zone_id;
 	a.pos = { req->x, req->y };
@@ -186,7 +192,10 @@ bool WorldHandler::HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t 
 	auto* req = proto::as<proto::C2S_spawn_monster>(body, body_len);
 	if (!req) return false;
 
-	const std::uint64_t char_id = GetActorIdBySession(sid);
+	std::uint64_t char_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("spawn_monster", sid, char_id)) {
+		return true;
+	}
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.zone_id;
 	const std::uint32_t serial = GetLatestSerial(sid);

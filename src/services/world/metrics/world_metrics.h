@@ -14,5 +14,6 @@ namespace svr::metrics {
 	inline std::atomic<std::uint64_t> g_aoi_exited_entities{ 0 };    // AOI exited entities per move aggregation
 	inline std::atomic<std::uint64_t> g_aoi_move_fanout{ 0 };        // number of move recipients
 	inline std::atomic<std::uint64_t> g_aoi_move_events{ 0 };        // number of move events processed
+	inline std::atomic<std::uint64_t> g_world_unauth_packet_rejects{ 0 }; // packet rejected because session is not authenticated
 
 } // namespace svr::metrics

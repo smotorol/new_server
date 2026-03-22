@@ -5,14 +5,31 @@
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
 #include "proto/client/world_proto.h"
+#include "services/world/metrics/world_metrics.h"
 
 namespace pt_w = proto::world;
 
 std::uint64_t WorldHandler::GetActorIdBySession(std::uint32_t sid) const
 {
-	if (const auto char_id = runtime().FindCharIdBySession(sid); char_id != 0)
-		return char_id;
-	return static_cast<std::uint64_t>(sid);
+	return runtime().FindCharIdBySession(sid);
+}
+
+bool WorldHandler::ResolveAuthenticatedCharIdOrReject_(
+	const char* op_name,
+	std::uint32_t sid,
+	std::uint64_t& out_char_id) const
+{
+	out_char_id = GetActorIdBySession(sid);
+	if (out_char_id != 0) {
+		return true;
+	}
+
+	svr::metrics::g_world_unauth_packet_rejects.fetch_add(1, std::memory_order_relaxed);
+	spdlog::warn(
+		"[auth] rejected unauthenticated world packet. op={} sid={}",
+		(op_name ? op_name : "unknown"),
+		sid);
+	return false;
 }
 
 std::uint64_t WorldHandler::ResolveActorId(std::uint32_t session_idx) const
