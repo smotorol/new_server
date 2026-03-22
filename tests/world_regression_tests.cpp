@@ -92,7 +92,7 @@ namespace {
 		res.saved = 7;
 		res.failed = 1;
 		res.conflicts = 2;
-		res.result = svr::dqs::ResultCode::partial;
+		res.result = svr::dqs::ResultCode::db_error;
 
 		if (res.conflicts != 2) {
 			return false;
