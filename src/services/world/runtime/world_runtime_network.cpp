@@ -1,6 +1,7 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "server_common/session/session_key.h"
 #include "server_common/config/aoi_config.h"
+#include "server_common/log/flow_event_codes.h"
 
 namespace svr {
 
@@ -383,7 +384,7 @@ namespace svr {
 		});
 
 		if (!world_account_handler_) {
-			spdlog::error("WorldRuntime failed to create world_account_handler_");
+			spdlog::debug("[{}] skipped: world_account_handler_ is null", dc::logevt::world::kAccountRouteHeartbeat);
 			return false;
 		}
 
@@ -519,7 +520,7 @@ namespace svr {
 		}
 
 		if (!world_account_handler_->SendRouteHeartbeat(0, sid, serial)) {
-			spdlog::debug("WorldRuntime failed to send account route heartbeat. sid={} serial={}", sid, serial);
+			spdlog::debug("[{}] failed sid={} serial={}", dc::logevt::world::kAccountRouteHeartbeat, sid, serial);
 		}
 	}
 
@@ -542,8 +543,8 @@ namespace svr {
 		next_account_route_heartbeat_tp_ = std::chrono::steady_clock::now() + dc::k_next_account_route_heartbeat_tp;
 
 		spdlog::info(
-
-			"WorldRuntime account line ready. sid={} serial={} server_id={} world_id={} channel_id={} zones={} load_score={} flags={} server_name={} public_host={} public_port={}",
+			"[{}] sid={} serial={} server_id={} world_id={} channel_id={} zones={} load_score={} flags={} server_name={} public_host={} public_port={}",
+			dc::logevt::world::kAccountRouteReady,
 			sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
 	}
 
@@ -561,6 +562,9 @@ namespace svr {
 		account_ready_.store(false, std::memory_order_release);
 		account_sid_.store(0, std::memory_order_relaxed);
 		account_serial_.store(0, std::memory_order_relaxed);
+
+		spdlog::warn("[{}] sid={} serial={} account route disconnected",
+			c::logevt::world::kAccountRouteDown, sid, serial);
 	}
 
 	bool WorldRuntime::NotifyAccountWorldEnterSuccess(
@@ -571,7 +575,8 @@ namespace svr {
 	{
 		if (!account_ready_.load(std::memory_order_acquire)) {
 			spdlog::warn(
-				"NotifyAccountWorldEnterSuccess skipped: account line not ready. account_id={} char_id={}",
+				"[{}] skipped: account line not ready. account_id={} char_id={}",
+				dc::logevt::world::kEnterNotifyRelay,
 				account_id,
 				char_id);
 			return false;
@@ -579,13 +584,14 @@ namespace svr {
 
 		if (!world_account_handler_) {
 			spdlog::warn(
-				"NotifyAccountWorldEnterSuccess skipped: world_account_handler_ is null. account_id={} char_id={}",
+				"[{}] skipped: world_account_handler_ is null. account_id={} char_id={}",
+				dc::logevt::world::kEnterNotifyRelay,
 				account_id,
 				char_id);
 			return false;
 		}
 
-		return world_account_handler_->SendWorldEnterSuccessNotify(
+		const bool sent = world_account_handler_->SendWorldEnterSuccessNotify(
 			100,
 			account_sid_.load(std::memory_order_relaxed),
 			account_serial_.load(std::memory_order_relaxed),
@@ -593,5 +599,15 @@ namespace svr {
 			char_id,
 			login_session,
 			world_token);
+
+		if (sent) {
+			spdlog::info("[{}] relayed account_id={} char_id={} token={} login_session={}",
+				dc::logevt::world::kEnterNotifyRelay, account_id, char_id, world_token, login_session);
+		} else {
+			spdlog::warn("[{}] send failed account_id={} char_id={} token={}",
+				dc::logevt::world::kEnterNotifyRelay, account_id, char_id, world_token);
+		}
+
+		return sent;
 	}
 } // namespace svr

@@ -1,4 +1,5 @@
 #include "services/world/runtime/world_runtime_private.h"
+#include "server_common/log/flow_event_codes.h"
 #include "services/world/common/string_utils.h"
 
 namespace svr {
@@ -221,6 +222,17 @@ namespace svr {
 		});
 
 		if (!pending_enter.cached_state_blob.empty()) {
+			spdlog::info("[{}] accepted request_id={} sid={} serial={} account_id={} char_id={} bind_kind={} duplicate_cause={}",
+				dc::logevt::world::kTicketConsumeResp,
+				pending.request_id,
+				pending_enter.request_id,
+				pending.sid,
+				pending.serial,
+				pending.account_id,
+				char_id,
+				"Accepted",
+				"None");
+
 			const std::uint32_t world_code = 0;
 			CacheCharacterState(world_code, char_id, pending_enter.cached_state_blob);
 		}
@@ -275,13 +287,15 @@ namespace svr {
 		std::string_view token)
 	{
 		if (!account_ready_.load(std::memory_order_acquire)) {
-			spdlog::warn("RequestConsumeWorldAuthTicket skipped: account line not ready. sid={} serial={} account_id={} char_id={}",
+			spdlog::warn("[{}] skipped: account line not ready. sid={} serial={} account_id={} char_id={}",
+				dc::logevt::world::kTicketConsumeReq,
 				sid, serial, account_id, char_id);
 			return false;
 		}
 
 		if (!world_account_handler_) {
-			spdlog::warn("RequestConsumeWorldAuthTicket skipped: world_account_handler_ is null. sid={} serial={} account_id={} char_id={}",
+			spdlog::warn("[{}] skipped: world_account_handler_ is null. sid={} serial={} account_id={} char_id={}",
+				dc::logevt::world::kTicketConsumeReq,
 				sid, serial, account_id, char_id);
 			return false;
 		}
@@ -314,6 +328,11 @@ namespace svr {
 		if (!sent) {
 			std::lock_guard lk(pending_enter_world_consume_mtx_);
 			pending_enter_world_consume_.erase(request_id);
+			spdlog::warn("[{}] send failed request_id={} sid={} serial={} account_id={} char_id={}",
+				dc::logevt::world::kTicketConsumeReq, request_id, sid, serial, account_id, char_id);
+		} else {
+			spdlog::info("[{}] sent request_id={} sid={} serial={} account_id={} char_id={} token={}",
+				dc::logevt::world::kTicketConsumeReq, request_id, sid, serial, account_id, char_id, token);
 		}
 
 		return sent;
@@ -334,7 +353,8 @@ namespace svr {
 			std::lock_guard lk(pending_enter_world_consume_mtx_);
 			const auto it = pending_enter_world_consume_.find(request_id);
 			if (it == pending_enter_world_consume_.end()) {
-				spdlog::warn("OnWorldAuthTicketConsumeResponse stale response ignored. request_id={} account_id={} char_id={}",
+				spdlog::warn("[{}] stale response ignored. request_id={} account_id={} char_id={}",
+					dc::logevt::world::kTicketConsumeResp,
 					request_id,
 					account_id,
 					char_id);
@@ -352,7 +372,8 @@ namespace svr {
 
 		if (!IsEnterWorldSessionPending(pending.sid, pending.serial, pending.char_id)) {
 			spdlog::warn(
-				"OnWorldAuthTicketConsumeResponse stale enter pending ignored. request_id={} sid={} serial={} account_id={} char_id={}",
+				"[{}] stale enter pending ignored. request_id={} sid={} serial={} account_id={} char_id={}",
+				dc::logevt::world::kTicketConsumeResp,
 				request_id,
 				pending.sid,
 				pending.serial,
@@ -371,7 +392,8 @@ namespace svr {
 			pending.world_token != world_token)
 		{
 			spdlog::warn(
-				"OnWorldAuthTicketConsumeResponse mismatch. request_id={} pending_account_id={} resp_account_id={} pending_char_id={} resp_char_id={}",
+				"[{}] mismatch. request_id={} pending_account_id={} resp_account_id={} pending_char_id={} resp_char_id={}",
+				dc::logevt::world::kTicketConsumeResp,
 				request_id,
 				pending.account_id,
 				account_id,
@@ -419,7 +441,8 @@ namespace svr {
 			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
 
 			spdlog::warn(
-				"World enter denied. sid={} serial={} request_id={} pending_account_id={} pending_char_id={} resp_account_id={} resp_char_id={} result_kind={}",
+				"[{}] sid={} serial={} request_id={} pending_account_id={} pending_char_id={} resp_account_id={} resp_char_id={} result_kind={}",
+				dc::logevt::world::kTicketConsumeDenied,
 				pending.sid,
 				pending.serial,
 				request_id,
@@ -447,7 +470,8 @@ namespace svr {
 				static_cast<std::uint16_t>(sizeof(res)));
 			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
 			spdlog::warn(
-				"OnWorldAuthTicketConsumeResponse bind failed. request_id={} sid={} serial={} account_id={} char_id={} bind_kind={} duplicate_cause={}",
+				"[{}] request_id={} sid={} serial={} account_id={} char_id={} bind_kind={} duplicate_cause={}",
+				dc::logevt::world::kTicketConsumeBindFail,
 				request_id,
 				pending.sid,
 				pending.serial,

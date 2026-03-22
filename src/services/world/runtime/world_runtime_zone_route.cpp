@@ -512,7 +512,8 @@ namespace svr {
 		route.last_heartbeat_at = std::chrono::steady_clock::now();
 
 		spdlog::info(
-			"WorldRuntime zone route registered. sid={} serial={} server_id={} zone_id={} world_id={} channel_id={} active_maps={} active_players={} capacity={} load={} flags={} name={}",
+			"[{}] sid={} serial={} server_id={} zone_id={} world_id={} channel_id={} active_maps={} active_players={} capacity={} load={} flags={} name={}",
+			dc::logevt::world::kZoneRouteReg,
 			sid, serial, server_id, zone_id, world_id, channel_id, active_map_instance_count, active_player_count, map_instance_capacity, load_score, flags, server_name);
 	}
 
@@ -551,6 +552,9 @@ namespace svr {
 		route.load_score = load_score;
 		route.flags = flags;
 		route.last_heartbeat_at = std::chrono::steady_clock::now();
+
+		spdlog::debug("[{}] sid={} serial={} zone_id={} active_maps={} active_players={} load={} flags={}",
+			dc::logevt::world::kZoneRouteHb, sid, serial, zone_id, active_map_instance_count, active_player_count, load_score, flags);
 	}
 
 

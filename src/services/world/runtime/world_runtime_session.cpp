@@ -235,11 +235,6 @@ namespace svr {
 			return false;
 		}
 
-		auto session_it = authed_sessions_by_sid_.find(sid);
-		if (session_it == authed_sessions_by_sid_.end() || session_it->second.serial != serial || session_it->second.char_id != char_id) {
-			return false;
-		}
-
 		auto pending_it = pending_enter_sid_by_char_id_.find(char_id);
 		return pending_it != pending_enter_sid_by_char_id_.end() && pending_it->second == sid;
 	}

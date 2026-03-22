@@ -11,13 +11,13 @@
 #include "server_common/runtime/line_client_start_helper.h"
 #include "server_common/runtime/line_start_helper.h"
 #include "server_common/session/session_key.h"
+#include "server_common/log/flow_event_codes.h"
 
 #include "shared/constants.h"
 
 namespace pt_l = proto::login;
 
 namespace dc {
-
 
 	LoginLineRuntime::LoginLineRuntime(
 		std::uint16_t port,
@@ -72,6 +72,22 @@ namespace dc {
 			}
 		}
 
+		const auto should_keep_detached_identity =
+			it->second.logged_in &&
+			IsValidAuthIdentity_(
+				it->second.account_id,
+				it->second.char_id,
+				it->second.login_session,
+				it->second.world_token);
+
+		if (should_keep_detached_identity) {
+			auto detached = it->second;
+			detached.sid = 0;
+			detached.serial = 0;
+			detached_world_enter_by_token_[detached.world_token] = std::move(detached);
+			detached_world_enter_token_by_login_session_[it->second.login_session] = it->second.world_token;
+		}
+
 		if (!it->second.login_session.empty()) {
 			auto ils = login_session_index_.find(it->second.login_session);
 			if (ils != login_session_index_.end() && ils->second == sid) {
@@ -87,6 +103,25 @@ namespace dc {
 		}
 
 		login_sessions_.erase(it);
+	}
+
+	void LoginLineRuntime::EraseDetachedWorldEnterState_NoLock_(
+		std::string_view login_session,
+		std::string_view world_token)
+	{
+		if (!login_session.empty()) {
+			auto ils = detached_world_enter_token_by_login_session_.find(std::string(login_session));
+			if (ils != detached_world_enter_token_by_login_session_.end()) {
+				detached_world_enter_token_by_login_session_.erase(ils);
+			}
+		}
+
+		if (!world_token.empty()) {
+			auto iwt = detached_world_enter_by_token_.find(std::string(world_token));
+			if (iwt != detached_world_enter_by_token_.end()) {
+				detached_world_enter_by_token_.erase(iwt);
+			}
+		}
 	}
 
 	void LoginLineRuntime::AddDuplicateCandidateBySid_NoLock_(
@@ -150,13 +185,14 @@ namespace dc {
 	{
 		auto* server = client_line_.host.server();
 		if (!server) {
-			spdlog::warn("CloseDuplicateLoginSessions_: login client server is null");
+			spdlog::warn("[{}] login client server is null", logevt::login::kDuplicateClose);
 			return;
 		}
 
 		for (const auto& v : victims) {
 			spdlog::warn(
-				"Duplicate login detected. closing old session sid={} serial={} account_id={} char_id={}",
+				"[{}] closing old duplicate login session sid={} serial={} account_id={} char_id={}",
+				logevt::login::kDuplicateClose,
 				v.sid, v.serial, v.account_id, v.char_id);
 
 			server->close(v.sid, v.serial);
@@ -171,7 +207,7 @@ namespace dc {
 		std::uint64_t selected_char_id)
 	{
 		if (!IsAccountReady()) {
-			spdlog::warn("IssueLoginRequest blocked: account not ready sid={}", sid);
+			spdlog::warn("[{}] blocked: account route not ready sid={}", logevt::login::kAuthReqDropped, sid);
 			return false;
 		}
 
@@ -196,7 +232,8 @@ namespace dc {
 		}
 
 		spdlog::info(
-			"IssueLoginRequest forwarded request_id={} sid={} serial={} login_id={}",
+			"[{}] forwarded request_id={} sid={} serial={} login_id={}",
+			logevt::login::kAuthReqSent,
 			pending.request_id,
 			sid,
 			serial,
@@ -324,6 +361,8 @@ namespace dc {
 			char_session_index_.clear();
 			login_session_index_.clear();
 			world_token_index_.clear();
+			detached_world_enter_by_token_.clear();
+			detached_world_enter_token_by_login_session_.clear();
 		}
 
 		{
@@ -338,6 +377,9 @@ namespace dc {
 		account_sid_.store(0, std::memory_order_relaxed);
 		account_serial_.store(0, std::memory_order_relaxed);
 		account_server_id_.store(0, std::memory_order_relaxed);
+
+		spdlog::info("[{}] login runtime stopped and account route state cleared",
+			logevt::login::kAccountRouteDown);
 	}
 
 	bool LoginLineRuntime::IsAccountReady() const noexcept
@@ -358,8 +400,9 @@ namespace dc {
 		account_ready_.store(true, std::memory_order_release);
 
 		spdlog::info(
-			"LoginLineRuntime account ready sid={} serial={} server_id={} server_name={} listen_port={}",
-			sid, serial, server_id, server_name, listen_port);
+			"[{}] sid={} serial={} server_id={} server_name={} listen_port={}",
+			logevt::login::kAccountRouteReady,
+ 			sid, serial, server_id, server_name, listen_port);
 	}
 
 	void LoginLineRuntime::MarkAccountDisconnected(
@@ -377,6 +420,9 @@ namespace dc {
 		account_sid_.store(0, std::memory_order_relaxed);
 		account_serial_.store(0, std::memory_order_relaxed);
 		account_server_id_.store(0, std::memory_order_relaxed);
+
+		spdlog::warn("[{}] sid={} serial={} account coordinator route disconnected",
+			logevt::login::kAccountRouteDown, sid, serial);
 	}
 
 	bool LoginLineRuntime::SendAccountAuthRequest_(const PendingLoginRequest& pending)
@@ -418,7 +464,7 @@ namespace dc {
 			std::lock_guard lk(pending_login_mtx_);
 			const auto it = pending_login_requests_.find(request_id);
 			if (it == pending_login_requests_.end()) {
-				spdlog::warn("OnAccountAuthResult dropped: request_id={} not found", request_id);
+				spdlog::warn("[{}] dropped: request_id={} not found", logevt::login::kAuthReqDropped, request_id);
 				return;
 			}
 
@@ -446,16 +492,27 @@ namespace dc {
 				pending.client_sid,
 				pending.client_serial,
 				fail_reason.empty() ? "account_auth_failed" : fail_reason.data());
+			spdlog::warn("[{}] denied sid={} serial={} login_id={} reason={}",
+				logevt::login::kAuthFail,
+				pending.client_sid,
+				pending.client_serial,
+				pending.login_id,
+				fail_reason.empty() ? "account_auth_failed" : fail_reason);
 			return;
 		}
 
 		if (pending.world_host.empty() || pending.world_port == 0) {
 			SendLoginResultFail_(pending.client_sid, pending.client_serial, "invalid_world_endpoint");
+			spdlog::warn("[{}] denied sid={} serial={} login_id={} reason=invalid_world_endpoint",
+				logevt::login::kAuthFail, pending.client_sid, pending.client_serial, pending.login_id);
+
 			return;
 		}
 
 		if (!IsValidAuthIdentity_(account_id, char_id, login_session, world_token)) {
 			SendLoginResultFail_(pending.client_sid, pending.client_serial, "invalid_auth_identity");
+			spdlog::warn("[{}] denied sid={} serial={} login_id={} reason=invalid_auth_identity",
+				logevt::login::kAuthFail, pending.client_sid, pending.client_serial, pending.login_id);
 			return;
 		}
 
@@ -468,6 +525,8 @@ namespace dc {
 			for (const auto& v : victims) {
 				RemoveLoginSession_NoLock_(v.sid, v.serial);
 			}
+
+			EraseDetachedWorldEnterState_NoLock_(login_session, world_token);
 
 			auto& st = login_sessions_[pending.client_sid];
 			st.sid = pending.client_sid;
@@ -501,10 +560,11 @@ namespace dc {
 			pending.world_port);
 
 		spdlog::info(
-			"LoginLineRuntime waiting world upsert ack. account_id={} char_id={} token={}",
-			account_id,
-			char_id,
-			world_token);
+			"[{}] login accepted. waiting world enter notify account_id={} char_id={} token={}",
+			logevt::login::kAuthSuccess,
+ 			account_id,
+ 			char_id,
+ 			world_token);
 	}
 
 	void LoginLineRuntime::OnWorldEnterSuccessNotify(
@@ -530,53 +590,103 @@ namespace dc {
 			}
 		}
 
-		if (sid == 0) {
-			spdlog::warn(
-				"OnWorldEnterSuccessNotify exact session not found. account_id={} char_id={} login_session={} token={}",
-				account_id,
-				char_id,
-				login_session,
-				world_token);
-			return;
-		}
-
-		auto it = login_sessions_.find(sid);
-		if (it == login_sessions_.end()) {
-			const auto ia = account_session_index_.find(account_id);
-			if (ia != account_session_index_.end() && ia->second == sid) {
-				account_session_index_.erase(ia);
+		if (sid != 0) {
+			auto it = login_sessions_.find(sid);
+			if (it == login_sessions_.end()) {
+				const auto ia = account_session_index_.find(account_id);
+				if (ia != account_session_index_.end() && ia->second == sid) {
+					account_session_index_.erase(ia);
+				}
+				spdlog::warn(
+					"[{}] account session not found. account_id={} char_id={} sid={}",
+					logevt::login::kWorldEnterNotify,
+					account_id,
+					char_id,
+					sid);
+				return;
 			}
-			spdlog::warn(
-				"OnWorldEnterSuccessNotify session map miss. sid={} account_id={} char_id={}",
-				sid,
-				account_id,
-				char_id);
-			return;
-		}
 
-		auto& st = it->second;
-		if (st.account_id != account_id ||
-			st.char_id != char_id ||
-			st.login_session != login_session ||
-			st.world_token != world_token)
-		{
-			spdlog::warn(
-				"OnWorldEnterSuccessNotify session mismatch. sid={} account_id={} char_id={}",
-				sid,
-				account_id,
-				char_id);
-			return;
-		}
+			auto& st = it->second;
+			if (st.account_id != account_id ||
+				st.char_id != char_id ||
+				st.login_session != login_session ||
+				st.world_token != world_token)
+			{
+				spdlog::warn(
+					"[{}] session map miss. sid={} account_id={} char_id={}",
+					logevt::login::kWorldEnterNotify,
+					sid,
+					account_id,
+					char_id);
+				return;
+			}
 
-		RemoveLoginSession_NoLock_(st.sid, st.serial);
+			RemoveLoginSession_NoLock_(st.sid, st.serial);
 
-		spdlog::info(
-			"OnWorldEnterSuccessNotify removed login session sid={} serial={} account_id={} char_id={}",
-			st.sid,
-			st.serial,
-			account_id,
-			char_id);
-	}
+			EraseDetachedWorldEnterState_NoLock_(login_session, world_token);
+
+			spdlog::info(
+				"[{}] removed login session after world enter notify. sid={} serial={} account_id={} char_id={} token={}",
+				logevt::login::kWorldEnterNotify,
+				st.sid,
+				st.serial,
+ 				account_id,
+ 				char_id,
+ 				world_token);
+ 			return;
+ 		}
+ 
+		if (!world_token.empty()) {
+			auto iwt = detached_world_enter_by_token_.find(std::string(world_token));
+			if (iwt != detached_world_enter_by_token_.end()) {
+				const auto& st = iwt->second;
+				if (st.account_id == account_id &&
+					st.char_id == char_id &&
+					st.login_session == login_session)
+				{
+					EraseDetachedWorldEnterState_NoLock_(login_session, world_token);
+					spdlog::info(
+						"[{}] consumed detached world enter notify. account_id={} char_id={} token={}",
+						logevt::login::kWorldEnterNotify,
+						account_id,
+						char_id,
+						world_token);
+					return;
+				}
+ 			}
+ 		}
+ 
+		if (sid == 0 && !login_session.empty()) {
+			auto ils = detached_world_enter_token_by_login_session_.find(std::string(login_session));
+			if (ils != detached_world_enter_token_by_login_session_.end()) {
+				auto iwt = detached_world_enter_by_token_.find(ils->second);
+				if (iwt != detached_world_enter_by_token_.end()) {
+					const auto& st = iwt->second;
+					if (st.account_id == account_id &&
+						st.char_id == char_id &&
+						st.world_token == world_token)
+					{
+						EraseDetachedWorldEnterState_NoLock_(login_session, world_token);
+						spdlog::info(
+							"[{}] consumed detached world enter notify by login_session. account_id={} char_id={} login_session={}",
+							logevt::login::kWorldEnterNotify,
+							account_id,
+							char_id,
+							login_session);
+						return;
+					}
+				}
+			}
+ 		}
+ 
+		spdlog::warn(
+			"[{}] exact session not found. account_id={} char_id={} login_session={} token={}",
+			logevt::login::kWorldEnterNotify,
+ 			account_id,
+			char_id,
+			login_session,
+			world_token);
+ 	}
 
 	void LoginLineRuntime::ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now)
 	{
