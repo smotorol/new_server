@@ -3,6 +3,7 @@
 #include "server_common/config/aoi_config.h"
 #include "server_common/config/runtime_ini_schema.h"
 #include "server_common/config/runtime_ini_sanity.h"
+#include "server_common/config/runtime_ini_version.h"
 #include "server_common/log/flow_event_codes.h"
 
 namespace svr {
@@ -74,9 +75,8 @@ namespace svr {
 			constexpr std::uint32_t kDefaultBatchNormal = 200;
 			constexpr int kDefaultCharTtlSec = 60 * 60 * 24 * 7; // 7 days
 			constexpr int kDefaultReconnectGraceCloseDelayMs = 5000;
-			constexpr int kRuntimeConfigSchemaVersion = 1;
 			bool config_fail_fast = false;
-			int config_schema_version = kRuntimeConfigSchemaVersion;
+			int config_schema_version = dc::cfg::kRuntimeConfigSchemaVersion;
 
 		// inipp는 기본적으로 trim/escape 처리가 있음
 		// ini.default_section(ini.sections[""]);
@@ -272,17 +272,17 @@ namespace svr {
 		if (!dc::cfg::ValidateSchemaVersion(
 			"SYSTEM.CONFIG_SCHEMA_VERSION",
 			config_schema_version,
-			kRuntimeConfigSchemaVersion,
+			dc::cfg::kRuntimeConfigSchemaVersion,
 			config_fail_fast,
 			&policy_error)) {
 			spdlog::error("{}", policy_error);
 			return false;
 		}
-		if (config_schema_version != kRuntimeConfigSchemaVersion) {
+		if (config_schema_version != dc::cfg::kRuntimeConfigSchemaVersion) {
 			spdlog::warn(
 				"[config] schema version mismatch (continue with auto-heal mode). loaded={} expected={}",
 				config_schema_version,
-				kRuntimeConfigSchemaVersion);
+				dc::cfg::kRuntimeConfigSchemaVersion);
 		}
 
 		// 5) AOI/섹터 sanity
@@ -297,7 +297,7 @@ namespace svr {
 				flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
 			spdlog::info("INI(SESSION): reconnect_grace_close_delay_ms={}", reconnect_grace_close_delay_ms_);
 			spdlog::info("INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={}",
-				config_fail_fast, config_schema_version, kRuntimeConfigSchemaVersion);
+				config_fail_fast, config_schema_version, dc::cfg::kRuntimeConfigSchemaVersion);
 			spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
 				redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
 		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",

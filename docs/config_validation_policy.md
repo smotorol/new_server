@@ -54,5 +54,6 @@
   - 기본값(`0`): fallback 보정(auto-heal) 유지.
 - 설정 버전(`CONFIG_SCHEMA_VERSION`) 도입으로 롤링 배포 중 혼재값 진단 지원.
   - 현재 구현: `SYSTEM.CONFIG_SCHEMA_VERSION` vs 런타임 기대 버전 비교.
+  - 기대 버전 상수는 `runtime_ini_version.h`로 world/channel 공용화.
     - strict(`CONFIG_FAIL_FAST=1`): mismatch 시 부팅 실패.
     - auto-heal(`0`): warning 로그 후 계속 진행.

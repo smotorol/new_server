@@ -134,6 +134,7 @@ def main() -> int:
     world_config_fail_fast_needles = [
         "CONFIG_FAIL_FAST",
         "CONFIG_SCHEMA_VERSION",
+        "dc::cfg::kRuntimeConfigSchemaVersion",
         "dc::cfg::BuildWorldRuntimeMinPolicyTable(",
         "dc::cfg::ApplyMinPolicies(",
         "ValidateSchemaVersion(",
@@ -147,6 +148,7 @@ def main() -> int:
     channel_config_fail_fast_needles = [
         "CONFIG_FAIL_FAST",
         "CONFIG_SCHEMA_VERSION",
+        "dc::cfg::kRuntimeConfigSchemaVersion",
         "dc::cfg::BuildChannelRuntimeMinPolicyTable(",
         "dc::cfg::ApplyMinPolicies(",
         "ValidateSchemaVersion(",
