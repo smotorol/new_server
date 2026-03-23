@@ -65,6 +65,11 @@ struct DbPool
 
 namespace svr {
 
+	// WorldRuntime 책임 경계
+	// - account line: world auth ticket consume / world enter success notify relay
+	// - zone line: zone route registry 및 player enter/leave 전달
+	// - world runtime: authenticated session / in-world session / actor 소유권의 최종 관리자
+	// - account는 식별 검증을, world는 접속 세션 바인딩과 실제 게임 상태 진입을 담당한다.
 	constexpr std::uint16_t PORT_WORLD = 27787;
 	constexpr std::uint16_t PORT_ZONE = 27788;
 	constexpr std::uint16_t PORT_CONTROL = 27789;
@@ -111,6 +116,7 @@ namespace svr {
 		void RequestBenchReset() noexcept;
 		void RequestBenchMeasure(int seconds) noexcept;
 
+		// account가 검증한 world ticket consume 결과를 받아 world 세션 바인딩을 확정한다.
 		void OnWorldAuthTicketConsumeResponse(
 			std::uint64_t request_id,
 			ConsumePendingWorldAuthTicketResultKind result_kind,
@@ -152,6 +158,7 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial) override;
 
+		// world가 최종 enter success를 account에 relay 한다. login pending session 정리는 account/login이 담당한다.
 		bool NotifyAccountWorldEnterSuccess(
 			std::uint64_t account_id,
 			std::uint64_t char_id,

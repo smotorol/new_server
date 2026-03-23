@@ -21,6 +21,7 @@
 #include "services/account/handler/account_world_handler.h"
 #include "services/world/runtime/i_world_runtime.h"
 #include "proto/internal/account_world_proto.h"
+#include "server_common/log/flow_event_codes.h"
 
 namespace pt_aw = proto::internal::account_world;
 
@@ -47,23 +48,23 @@ namespace {
 	const char* ToString(AccountFlowEvent e)
 	{
 		switch (e) {
-		case AccountFlowEvent::LoginCoordinatorReady: return "ACC_LOGIN_READY";
-		case AccountFlowEvent::LoginCoordinatorDisconnected: return "ACC_LOGIN_DISC";
-		case AccountFlowEvent::WorldRouteRegistered: return "ACC_WORLD_ROUTE_REG";
-		case AccountFlowEvent::WorldRouteDisconnected: return "ACC_WORLD_ROUTE_DISC";
-		case AccountFlowEvent::WorldRouteHeartbeatStale: return "ACC_WORLD_ROUTE_HB_STALE";
-		case AccountFlowEvent::WorldRouteHeartbeatMismatch: return "ACC_WORLD_ROUTE_HB_MISMATCH";
-		case AccountFlowEvent::AuthRejected: return "ACC_AUTH_REJECT";
-		case AccountFlowEvent::AuthWorldRouteUnavailable: return "ACC_AUTH_ROUTE_UNAVAILABLE";
-		case AccountFlowEvent::WorldTicketIssued: return "ACC_WORLD_TICKET_ISSUED";
-		case AccountFlowEvent::WorldTicketConsumeAccepted: return "ACC_WORLD_TICKET_CONSUMED";
-		case AccountFlowEvent::WorldTicketConsumeRejected: return "ACC_WORLD_TICKET_REJECTED";
-		case AccountFlowEvent::WorldEnterNotifyDropped: return "ACC_WORLD_ENTER_NOTIFY_DROP";
-		case AccountFlowEvent::WorldEnterNotifyRelayed: return "ACC_WORLD_ENTER_NOTIFY_RELAY";
-		case AccountFlowEvent::WorldTicketAwaitNotifyExpired: return "ACC_WORLD_TICKET_NOTIFY_EXPIRE";
-		case AccountFlowEvent::WorldRouteExpired: return "ACC_WORLD_ROUTE_EXPIRE";
-		default: return "ACC_UNKNOWN";
-		}
+		case AccountFlowEvent::LoginCoordinatorReady: return dc::logevt::account::kLoginCoordinatorReady;
+		case AccountFlowEvent::LoginCoordinatorDisconnected: return dc::logevt::account::kLoginCoordinatorDisconnected;
+		case AccountFlowEvent::WorldRouteRegistered: return dc::logevt::account::kWorldRouteRegistered;
+		case AccountFlowEvent::WorldRouteDisconnected: return dc::logevt::account::kWorldRouteDisconnected;
+		case AccountFlowEvent::WorldRouteHeartbeatStale: return dc::logevt::account::kWorldRouteHeartbeatStale;
+		case AccountFlowEvent::WorldRouteHeartbeatMismatch: return dc::logevt::account::kWorldRouteHeartbeatMismatch;
+		case AccountFlowEvent::AuthRejected: return dc::logevt::account::kAuthRejected;
+		case AccountFlowEvent::AuthWorldRouteUnavailable: return dc::logevt::account::kAuthWorldRouteUnavailable;
+		case AccountFlowEvent::WorldTicketIssued: return dc::logevt::account::kWorldTicketIssued;
+		case AccountFlowEvent::WorldTicketConsumeAccepted: return dc::logevt::account::kWorldTicketConsumeAccepted;
+		case AccountFlowEvent::WorldTicketConsumeRejected: return dc::logevt::account::kWorldTicketConsumeRejected;
+		case AccountFlowEvent::WorldEnterNotifyDropped: return dc::logevt::account::kWorldEnterNotifyDropped;
+		case AccountFlowEvent::WorldEnterNotifyRelayed: return dc::logevt::account::kWorldEnterNotifyRelayed;
+		case AccountFlowEvent::WorldTicketAwaitNotifyExpired: return dc::logevt::account::kWorldTicketAwaitNotifyExpired;
+		case AccountFlowEvent::WorldRouteExpired: return dc::logevt::account::kWorldRouteExpired;
+		default: return dc::logevt::account::kUnknown;
+ 		}
 	}
 
 	std::string ToHexToken_(std::uint64_t a, std::uint64_t b)
@@ -115,7 +116,7 @@ namespace dc {
 		const auto cur_sid = login_sid_.load(std::memory_order_relaxed);
 		const auto cur_serial = login_serial_.load(std::memory_order_relaxed);
 
-		if (cur_sid != sid || cur_serial != serial) {
+		if (cur_sid != 0 && !dc::IsSameSessionKey(cur_sid, cur_serial, sid, serial)) {
 			return;
 		}
 
@@ -161,6 +162,17 @@ namespace dc {
 		std::size_t world_count = 0;
 		{
 			std::lock_guard lk(world_registry_mtx_);
+
+			auto prev = worlds_by_sid_.find(sid);
+			if (prev != worlds_by_sid_.end()) {
+				const auto prev_server_id = prev->second.server_id;
+				if (prev_server_id != 0 && prev_server_id != server_id) {
+					auto old_idx = world_sid_by_server_id_.find(prev_server_id);
+					if (old_idx != world_sid_by_server_id_.end() && old_idx->second == sid) {
+						world_sid_by_server_id_.erase(old_idx);
+					}
+				}
+			}
 
 			if (server_id != 0) {
 				const auto same_server = world_sid_by_server_id_.find(server_id);
@@ -208,7 +220,7 @@ namespace dc {
 		{
 			std::lock_guard lk(world_registry_mtx_);
 			const auto it = worlds_by_sid_.find(sid);
-			if (it == worlds_by_sid_.end() || it->second.serial != serial) {
+			if (it == worlds_by_sid_.end() || !dc::IsSameSessionKey(it->second.sid, it->second.serial, sid, serial)) {
 				return;
 			}
 
@@ -344,7 +356,7 @@ namespace dc {
 	{
 		std::lock_guard lk(world_registry_mtx_);
 		const auto it = worlds_by_sid_.find(sid);
-		if (it == worlds_by_sid_.end() || it->second.serial != serial) {
+		if (it == worlds_by_sid_.end() || !dc::IsSameSessionKey(it->second.sid, it->second.serial, sid, serial)) {
 			return false;
 		}
 
