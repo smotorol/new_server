@@ -659,7 +659,7 @@ namespace svr {
 		account_serial_.store(0, std::memory_order_relaxed);
 
 		spdlog::warn("[{}] sid={} serial={} account route disconnected",
-			c::logevt::world::kAccountRouteDown, sid, serial);
+			dc::logevt::world::kAccountRouteDown, sid, serial);
 	}
 
 	bool WorldRuntime::NotifyAccountWorldEnterSuccess(

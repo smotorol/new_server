@@ -385,7 +385,7 @@ def main() -> int:
             ok = False
 
     consume_resp_needles = [
-        "const auto latest_serial = handler->GetLatestSerial(pending.sid);",
+        "const auto latest_serial = handler->GetLatestSerialForRuntime(pending.sid);",
         "latest_serial != pending.serial",
         "enter pending state missing but transport is still alive",
     ]

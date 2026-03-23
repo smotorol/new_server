@@ -1271,8 +1271,9 @@ namespace svr {
 			return;
 		}
 
-		const auto victim_remote = GetLatestRemoteEndpoint(victim.sid);
-		const auto new_remote = GetLatestRemoteEndpoint(new_sid);
+		auto* world_handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+		const auto victim_remote = world_handler ? world_handler->GetLatestRemoteEndpointForRuntime(victim.sid) : std::string{};
+		const auto new_remote = world_handler ? world_handler->GetLatestRemoteEndpointForRuntime(new_sid) : std::string{};
 		if (!victim_remote.empty() && !new_remote.empty() && victim_remote != new_remote) {
 			spdlog::info(
 				"[reconnect_ip_change] account_id={} char_id={} old_sid={} old_serial={} old_remote={} new_sid={} new_serial={} new_remote={} authoritative_sid={} authoritative_serial={}",
