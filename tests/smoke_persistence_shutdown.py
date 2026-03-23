@@ -30,6 +30,7 @@ def main() -> int:
     session_cpp = repo_root / "src/services/world/runtime/world_runtime_session.cpp"
     login_runtime_cpp = repo_root / "src/services/login/runtime/login_line_runtime.cpp"
     world_regression_cpp = repo_root / "tests/world_regression_tests.cpp"
+    runtime_log_check_py = repo_root / "tests/runtime_log_scenario_checks.py"
 
     core_text = core_cpp.read_text(encoding="utf-8")
     runtime_network_text = runtime_network_cpp.read_text(encoding="utf-8")
@@ -43,6 +44,7 @@ def main() -> int:
     session_text = session_cpp.read_text(encoding="utf-8")
     login_runtime_text = login_runtime_cpp.read_text(encoding="utf-8")
     world_regression_text = world_regression_cpp.read_text(encoding="utf-8")
+    runtime_log_check_text = runtime_log_check_py.read_text(encoding="utf-8")
 
     ok = True
 
@@ -208,6 +210,18 @@ def main() -> int:
     for needle in config_parse_test_needles:
         if needle not in world_regression_text:
             print(f"[FAIL] config-parse-regression: missing '{needle}'")
+            ok = False
+
+    runtime_log_check_needles = [
+        "reconnect-grace-armed",
+        "dupstats-shape",
+        "authstats-shape",
+        "shutdown-order-runtime",
+        "runtime_log_scenario_checks passed",
+    ]
+    for needle in runtime_log_check_needles:
+        if needle not in runtime_log_check_text:
+            print(f"[FAIL] runtime-log-checker: missing '{needle}'")
             ok = False
 
     dup_needles_session = [

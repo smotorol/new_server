@@ -56,6 +56,7 @@
   - `INI(REDIS)`
   - `INI(AOI)`
   - `INI(SYSTEM): config_fail_fast / schema_version / expected_schema_version / supported_schema_range`
+- 런타임 로그 검증 자동화는 `tests/runtime_log_scenario_checks.py`를 사용한다.
 
 ## 향후 강화 항목 (planned follow-up)
 - 키 단위 스키마 선언(필수/선택, min/max, default)을 runtime 로더 코드에서 분리된 스키마 모듈로 유지/확장.

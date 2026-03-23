@@ -8,6 +8,7 @@
 - [x] `smoke_persistence_shutdown` 정적 smoke에 reconnect grace(reserve/arm/log 경로) 코드 존재 점검 추가.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 duplicate-login category 카운터 증가 코드/`dupstats` 로그 코드 존재 점검 추가.
 - [x] `SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS` 설정값 파싱/정상화/로그 경로 추가.
+- [x] 런타임 로그 기반 reconnect/dup 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
 
 ## B. AOI broadcast
 - [ ] 1-cell moves produce expected entered/exited behavior.
@@ -35,11 +36,13 @@
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 shutdown step 로그 marker 순서를 정적 smoke 검증.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 `wait_dqs_drain_end in_flight/timed_out` 로그 경로 존재 점검 추가.
 - [x] timeout 분기 경고 로그(`[shutdown] dqs drain timed out ...`) 코드 경로 정적 smoke 점검 추가.
+- [x] 런타임 로그 기반 shutdown step 순서 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
 
 ## E. Auth hardening
 - [ ] Unauthenticated gameplay packets are rejected and counted.
 - [ ] `authstats` warning triggers when reject rate exceeds threshold.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 unauth reject 계수 증가 코드/`authstats` 임계치 로그 코드 존재 점검 추가.
+- [x] 런타임 로그 기반 `authstats` shape 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
 
 ## F. CI gate
 - [x] `tests/run_ci_ctest.sh`로 기본 PR 게이트(`world_regression_tests`, `smoke_persistence_shutdown`) 묶음 실행.
