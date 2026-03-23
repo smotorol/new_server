@@ -52,3 +52,4 @@
 - [x] validation table을 runtime 로더 외부 파일(`runtime_ini_schema.h`)로 분리.
 - [x] `CONFIG_SCHEMA_VERSION` mismatch 감지 + strict/auto-heal 분기 처리 및 시스템 로그 반영.
 - [x] schema expected-version 상수를 `runtime_ini_version.h`로 world/channel 공용화.
+- [x] schema 지원 범위(min/max) 기반 compatibility 검증 + 시스템 로그(`supported_schema_range`) 반영.

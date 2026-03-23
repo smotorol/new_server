@@ -269,20 +269,32 @@ namespace svr {
 			spdlog::error("{}", policy_error);
 			return false;
 		}
-		if (!dc::cfg::ValidateSchemaVersion(
+		if (!dc::cfg::ValidateSchemaCompatibility(
 			"SYSTEM.CONFIG_SCHEMA_VERSION",
 			config_schema_version,
 			dc::cfg::kRuntimeConfigSchemaVersion,
+			dc::cfg::kRuntimeConfigSchemaMinSupported,
+			dc::cfg::kRuntimeConfigSchemaMaxSupported,
 			config_fail_fast,
 			&policy_error)) {
 			spdlog::error("{}", policy_error);
 			return false;
 		}
-		if (config_schema_version != dc::cfg::kRuntimeConfigSchemaVersion) {
+		if (config_schema_version < dc::cfg::kRuntimeConfigSchemaMinSupported ||
+			config_schema_version > dc::cfg::kRuntimeConfigSchemaMaxSupported) {
 			spdlog::warn(
-				"[config] schema version mismatch (continue with auto-heal mode). loaded={} expected={}",
+				"[config] schema version unsupported (continue with auto-heal mode). loaded={} supported=[{},{}]",
 				config_schema_version,
-				dc::cfg::kRuntimeConfigSchemaVersion);
+				dc::cfg::kRuntimeConfigSchemaMinSupported,
+				dc::cfg::kRuntimeConfigSchemaMaxSupported);
+		}
+		else if (config_schema_version != dc::cfg::kRuntimeConfigSchemaVersion) {
+			spdlog::warn(
+				"[config] schema version mismatch (continue with auto-heal mode). loaded={} expected={} supported=[{},{}]",
+				config_schema_version,
+				dc::cfg::kRuntimeConfigSchemaVersion,
+				dc::cfg::kRuntimeConfigSchemaMinSupported,
+				dc::cfg::kRuntimeConfigSchemaMaxSupported);
 		}
 
 		// 5) AOI/섹터 sanity
@@ -296,8 +308,12 @@ namespace svr {
 			spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
 				flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
 			spdlog::info("INI(SESSION): reconnect_grace_close_delay_ms={}", reconnect_grace_close_delay_ms_);
-			spdlog::info("INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={}",
-				config_fail_fast, config_schema_version, dc::cfg::kRuntimeConfigSchemaVersion);
+			spdlog::info("INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={} supported_schema_range=[{},{}]",
+				config_fail_fast,
+				config_schema_version,
+				dc::cfg::kRuntimeConfigSchemaVersion,
+				dc::cfg::kRuntimeConfigSchemaMinSupported,
+				dc::cfg::kRuntimeConfigSchemaMaxSupported);
 			spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
 				redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
 		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",

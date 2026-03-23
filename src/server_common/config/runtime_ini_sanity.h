@@ -182,4 +182,28 @@ namespace dc::cfg {
 		return true;
 	}
 
+	inline bool ValidateSchemaCompatibility(
+		const char* key,
+		int loaded_version,
+		int expected_version,
+		int min_supported_version,
+		int max_supported_version,
+		bool fail_fast,
+		std::string* out_error = nullptr)
+	{
+		if (loaded_version < min_supported_version || loaded_version > max_supported_version) {
+			if (fail_fast) {
+				if (out_error) {
+					*out_error = std::string("schema unsupported: ") + key
+						+ " loaded=" + std::to_string(loaded_version)
+						+ " supported=[" + std::to_string(min_supported_version)
+						+ "," + std::to_string(max_supported_version) + "]";
+				}
+				return false;
+			}
+			return true;
+		}
+		return ValidateSchemaVersion(key, loaded_version, expected_version, fail_fast, out_error);
+	}
+
 } // namespace dc::cfg

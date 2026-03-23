@@ -135,10 +135,12 @@ def main() -> int:
         "CONFIG_FAIL_FAST",
         "CONFIG_SCHEMA_VERSION",
         "dc::cfg::kRuntimeConfigSchemaVersion",
+        "dc::cfg::kRuntimeConfigSchemaMinSupported",
+        "dc::cfg::kRuntimeConfigSchemaMaxSupported",
         "dc::cfg::BuildWorldRuntimeMinPolicyTable(",
         "dc::cfg::ApplyMinPolicies(",
-        "ValidateSchemaVersion(",
-        "INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={}",
+        "ValidateSchemaCompatibility(",
+        "INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={} supported_schema_range=[{},{}]",
     ]
     for needle in world_config_fail_fast_needles:
         if needle not in runtime_network_text:
@@ -149,10 +151,12 @@ def main() -> int:
         "CONFIG_FAIL_FAST",
         "CONFIG_SCHEMA_VERSION",
         "dc::cfg::kRuntimeConfigSchemaVersion",
+        "dc::cfg::kRuntimeConfigSchemaMinSupported",
+        "dc::cfg::kRuntimeConfigSchemaMaxSupported",
         "dc::cfg::BuildChannelRuntimeMinPolicyTable(",
         "dc::cfg::ApplyMinPolicies(",
-        "ValidateSchemaVersion(",
-        "INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={}",
+        "ValidateSchemaCompatibility(",
+        "INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={} supported_schema_range=[{},{}]",
     ]
     for needle in channel_config_fail_fast_needles:
         if needle not in channel_runtime_text:

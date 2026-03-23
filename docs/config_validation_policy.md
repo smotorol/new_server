@@ -44,7 +44,7 @@
   - `INI(SESSION)` (world)
   - `INI(REDIS)`
   - `INI(AOI)`
-  - `INI(SYSTEM): config_fail_fast / schema_version / expected_schema_version`
+  - `INI(SYSTEM): config_fail_fast / schema_version / expected_schema_version / supported_schema_range`
 
 ## 향후 강화 항목 (planned follow-up)
 - 키 단위 스키마 선언(필수/선택, min/max, default)을 runtime 로더 코드에서 분리된 스키마 모듈로 유지/확장.
@@ -53,7 +53,7 @@
   - 현재 구현: `SYSTEM.CONFIG_FAIL_FAST=1`일 때 min-policy 위반을 즉시 에러로 처리하고 부팅을 중단.
   - 기본값(`0`): fallback 보정(auto-heal) 유지.
 - 설정 버전(`CONFIG_SCHEMA_VERSION`) 도입으로 롤링 배포 중 혼재값 진단 지원.
-  - 현재 구현: `SYSTEM.CONFIG_SCHEMA_VERSION` vs 런타임 기대 버전 비교.
+  - 현재 구현: `SYSTEM.CONFIG_SCHEMA_VERSION` vs 런타임 기대 버전/지원 범위 비교.
   - 기대 버전 상수는 `runtime_ini_version.h`로 world/channel 공용화.
-    - strict(`CONFIG_FAIL_FAST=1`): mismatch 시 부팅 실패.
+    - strict(`CONFIG_FAIL_FAST=1`): unsupported/mismatch 시 부팅 실패.
     - auto-heal(`0`): warning 로그 후 계속 진행.
