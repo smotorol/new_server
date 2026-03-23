@@ -33,6 +33,7 @@
 - `SYSTEM.CONFIG_FAIL_FAST`, `SYSTEM.CONFIG_SCHEMA_VERSION`은 숫자 파싱 실패 시 예외로 프로세스가 죽지 않도록 안전 파싱을 사용한다.
 - 안전 파싱 helper는 `TryParseInt`/`TryParseU32`, `ParseIntOrKeep`/`ParseU32OrKeep` 조합으로 제공한다.
 - 내부 구현은 공통 템플릿(`ParseOrKeepNumericImpl`)로 통합해 int/u32 정책 일관성을 유지한다.
+- `TryParseInt`/`TryParseU32` 또한 signed/unsigned 공통 파서 템플릿으로 구현되어 범위 검증 동작을 공유한다.
 - `CONFIG_FAIL_FAST=1`이면 `CONFIG_SCHEMA_VERSION` 파싱 실패를 즉시 부팅 실패로 처리한다.
 - `CONFIG_FAIL_FAST=0`이면 경고 로그 후 기본값으로 진행한다.
 - 동일 안전 파싱 패턴은 `WRITE_BEHIND`, `DB_WORK`, `REDIS`, `NET_WORK`, `AOI`, `World` 주요 숫자 키에도 확장 적용한다.

@@ -5,6 +5,7 @@
 #include <initializer_list>
 #include <limits>
 #include <string>
+#include <type_traits>
 #include <vector>
 
 #include "server_common/config/aoi_config.h"
@@ -12,6 +13,44 @@
 namespace dc::cfg {
 
 	namespace detail {
+		template <typename T>
+		inline bool TryParseSignedImpl(const std::string& s, T& out) noexcept
+		{
+			static_assert(std::is_integral_v<T> && std::is_signed_v<T>, "T must be signed integral");
+			try {
+				std::size_t pos = 0;
+				const long long v = std::stoll(s, &pos);
+				if (pos != s.size() ||
+					v < static_cast<long long>(std::numeric_limits<T>::min()) ||
+					v > static_cast<long long>(std::numeric_limits<T>::max())) {
+					return false;
+				}
+				out = static_cast<T>(v);
+				return true;
+			}
+			catch (...) {
+				return false;
+			}
+		}
+
+		template <typename T>
+		inline bool TryParseUnsignedImpl(const std::string& s, T& out) noexcept
+		{
+			static_assert(std::is_integral_v<T> && std::is_unsigned_v<T>, "T must be unsigned integral");
+			try {
+				std::size_t pos = 0;
+				const unsigned long long v = std::stoull(s, &pos);
+				if (pos != s.size() || v > static_cast<unsigned long long>(std::numeric_limits<T>::max())) {
+					return false;
+				}
+				out = static_cast<T>(v);
+				return true;
+			}
+			catch (...) {
+				return false;
+			}
+		}
+
 		template <typename T, typename ParseFn>
 		inline bool ParseOrKeepNumericImpl(
 			const char* key,
@@ -46,34 +85,12 @@ namespace dc::cfg {
 
 	inline bool TryParseInt(const std::string& s, int& out) noexcept
 	{
-		try {
-			std::size_t pos = 0;
-			const int v = std::stoi(s, &pos);
-			if (pos != s.size()) {
-				return false;
-			}
-			out = v;
-			return true;
-		}
-		catch (...) {
-			return false;
-		}
+		return detail::TryParseSignedImpl<int>(s, out);
 	}
 
 	inline bool TryParseU32(const std::string& s, std::uint32_t& out) noexcept
 	{
-		try {
-			std::size_t pos = 0;
-			const unsigned long long v = std::stoull(s, &pos);
-			if (pos != s.size() || v > static_cast<unsigned long long>(std::numeric_limits<std::uint32_t>::max())) {
-				return false;
-			}
-			out = static_cast<std::uint32_t>(v);
-			return true;
-		}
-		catch (...) {
-			return false;
-		}
+		return detail::TryParseUnsignedImpl<std::uint32_t>(s, out);
 	}
 
 	inline bool ParseIntOrKeep(

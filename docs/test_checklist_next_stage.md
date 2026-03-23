@@ -60,3 +60,4 @@
 - [x] `world_regression_tests`에 `TryParseInt`/`ParseIntOrKeep` helper 동작(정상/오류/strict) 회귀 추가.
 - [x] `TryParseU32`/`ParseU32OrKeep` helper 동작(정상/오류/strict) 회귀 추가.
 - [x] parse-or-keep 내부 구현을 공통 템플릿(`ParseOrKeepNumericImpl`)로 통합.
+- [x] `TryParseInt`/`TryParseU32` 내부 파서를 signed/unsigned 공통 템플릿으로 통합.
