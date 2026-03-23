@@ -56,6 +56,12 @@ std::uint64_t WorldHandler::ResolveActorIdForPacket(std::uint32_t session_idx,
 		if (req && req->target_char_id != 0) return req->target_char_id;
 	}
 
+	// bench_move는 테스트용 명령으로, 인증 바인딩이 없어도 sid 단위 Actor로 분산 처리한다.
+	// (default_actor가 0이면 shard hot-spot이 생기므로 session_idx를 fallback key로 사용)
+	if (type == (std::uint16_t)proto::C2SMsg::bench_move && default_actor == 0) {
+		return static_cast<std::uint64_t>(session_idx);
+	}
+
 	return default_actor;
 }
 

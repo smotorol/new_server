@@ -117,17 +117,6 @@ bool BenchController::StartWalk(int moves_per_sec, int radius, int work_us)
 	{
 		std::lock_guard<std::mutex> lk(mtx_);
 		if (conns_.empty()) return false;
-		// bench_setup만 한 상태에서는 actor_bound가 없어서 bench_move가 auth reject 된다.
-		// walk 시작 전에 짧게 ready를 확인하고, 미준비면 즉시 실패해서 UX를 명확히 한다.
-		constexpr auto kReadyTimeout = std::chrono::seconds(1);
-		for (auto& c : conns_) {
-			if (!c.handler->wait_ready_for(kReadyTimeout)) {
-				std::cout
-					<< "[bench_walk_start] actor not bound (sid connected only). "
-					<< "run login + enterworld before bench_walk_start.\n";
-				return false;
-			}
-		}
 	}
 
 	mps_.store(moves_per_sec, std::memory_order_relaxed);

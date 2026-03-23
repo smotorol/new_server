@@ -185,9 +185,11 @@ bool WorldHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid
 
 	svr::metrics::g_c2s_bench_move_rx.fetch_add(1, std::memory_order_relaxed);
 
-	std::uint64_t char_id = 0;
-	if (!ResolveAuthenticatedCharIdOrReject_("bench_move", sid, char_id)) {
-		return true;
+	std::uint64_t char_id = GetActorIdBySession(sid);
+	if (char_id == 0) {
+		// bench_move는 test_client 벤치 경로 전용으로 인증 없이도 동작할 수 있게 sid 기반 synthetic actor를 쓴다.
+		// 상위 비트를 세워 일반 char_id와 충돌 가능성을 낮춘다.
+		char_id = (1ull << 63) | static_cast<std::uint64_t>(sid);
 	}
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.zone_id;

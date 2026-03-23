@@ -89,7 +89,7 @@ int main()
 		<< "  bench_multi <conns> <msgs_per_conn> <work_us>\n"
 		<< "  bench_same  <conns> <total_msgs_per_conn> <work_us>   (모든 세션이 첫번째 Actor로 forward)\n"
 		<< "  bench_walk  <conns> <seconds> <moves_per_sec> <radius> [work_us]\n"
-		<< "    * 위 bench_* 명령은 actor_bound 필요(로그인/enterworld 선행)\n"
+		<< "    * bench_multi/bench_same은 actor_bound 필요(로그인/enterworld 선행)\n"
 		<< "\n"
 		<< "  // ✅ 동접 셋업 + 부하 측정(2단계)\n"
 		<< "  bench_setup <conns> [host] [port]          (연결만 미리 생성)\n"
@@ -574,18 +574,18 @@ int main()
 			}
 
 			auto bench = spawn_bench_clients(io, actors, "127.0.0.1", 27787, conns);
-			constexpr auto kReadyTimeout = std::chrono::seconds(3);
-			bool all_ready = true;
+			constexpr auto kConnectTimeout = std::chrono::seconds(3);
+			bool all_connected = true;
 			for (auto& c : bench) {
-				if (!c.handler->wait_ready_for(kReadyTimeout)) {
-					all_ready = false;
+				if (!c.handler->wait_connected_for(kConnectTimeout)) {
+					all_connected = false;
 					break;
 				}
 			}
-			if (!all_ready) {
-				std::cout << "[bench_walk] failed: world actor not bound within "
-					<< kReadyTimeout.count()
-					<< "s. run login + enterworld first.\n";
+			if (!all_connected) {
+				std::cout << "[bench_walk] failed: world connect timeout within "
+					<< kConnectTimeout.count()
+					<< "s.\n";
 				for (auto& c : bench) {
 					if (auto s = c.client->session()) s->close();
 				}
@@ -744,7 +744,7 @@ int main()
 				continue;
 			}
 			if (!bench_ctl.StartWalk(mps, radius, work_us)) {
-				std::cout << "[bench_walk_start] failed (run bench_setup + login + enterworld first)\n";
+				std::cout << "[bench_walk_start] failed (did you run bench_setup?)\n";
 				continue;
 			}
 			std::cout << "[bench_walk_start] running mps=" << mps << " radius=" << radius << " work_us=" << work_us << "\n";
