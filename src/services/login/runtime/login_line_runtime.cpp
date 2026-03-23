@@ -587,68 +587,56 @@ namespace dc {
 	{
 		std::lock_guard lk(login_sessions_mtx_);
 
-		std::uint32_t sid = 0;
+		SessionRef resolved_ref{};
 		if (!world_token.empty()) {
 			const auto iwt = world_token_index_.find(std::string(world_token));
 			if (iwt != world_token_index_.end()) {
-				sid = iwt->second.sid;
+				resolved_ref = iwt->second;
 			}
 		}
 
-		if (sid == 0 && !login_session.empty()) {
+		if (!resolved_ref.valid() && !login_session.empty()) {
 			const auto ils = login_session_index_.find(std::string(login_session));
 			if (ils != login_session_index_.end()) {
-				sid = ils->second.sid;
+				resolved_ref = ils->second;
 			}
 		}
 
-		if (sid == 0) {
-			spdlog::warn(
-				"OnWorldEnterSuccessNotify exact session not found. account_id={} char_id={} login_session={} token={}",
-				account_id,
-				char_id,
-				login_session,
-				world_token);
-			return;
-		}
+		if (resolved_ref.valid()) {
+			auto it = login_sessions_.find(resolved_ref.sid);
+			if (it != login_sessions_.end() && it->second.serial == resolved_ref.serial) {
+				const auto& st = it->second;
+				if (st.account_id == account_id &&
+					st.char_id == char_id &&
+					st.login_session == login_session &&
+					st.world_token == world_token)
+				{
+					const auto sid = st.sid;
+					const auto serial = st.serial;
+					RemoveLoginSession_NoLock_(sid, serial);
+					EraseDetachedWorldEnterState_NoLock_(login_session, world_token);
 
-		auto it = login_sessions_.find(sid);
-		if (it == login_sessions_.end()) {
-			const auto ia = account_session_index_.find(account_id);
-			if (ia != account_session_index_.end() && ia->second.sid == sid) {
-				account_session_index_.erase(ia);
-			}
+					spdlog::info(
+						"[{}] removed login session after world enter notify. sid={} serial={} account_id={} char_id={} token={}",
+						logevt::login::kWorldEnterNotify,
+						sid,
+						serial,
+						account_id,
+						char_id,
+						world_token);
+					return;
+				}
 
-			auto& st = it->second;
-			if (st.account_id != account_id ||
-				st.char_id != char_id ||
-				st.login_session != login_session ||
-				st.world_token != world_token)
-			{
 				spdlog::warn(
-					"[{}] session map miss. sid={} account_id={} char_id={}",
+					"[{}] session mismatch on world enter notify. sid={} serial={} account_id={} char_id={}",
 					logevt::login::kWorldEnterNotify,
-					sid,
+					st.sid,
+					st.serial,
 					account_id,
 					char_id);
-				return;
 			}
+		}
 
-			RemoveLoginSession_NoLock_(st.sid, st.serial);
-
-			EraseDetachedWorldEnterState_NoLock_(login_session, world_token);
-
-			spdlog::info(
-				"[{}] removed login session after world enter notify. sid={} serial={} account_id={} char_id={} token={}",
-				logevt::login::kWorldEnterNotify,
-				st.sid,
-				st.serial,
- 				account_id,
- 				char_id,
- 				world_token);
- 			return;
- 		}
- 
 		if (!world_token.empty()) {
 			auto iwt = detached_world_enter_by_token_.find(std::string(world_token));
 			if (iwt != detached_world_enter_by_token_.end()) {
@@ -669,7 +657,7 @@ namespace dc {
  			}
  		}
  
-		if (sid == 0 && !login_session.empty()) {
+		if (!login_session.empty()) {
 			auto ils = detached_world_enter_token_by_login_session_.find(std::string(login_session));
 			if (ils != detached_world_enter_token_by_login_session_.end()) {
 				auto iwt = detached_world_enter_by_token_.find(ils->second);
@@ -695,11 +683,11 @@ namespace dc {
 		spdlog::warn(
 			"[{}] exact session not found. account_id={} char_id={} login_session={} token={}",
 			logevt::login::kWorldEnterNotify,
- 			account_id,
+			account_id,
 			char_id,
 			login_session,
 			world_token);
- 	}
+	}
 
 	void LoginLineRuntime::ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now)
 	{

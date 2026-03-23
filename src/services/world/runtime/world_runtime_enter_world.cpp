@@ -371,15 +371,28 @@ namespace svr {
 		}
 
 		if (!IsEnterWorldSessionPending(pending.sid, pending.serial, pending.char_id)) {
+			const auto latest_serial = handler->GetLatestSerial(pending.sid);
+			if (latest_serial != pending.serial) {
+				spdlog::warn(
+					"[{}] stale enter pending ignored. request_id={} sid={} serial={} latest_serial={} account_id={} char_id={}",
+					dc::logevt::world::kTicketConsumeResp,
+					request_id,
+					pending.sid,
+					pending.serial,
+					latest_serial,
+					pending.account_id,
+					pending.char_id);
+				return;
+			}
+
 			spdlog::warn(
-				"[{}] stale enter pending ignored. request_id={} sid={} serial={} account_id={} char_id={}",
+				"[{}] enter pending state missing but transport is still alive. request_id={} sid={} serial={} account_id={} char_id={}",
 				dc::logevt::world::kTicketConsumeResp,
 				request_id,
 				pending.sid,
 				pending.serial,
 				pending.account_id,
 				pending.char_id);
-			return;
 		}
 
 		pt_w::S2C_enter_world_result res{};
