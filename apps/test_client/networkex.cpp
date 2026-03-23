@@ -77,6 +77,13 @@ void CNetworkEX::wait_ready()
 	ready_cv_.wait(lk, [&] { return ready_.load(std::memory_order_relaxed); });
 }
 
+bool CNetworkEX::wait_ready_for(std::chrono::milliseconds timeout)
+{
+	if (is_ready()) return true;
+	std::unique_lock lk(ready_mtx_);
+	return ready_cv_.wait_for(lk, timeout, [&] { return ready_.load(std::memory_order_relaxed); });
+}
+
 bool CNetworkEX::wait_connected_for(std::chrono::milliseconds timeout)
 {
 	if (connected_.load(std::memory_order_relaxed)) return true;

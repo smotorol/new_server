@@ -47,6 +47,7 @@ public:
 	std::uint64_t actor_id() const noexcept { return actor_id_.load(std::memory_order_relaxed); }
 	bool is_ready() const noexcept { return ready_.load(std::memory_order_relaxed); }
 	void wait_ready();
+	bool wait_ready_for(std::chrono::milliseconds timeout);
 	bool wait_connected_for(std::chrono::milliseconds timeout);
 	bool has_login_result() const;
 	LoginResultState login_result() const;
