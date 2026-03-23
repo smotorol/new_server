@@ -40,3 +40,15 @@ python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
 python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
   --profile reconnect_after_grace \
   --log "${repo_root}/tests/data/runtime_log_sample_reconnect_after_grace_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile dup_categories \
+  --log "${repo_root}/tests/data/runtime_log_sample_dup_categories_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile auth_threshold_exceeded \
+  --log "${repo_root}/tests/data/runtime_log_sample_dup_categories_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile flush_success_conflict \
+  --log "${repo_root}/tests/data/runtime_log_sample_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile shutdown_timeout \
+  --log "${repo_root}/tests/data/runtime_log_sample_shutdown_timeout_ok.log"

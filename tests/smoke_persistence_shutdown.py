@@ -220,12 +220,19 @@ def main() -> int:
         "reconnect-grace-armed",
         "dupstats-shape",
         "dupstats-positive-signal",
+        "dupstats-all-categories-positive",
         "authstats-shape",
+        "authstats-threshold-exceeded",
+        "flush-one-shape",
         "flush-one-conflict-shape",
+        "flush-dirty-summary-shape",
         "flush-dirty-conflict-shape",
         "shutdown-order-runtime",
         "reconnect-within-grace-order",
         "reconnect-after-grace-order",
+        "flush-one-success",
+        "shutdown-timeout-flag",
+        "shutdown-timeout-order",
         "runtime_log_scenario_checks passed (profile=",
     ]
     for needle in runtime_log_check_needles:
@@ -237,7 +244,9 @@ def main() -> int:
         "[session_close] reconnect grace close armed.",
         "[dupstats] char/s=",
         "[authstats] unauth_packet_rejects/s=",
+        "[FlushOneChar] world=",
         "[FlushOneCharConflict]",
+        "[FlushDirtyChars] world=",
         "[FlushDirtyCharsConflict]",
         "[shutdown] step=7 io_stopped_cleanup_complete",
     ]
@@ -251,8 +260,14 @@ def main() -> int:
         "runtime_log_sample_ok.log",
         "runtime_log_sample_reconnect_within_grace_ok.log",
         "runtime_log_sample_reconnect_after_grace_ok.log",
+        "runtime_log_sample_dup_categories_ok.log",
+        "runtime_log_sample_shutdown_timeout_ok.log",
         "--profile reconnect_within_grace",
         "--profile reconnect_after_grace",
+        "--profile dup_categories",
+        "--profile auth_threshold_exceeded",
+        "--profile flush_success_conflict",
+        "--profile shutdown_timeout",
     ]
     for needle in ci_gate_needles:
         if needle not in ci_gate_text:

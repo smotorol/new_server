@@ -1,6 +1,5 @@
 [session_close] reconnect grace close armed. char_id=1001 sid=12 serial=99 delay_ms=5000
-[session_close] delayed close canceled/released char_id=1001 sid=12 serial=99
-[dupstats] char/s=1 account/s=2 both/s=0 dedup_same/s=1
+[dupstats] char/s=2 account/s=3 both/s=1 dedup_same/s=1
 [authstats] unauth_packet_rejects/s=11 threshold=10 sampled_sid=500
 [FlushOneChar] world=7 char_id=98 saved=1 result=0 expected_ver=77 actual_ver=77
 [FlushOneCharConflict] world=7 char_id=99 expected_ver=42 actual_ver=41

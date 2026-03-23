@@ -11,6 +11,7 @@
 - [x] 런타임 로그 기반 reconnect/dup 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
 - [x] 런타임 로그 A/B fixture(`within_grace`/`after_grace`) + profile 기반 순서 검증(`tests/runtime_log_scenario_checks.py --profile ...`) 추가.
 - [x] CI 게이트(`tests/run_ci_ctest.sh`)에 reconnect A/B runtime-log self-check 추가.
+- [x] 런타임 로그 profile(`dup_categories`)로 duplicate-login 카테고리(`char/account/both/dedup_same`) 동시 양수 증가 검증 추가.
 
 ## B. AOI broadcast
 - [ ] 1-cell moves produce expected entered/exited behavior.
@@ -46,10 +47,12 @@
 - [ ] `authstats` warning triggers when reject rate exceeds threshold.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 unauth reject 계수 증가 코드/`authstats` 임계치 로그 코드 존재 점검 추가.
 - [x] 런타임 로그 기반 `authstats` shape 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
+- [x] 런타임 로그 profile(`auth_threshold_exceeded`)로 `unauth_packet_rejects/s > threshold` 조건 검증 추가.
 
 ## F. CI gate
 - [x] `tests/run_ci_ctest.sh`로 기본 PR 게이트(`world_regression_tests`, `smoke_persistence_shutdown`) 묶음 실행.
 - [x] `tests/run_ci_ctest.sh`에 `runtime_log_scenario_checks.py --log tests/data/runtime_log_sample_ok.log` self-check 추가.
+- [x] `tests/run_ci_ctest.sh`에 `dup_categories`/`auth_threshold_exceeded` runtime-log self-check 추가.
 
 ## G. Config validation policy
 - [x] INI 파싱/정규화/보정/확정값 로깅 규약 문서(`docs/config_validation_policy.md`) 추가.
