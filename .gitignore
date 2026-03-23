@@ -20,3 +20,7 @@
 /.env.dev
 /dependence
 /Lib/Debug
+/Testing/Temporary/CTestCostData.txt
+/Testing/Temporary/LastTest.log
+/tests/Testing/Temporary/CTestCostData.txt
+/tests/Testing/Temporary/LastTest.log
