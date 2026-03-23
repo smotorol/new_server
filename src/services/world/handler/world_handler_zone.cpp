@@ -12,7 +12,6 @@
 #include "services/world/actors/world_actors.h"
 #include "services/world/common/aoi_broadcast_sanitize.h"
 #include "services/world/metrics/world_metrics.h"
-#include "server_common/session/session_key.h"
 
 bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {

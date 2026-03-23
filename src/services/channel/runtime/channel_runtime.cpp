@@ -25,6 +25,7 @@
 #include "db/odbc/odbc_wrapper.h"
 
 #include "server_common/session/session_key.h"
+#include "server_common/config/runtime_ini_sanity.h"
 
 namespace svr {
 	namespace {
@@ -662,24 +663,12 @@ namespace svr {
 		// ✅ normalize / default rules (최종 확정값 계산)
 		// ============================================================
 
-		// 1) db shard count: 최소 1
-		db_shard_count_ = clamp_u32_min(db_shard_count_, 1u, 1u);
-
-		// 2) redis shard count:
-		//    - 0 또는 미설정이면 db_shard_count_로 동기화
-		//    - 1 미만이면 1
-		if (redis_shard_count_ == 0) {
-			redis_shard_count_ = db_shard_count_;
-
-		}
-		redis_shard_count_ = clamp_u32_min(redis_shard_count_, 1u, 1u);
-
-		// 3) WAIT: 둘 다 양수일 때만 활성화, 아니면 0으로 통일
-		if (!(redis_wait_replicas_ > 0 && redis_wait_timeout_ms_ > 0)) {
-			redis_wait_replicas_ = 0;
-			redis_wait_timeout_ms_ = 0;
-
-		}
+		// 1~3) shard/wait sanity
+		dc::cfg::NormalizeShardAndRedisWait(
+			db_shard_count_,
+			redis_shard_count_,
+			redis_wait_replicas_,
+			redis_wait_timeout_ms_);
 
 		// 4) flush interval/batch/ttl sanity
 		flush_interval_sec_ = clamp_int_min(flush_interval_sec_, 1, kDefaultFlushIntervalSec);
@@ -691,10 +680,7 @@ namespace svr {
 		db_pool_size_per_world_ = clamp_int_min(db_pool_size_per_world_, 1, 2);
 
 		// 6) AOI/섹터 sanity
-		g_aoi_ini_cfg.map_size.x = std::max(1, g_aoi_ini_cfg.map_size.x);
-		g_aoi_ini_cfg.map_size.y = std::max(1, g_aoi_ini_cfg.map_size.y);
-		g_aoi_ini_cfg.world_sight_unit = std::max(1, g_aoi_ini_cfg.world_sight_unit);
-		g_aoi_ini_cfg.aoi_radius_cells = std::max(0, g_aoi_ini_cfg.aoi_radius_cells);
+		dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);
 
 
 		spdlog::info("INI loaded (UTF-8): acc='{}', worldset_num={}, recv_buf={}",

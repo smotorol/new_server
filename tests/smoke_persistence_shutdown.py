@@ -20,6 +20,7 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     core_cpp = repo_root / "src/services/world/runtime/world_runtime_core.cpp"
     runtime_network_cpp = repo_root / "src/services/world/runtime/world_runtime_network.cpp"
+    channel_runtime_cpp = repo_root / "src/services/channel/runtime/channel_runtime.cpp"
     runtime_h = repo_root / "src/services/world/runtime/world_runtime.h"
     persistence_cpp = repo_root / "src/services/world/runtime/world_runtime_persistence.cpp"
     enter_world_cpp = repo_root / "src/services/world/runtime/world_runtime_enter_world.cpp"
@@ -30,6 +31,7 @@ def main() -> int:
 
     core_text = core_cpp.read_text(encoding="utf-8")
     runtime_network_text = runtime_network_cpp.read_text(encoding="utf-8")
+    channel_runtime_text = channel_runtime_cpp.read_text(encoding="utf-8")
     runtime_h_text = runtime_h.read_text(encoding="utf-8")
     persist_text = persistence_cpp.read_text(encoding="utf-8")
     enter_world_text = enter_world_cpp.read_text(encoding="utf-8")
@@ -115,6 +117,18 @@ def main() -> int:
     for needle in reconnect_needles:
         if not any(needle in src for src in reconnect_sources):
             print(f"[FAIL] reconnect-grace: missing '{needle}'")
+            ok = False
+
+    config_sanity_needles = [
+        "dc::cfg::NormalizeShardAndRedisWait(",
+        "dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);",
+    ]
+    for needle in config_sanity_needles:
+        if needle not in runtime_network_text:
+            print(f"[FAIL] config-sanity-world: missing '{needle}'")
+            ok = False
+        if needle not in channel_runtime_text:
+            print(f"[FAIL] config-sanity-channel: missing '{needle}'")
             ok = False
 
     dup_needles_session = [
