@@ -133,8 +133,7 @@ def main() -> int:
 
     config_fail_fast_needles = [
         "CONFIG_FAIL_FAST",
-        "dc::cfg::ApplyMinPolicyInt(",
-        "dc::cfg::ApplyMinPolicyU32(",
+        "dc::cfg::ApplyMinPolicies(",
         "INI(SYSTEM): config_fail_fast={}",
     ]
     for needle in config_fail_fast_needles:

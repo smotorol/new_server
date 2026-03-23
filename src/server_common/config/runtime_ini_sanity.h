@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <initializer_list>
 #include <string>
 
 #include "server_common/config/aoi_config.h"
@@ -87,6 +88,45 @@ namespace dc::cfg {
 			return false;
 		}
 		value = fallback;
+		return true;
+	}
+
+	struct MinPolicyIntSpec {
+		const char* key = "";
+		int* value = nullptr;
+		int min_v = 0;
+		int fallback = 0;
+	};
+
+	struct MinPolicyU32Spec {
+		const char* key = "";
+		std::uint32_t* value = nullptr;
+		std::uint32_t min_v = 0;
+		std::uint32_t fallback = 0;
+	};
+
+	inline bool ApplyMinPolicies(
+		std::initializer_list<MinPolicyIntSpec> int_specs,
+		std::initializer_list<MinPolicyU32Spec> u32_specs,
+		bool fail_fast,
+		std::string* out_error = nullptr)
+	{
+		for (const auto& spec : int_specs) {
+			if (spec.value == nullptr) {
+				continue;
+			}
+			if (!ApplyMinPolicyInt(spec.key, *spec.value, spec.min_v, spec.fallback, fail_fast, out_error)) {
+				return false;
+			}
+		}
+		for (const auto& spec : u32_specs) {
+			if (spec.value == nullptr) {
+				continue;
+			}
+			if (!ApplyMinPolicyU32(spec.key, *spec.value, spec.min_v, spec.fallback, fail_fast, out_error)) {
+				return false;
+			}
+		}
 		return true;
 	}
 

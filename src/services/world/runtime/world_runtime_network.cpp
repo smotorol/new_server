@@ -241,34 +241,24 @@ namespace svr {
 
 		// 4) flush interval/batch/ttl sanity
 		std::string policy_error;
-		if (!dc::cfg::ApplyMinPolicyInt("WRITE_BEHIND.FLUSH_INTERVAL_SEC", flush_interval_sec_, 1, kDefaultFlushIntervalSec, config_fail_fast, &policy_error)) {
-			spdlog::error("{}", policy_error);
-			return false;
-		}
-		if (!dc::cfg::ApplyMinPolicyU32("WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", flush_batch_immediate_, 1u, kDefaultBatchImmediate, config_fail_fast, &policy_error)) {
-			spdlog::error("{}", policy_error);
-			return false;
-		}
-		if (!dc::cfg::ApplyMinPolicyU32("WRITE_BEHIND.FLUSH_BATCH_NORMAL", flush_batch_normal_, 1u, kDefaultBatchNormal, config_fail_fast, &policy_error)) {
-			spdlog::error("{}", policy_error);
-			return false;
-		}
-		if (!dc::cfg::ApplyMinPolicyInt("WRITE_BEHIND.CHAR_TTL_SEC", char_ttl_sec_, 60, kDefaultCharTtlSec, config_fail_fast, &policy_error)) {
-			spdlog::error("{}", policy_error);
-			return false;
-		}
-		if (!dc::cfg::ApplyMinPolicyInt("SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS", reconnect_grace_close_delay_ms_, 100, kDefaultReconnectGraceCloseDelayMs, config_fail_fast, &policy_error)) {
+		if (!dc::cfg::ApplyMinPolicies(
+			{
+				{ "WRITE_BEHIND.FLUSH_INTERVAL_SEC", &flush_interval_sec_, 1, kDefaultFlushIntervalSec },
+				{ "WRITE_BEHIND.CHAR_TTL_SEC", &char_ttl_sec_, 60, kDefaultCharTtlSec },
+				{ "SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS", &reconnect_grace_close_delay_ms_, 100, kDefaultReconnectGraceCloseDelayMs },
+				{ "DB_WORK.POOL_SIZE_PER_WORLD", &db_pool_size_per_world_, 1, 2 },
+			},
+			{
+				{ "WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", &flush_batch_immediate_, 1u, kDefaultBatchImmediate },
+				{ "WRITE_BEHIND.FLUSH_BATCH_NORMAL", &flush_batch_normal_, 1u, kDefaultBatchNormal },
+			},
+			config_fail_fast,
+			&policy_error)) {
 			spdlog::error("{}", policy_error);
 			return false;
 		}
 
-		// 5) db pool per world sanity
-		if (!dc::cfg::ApplyMinPolicyInt("DB_WORK.POOL_SIZE_PER_WORLD", db_pool_size_per_world_, 1, 2, config_fail_fast, &policy_error)) {
-			spdlog::error("{}", policy_error);
-			return false;
-		}
-
-		// 6) AOI/섹터 sanity
+		// 5) AOI/섹터 sanity
 		dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);
 
 

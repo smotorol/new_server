@@ -47,6 +47,7 @@
 
 ## 향후 강화 항목 (planned follow-up)
 - 키 단위 스키마 선언(필수/선택, min/max, default)을 코드 외부 선언형으로 분리.
+  - 현재 구현: `ApplyMinPolicies`로 코드 내부 선언형 테이블 적용.
 - 잘못된 설정값에 대한 fail-fast 모드(개발/스테이징)와 auto-heal 모드(운영) 분리.
   - 현재 구현: `SYSTEM.CONFIG_FAIL_FAST=1`일 때 min-policy 위반을 즉시 에러로 처리하고 부팅을 중단.
   - 기본값(`0`): fallback 보정(auto-heal) 유지.

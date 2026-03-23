@@ -48,4 +48,5 @@
 - [x] INI 파싱/정규화/보정/확정값 로깅 규약 문서(`docs/config_validation_policy.md`) 추가.
 - [x] world/channel 런타임의 shard/wait/AOI 보정 로직을 `runtime_ini_sanity.h` 공용 helper로 통일.
 - [x] `SYSTEM.CONFIG_FAIL_FAST`(strict) / fallback 보정(auto-heal) 분기 경로 구현.
-- [ ] 선언형 스키마 기반 validation 테이블(키/범위/기본값) 외부화.
+- [x] `ApplyMinPolicies` 기반 선언형 validation table(키/범위/기본값) 코드 경로 도입.
+- [ ] validation table을 코드 외부 스키마 파일로 분리.
