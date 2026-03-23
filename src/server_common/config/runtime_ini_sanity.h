@@ -11,6 +11,39 @@
 
 namespace dc::cfg {
 
+	namespace detail {
+		template <typename T, typename ParseFn>
+		inline bool ParseOrKeepNumericImpl(
+			const char* key,
+			const std::string& raw,
+			T& inout_value,
+			bool fail_fast,
+			ParseFn parse_fn,
+			std::string* out_error,
+			std::string* out_warn)
+		{
+			if (raw.empty()) {
+				return true;
+			}
+			T parsed = inout_value;
+			if (parse_fn(raw, parsed)) {
+				inout_value = parsed;
+				return true;
+			}
+			if (fail_fast) {
+				if (out_error) {
+					*out_error = std::string("invalid numeric config: ") + key + "='" + raw + "'";
+				}
+				return false;
+			}
+			if (out_warn) {
+				*out_warn = std::string("invalid numeric config: ") + key + "='" + raw
+					+ "' -> keep(" + std::to_string(inout_value) + ")";
+			}
+			return true;
+		}
+	} // namespace detail
+
 	inline bool TryParseInt(const std::string& s, int& out) noexcept
 	{
 		try {
@@ -51,25 +84,14 @@ namespace dc::cfg {
 		std::string* out_error = nullptr,
 		std::string* out_warn = nullptr)
 	{
-		if (raw.empty()) {
-			return true;
-		}
-		int parsed = inout_value;
-		if (TryParseInt(raw, parsed)) {
-			inout_value = parsed;
-			return true;
-		}
-		if (fail_fast) {
-			if (out_error) {
-				*out_error = std::string("invalid numeric config: ") + key + "='" + raw + "'";
-			}
-			return false;
-		}
-		if (out_warn) {
-			*out_warn = std::string("invalid numeric config: ") + key + "='" + raw
-				+ "' -> keep(" + std::to_string(inout_value) + ")";
-		}
-		return true;
+		return detail::ParseOrKeepNumericImpl(
+			key,
+			raw,
+			inout_value,
+			fail_fast,
+			[](const std::string& text, int& value) { return TryParseInt(text, value); },
+			out_error,
+			out_warn);
 	}
 
 	inline bool ParseU32OrKeep(
@@ -80,25 +102,14 @@ namespace dc::cfg {
 		std::string* out_error = nullptr,
 		std::string* out_warn = nullptr)
 	{
-		if (raw.empty()) {
-			return true;
-		}
-		std::uint32_t parsed = inout_value;
-		if (TryParseU32(raw, parsed)) {
-			inout_value = parsed;
-			return true;
-		}
-		if (fail_fast) {
-			if (out_error) {
-				*out_error = std::string("invalid numeric config: ") + key + "='" + raw + "'";
-			}
-			return false;
-		}
-		if (out_warn) {
-			*out_warn = std::string("invalid numeric config: ") + key + "='" + raw
-				+ "' -> keep(" + std::to_string(inout_value) + ")";
-		}
-		return true;
+		return detail::ParseOrKeepNumericImpl(
+			key,
+			raw,
+			inout_value,
+			fail_fast,
+			[](const std::string& text, std::uint32_t& value) { return TryParseU32(text, value); },
+			out_error,
+			out_warn);
 	}
 
 	inline std::uint32_t ClampU32Min(std::uint32_t v, std::uint32_t min_v, std::uint32_t fallback) noexcept

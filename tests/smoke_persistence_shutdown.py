@@ -168,6 +168,7 @@ def main() -> int:
             ok = False
 
     parse_guard_header_needles = [
+        "ParseOrKeepNumericImpl(",
         "TryParseInt(const std::string& s, int& out)",
         "TryParseU32(const std::string& s, std::uint32_t& out)",
         "ParseIntOrKeep(",
