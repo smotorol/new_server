@@ -22,15 +22,19 @@ def main() -> int:
     runtime_network_cpp = repo_root / "src/services/world/runtime/world_runtime_network.cpp"
     runtime_h = repo_root / "src/services/world/runtime/world_runtime.h"
     persistence_cpp = repo_root / "src/services/world/runtime/world_runtime_persistence.cpp"
+    enter_world_cpp = repo_root / "src/services/world/runtime/world_runtime_enter_world.cpp"
     handler_core_cpp = repo_root / "src/services/world/handler/world_handler_core.cpp"
     session_cpp = repo_root / "src/services/world/runtime/world_runtime_session.cpp"
+    login_runtime_cpp = repo_root / "src/services/login/runtime/login_line_runtime.cpp"
 
     core_text = core_cpp.read_text(encoding="utf-8")
     runtime_network_text = runtime_network_cpp.read_text(encoding="utf-8")
     runtime_h_text = runtime_h.read_text(encoding="utf-8")
     persist_text = persistence_cpp.read_text(encoding="utf-8")
+    enter_world_text = enter_world_cpp.read_text(encoding="utf-8")
     handler_text = handler_core_cpp.read_text(encoding="utf-8")
     session_text = session_cpp.read_text(encoding="utf-8")
+    login_runtime_text = login_runtime_cpp.read_text(encoding="utf-8")
 
     ok = True
 
@@ -154,6 +158,29 @@ def main() -> int:
     for needle in flush_one_needles:
         if needle not in persist_text:
             print(f"[FAIL] flush-one-runtime: missing '{needle}'")
+            ok = False
+
+    login_notify_needles = [
+        "SessionRef resolved_ref{};",
+        "if (!resolved_ref.valid() && !login_session.empty()) {",
+        "it != login_sessions_.end() && it->second.serial == resolved_ref.serial",
+        "RemoveLoginSession_NoLock_(sid, serial);",
+        "EraseDetachedWorldEnterState_NoLock_(login_session, world_token);",
+        "consumed detached world enter notify by login_session",
+    ]
+    for needle in login_notify_needles:
+        if needle not in login_runtime_text:
+            print(f"[FAIL] login-world-enter-notify: missing '{needle}'")
+            ok = False
+
+    consume_resp_needles = [
+        "const auto latest_serial = handler->GetLatestSerial(pending.sid);",
+        "latest_serial != pending.serial",
+        "enter pending state missing but transport is still alive",
+    ]
+    for needle in consume_resp_needles:
+        if needle not in enter_world_text:
+            print(f"[FAIL] world-consume-response-serial-guard: missing '{needle}'")
             ok = False
 
     if not ok:
