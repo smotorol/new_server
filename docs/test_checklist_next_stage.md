@@ -49,4 +49,4 @@
 - [x] world/channel 런타임의 shard/wait/AOI 보정 로직을 `runtime_ini_sanity.h` 공용 helper로 통일.
 - [x] `SYSTEM.CONFIG_FAIL_FAST`(strict) / fallback 보정(auto-heal) 분기 경로 구현.
 - [x] `ApplyMinPolicies` 기반 선언형 validation table(키/범위/기본값) 코드 경로 도입.
-- [ ] validation table을 코드 외부 스키마 파일로 분리.
+- [x] validation table을 runtime 로더 외부 파일(`runtime_ini_schema.h`)로 분리.

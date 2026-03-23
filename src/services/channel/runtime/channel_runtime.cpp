@@ -25,6 +25,7 @@
 #include "db/odbc/odbc_wrapper.h"
 
 #include "server_common/session/session_key.h"
+#include "server_common/config/runtime_ini_schema.h"
 #include "server_common/config/runtime_ini_sanity.h"
 
 namespace svr {
@@ -677,18 +678,22 @@ namespace svr {
 
 		// 4) flush interval/batch/ttl sanity
 		std::string policy_error;
-		if (!dc::cfg::ApplyMinPolicies(
-			{
-				{ "WRITE_BEHIND.FLUSH_INTERVAL_SEC", &flush_interval_sec_, 1, kDefaultFlushIntervalSec },
-				{ "WRITE_BEHIND.CHAR_TTL_SEC", &char_ttl_sec_, 60, kDefaultCharTtlSec },
-				{ "DB_WORK.POOL_SIZE_PER_WORLD", &db_pool_size_per_world_, 1, 2 },
-			},
-			{
-				{ "WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", &flush_batch_immediate_, 1u, kDefaultBatchImmediate },
-				{ "WRITE_BEHIND.FLUSH_BATCH_NORMAL", &flush_batch_normal_, 1u, kDefaultBatchNormal },
-			},
-			config_fail_fast,
-			&policy_error)) {
+		dc::cfg::CommonRuntimePolicyTargets policy_targets{};
+		policy_targets.flush_interval_sec = &flush_interval_sec_;
+		policy_targets.char_ttl_sec = &char_ttl_sec_;
+		policy_targets.db_pool_size_per_world = &db_pool_size_per_world_;
+		policy_targets.flush_batch_immediate = &flush_batch_immediate_;
+		policy_targets.flush_batch_normal = &flush_batch_normal_;
+
+		dc::cfg::CommonRuntimePolicyDefaults policy_defaults{};
+		policy_defaults.default_flush_interval_sec = kDefaultFlushIntervalSec;
+		policy_defaults.default_char_ttl_sec = kDefaultCharTtlSec;
+		policy_defaults.default_db_pool_size_per_world = 2;
+		policy_defaults.default_batch_immediate = kDefaultBatchImmediate;
+		policy_defaults.default_batch_normal = kDefaultBatchNormal;
+
+		const auto policy_table = dc::cfg::BuildChannelRuntimeMinPolicyTable(policy_targets, policy_defaults);
+		if (!dc::cfg::ApplyMinPolicies(policy_table.int_specs, policy_table.u32_specs, config_fail_fast, &policy_error)) {
 			spdlog::error("{}", policy_error);
 			return false;
 		}

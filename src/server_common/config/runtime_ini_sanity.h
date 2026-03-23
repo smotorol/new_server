@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <initializer_list>
 #include <string>
+#include <vector>
 
 #include "server_common/config/aoi_config.h"
 
@@ -105,9 +106,39 @@ namespace dc::cfg {
 		std::uint32_t fallback = 0;
 	};
 
+	struct MinPolicyTable {
+		std::vector<MinPolicyIntSpec> int_specs;
+		std::vector<MinPolicyU32Spec> u32_specs;
+	};
+
 	inline bool ApplyMinPolicies(
 		std::initializer_list<MinPolicyIntSpec> int_specs,
 		std::initializer_list<MinPolicyU32Spec> u32_specs,
+		bool fail_fast,
+		std::string* out_error = nullptr)
+	{
+		for (const auto& spec : int_specs) {
+			if (spec.value == nullptr) {
+				continue;
+			}
+			if (!ApplyMinPolicyInt(spec.key, *spec.value, spec.min_v, spec.fallback, fail_fast, out_error)) {
+				return false;
+			}
+		}
+		for (const auto& spec : u32_specs) {
+			if (spec.value == nullptr) {
+				continue;
+			}
+			if (!ApplyMinPolicyU32(spec.key, *spec.value, spec.min_v, spec.fallback, fail_fast, out_error)) {
+				return false;
+			}
+		}
+		return true;
+	}
+
+	inline bool ApplyMinPolicies(
+		const std::vector<MinPolicyIntSpec>& int_specs,
+		const std::vector<MinPolicyU32Spec>& u32_specs,
 		bool fail_fast,
 		std::string* out_error = nullptr)
 	{

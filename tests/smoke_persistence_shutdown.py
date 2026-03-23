@@ -131,15 +131,24 @@ def main() -> int:
             print(f"[FAIL] config-sanity-channel: missing '{needle}'")
             ok = False
 
-    config_fail_fast_needles = [
+    world_config_fail_fast_needles = [
         "CONFIG_FAIL_FAST",
+        "dc::cfg::BuildWorldRuntimeMinPolicyTable(",
         "dc::cfg::ApplyMinPolicies(",
         "INI(SYSTEM): config_fail_fast={}",
     ]
-    for needle in config_fail_fast_needles:
+    for needle in world_config_fail_fast_needles:
         if needle not in runtime_network_text:
             print(f"[FAIL] config-fail-fast-world: missing '{needle}'")
             ok = False
+
+    channel_config_fail_fast_needles = [
+        "CONFIG_FAIL_FAST",
+        "dc::cfg::BuildChannelRuntimeMinPolicyTable(",
+        "dc::cfg::ApplyMinPolicies(",
+        "INI(SYSTEM): config_fail_fast={}",
+    ]
+    for needle in channel_config_fail_fast_needles:
         if needle not in channel_runtime_text:
             print(f"[FAIL] config-fail-fast-channel: missing '{needle}'")
             ok = False
