@@ -515,6 +515,7 @@ namespace svr {
 		constexpr std::uint32_t kDefaultBatchImmediate = 500;
 		constexpr std::uint32_t kDefaultBatchNormal = 200;
 		constexpr int kDefaultCharTtlSec = 60 * 60 * 24 * 7; // 7 days
+		bool config_fail_fast = false;
 
 		// inipp는 기본적으로 trim/escape 처리가 있음
 		// ini.default_section(ini.sections[""]);
@@ -637,6 +638,10 @@ namespace svr {
 			auto v = ini.sections["NET_WORK"]["LOGIC_THREAD_COUNT"];
 			if (!v.empty()) logic_thread_count_ = std::max(1, std::stoi(v));
 		}
+		{
+			auto v = ini.sections["SYSTEM"]["CONFIG_FAIL_FAST"];
+			if (!v.empty()) config_fail_fast = (std::stoi(v) != 0);
+		}
 
 		// [AOI] (선택)
 		// - MAP_W/MAP_H : 임시 맵 크기(월드/존마다 다르면 확장 가능)
@@ -671,13 +676,29 @@ namespace svr {
 			redis_wait_timeout_ms_);
 
 		// 4) flush interval/batch/ttl sanity
-		flush_interval_sec_ = clamp_int_min(flush_interval_sec_, 1, kDefaultFlushIntervalSec);
-		flush_batch_immediate_ = clamp_u32_min(flush_batch_immediate_, 1u, kDefaultBatchImmediate);
-		flush_batch_normal_ = clamp_u32_min(flush_batch_normal_, 1u, kDefaultBatchNormal);
-		char_ttl_sec_ = clamp_int_min(char_ttl_sec_, 60, kDefaultCharTtlSec);
+		std::string policy_error;
+		if (!dc::cfg::ApplyMinPolicyInt("WRITE_BEHIND.FLUSH_INTERVAL_SEC", flush_interval_sec_, 1, kDefaultFlushIntervalSec, config_fail_fast, &policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
+		if (!dc::cfg::ApplyMinPolicyU32("WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", flush_batch_immediate_, 1u, kDefaultBatchImmediate, config_fail_fast, &policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
+		if (!dc::cfg::ApplyMinPolicyU32("WRITE_BEHIND.FLUSH_BATCH_NORMAL", flush_batch_normal_, 1u, kDefaultBatchNormal, config_fail_fast, &policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
+		if (!dc::cfg::ApplyMinPolicyInt("WRITE_BEHIND.CHAR_TTL_SEC", char_ttl_sec_, 60, kDefaultCharTtlSec, config_fail_fast, &policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
 
 		// 5) db pool per world sanity
-		db_pool_size_per_world_ = clamp_int_min(db_pool_size_per_world_, 1, 2);
+		if (!dc::cfg::ApplyMinPolicyInt("DB_WORK.POOL_SIZE_PER_WORLD", db_pool_size_per_world_, 1, 2, config_fail_fast, &policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
 
 		// 6) AOI/섹터 sanity
 		dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);
@@ -689,6 +710,7 @@ namespace svr {
 		spdlog::info("INI(DB_WORK): pool_per_world={}, db_shards={}", db_pool_size_per_world_, db_shard_count_);
 		spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
 			flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
+		spdlog::info("INI(SYSTEM): config_fail_fast={}", config_fail_fast);
 		spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
 			redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
 		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",

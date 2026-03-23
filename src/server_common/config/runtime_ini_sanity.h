@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cstdint>
+#include <string>
 
 #include "server_common/config/aoi_config.h"
 
@@ -45,5 +46,48 @@ namespace dc::cfg {
 		cfg.aoi_radius_cells = std::max(0, cfg.aoi_radius_cells);
 	}
 
-} // namespace dc::cfg
+	inline bool ApplyMinPolicyU32(
+		const char* key,
+		std::uint32_t& value,
+		std::uint32_t min_v,
+		std::uint32_t fallback,
+		bool fail_fast,
+		std::string* out_error = nullptr)
+	{
+		if (value >= min_v) {
+			return true;
+		}
+		if (fail_fast) {
+			if (out_error) {
+				*out_error = std::string("invalid config: ") + key + " (" + std::to_string(value)
+					+ ") < min(" + std::to_string(min_v) + ")";
+			}
+			return false;
+		}
+		value = fallback;
+		return true;
+	}
 
+	inline bool ApplyMinPolicyInt(
+		const char* key,
+		int& value,
+		int min_v,
+		int fallback,
+		bool fail_fast,
+		std::string* out_error = nullptr)
+	{
+		if (value >= min_v) {
+			return true;
+		}
+		if (fail_fast) {
+			if (out_error) {
+				*out_error = std::string("invalid config: ") + key + " (" + std::to_string(value)
+					+ ") < min(" + std::to_string(min_v) + ")";
+			}
+			return false;
+		}
+		value = fallback;
+		return true;
+	}
+
+} // namespace dc::cfg

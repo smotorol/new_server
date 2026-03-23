@@ -131,6 +131,20 @@ def main() -> int:
             print(f"[FAIL] config-sanity-channel: missing '{needle}'")
             ok = False
 
+    config_fail_fast_needles = [
+        "CONFIG_FAIL_FAST",
+        "dc::cfg::ApplyMinPolicyInt(",
+        "dc::cfg::ApplyMinPolicyU32(",
+        "INI(SYSTEM): config_fail_fast={}",
+    ]
+    for needle in config_fail_fast_needles:
+        if needle not in runtime_network_text:
+            print(f"[FAIL] config-fail-fast-world: missing '{needle}'")
+            ok = False
+        if needle not in channel_runtime_text:
+            print(f"[FAIL] config-fail-fast-channel: missing '{needle}'")
+            ok = False
+
     dup_needles_session = [
         "g_dup_login_char.fetch_add(1, std::memory_order_relaxed);",
         "g_dup_login_account.fetch_add(1, std::memory_order_relaxed);",
