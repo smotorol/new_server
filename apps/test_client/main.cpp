@@ -744,7 +744,7 @@ int main()
 				continue;
 			}
 			if (!bench_ctl.StartWalk(mps, radius, work_us)) {
-				std::cout << "[bench_walk_start] failed (did you run bench_setup?)\n";
+				std::cout << "[bench_walk_start] failed (run bench_setup + login + enterworld first)\n";
 				continue;
 			}
 			std::cout << "[bench_walk_start] running mps=" << mps << " radius=" << radius << " work_us=" << work_us << "\n";
