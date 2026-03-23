@@ -50,3 +50,4 @@
 - [x] `SYSTEM.CONFIG_FAIL_FAST`(strict) / fallback 보정(auto-heal) 분기 경로 구현.
 - [x] `ApplyMinPolicies` 기반 선언형 validation table(키/범위/기본값) 코드 경로 도입.
 - [x] validation table을 runtime 로더 외부 파일(`runtime_ini_schema.h`)로 분리.
+- [x] `CONFIG_SCHEMA_VERSION` mismatch 감지 + strict/auto-heal 분기 처리 및 시스템 로그 반영.

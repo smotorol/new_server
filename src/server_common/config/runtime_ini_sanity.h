@@ -161,4 +161,25 @@ namespace dc::cfg {
 		return true;
 	}
 
+	inline bool ValidateSchemaVersion(
+		const char* key,
+		int loaded_version,
+		int expected_version,
+		bool fail_fast,
+		std::string* out_error = nullptr)
+	{
+		if (loaded_version == expected_version) {
+			return true;
+		}
+		if (fail_fast) {
+			if (out_error) {
+				*out_error = std::string("schema version mismatch: ") + key
+					+ " loaded=" + std::to_string(loaded_version)
+					+ " expected=" + std::to_string(expected_version);
+			}
+			return false;
+		}
+		return true;
+	}
+
 } // namespace dc::cfg

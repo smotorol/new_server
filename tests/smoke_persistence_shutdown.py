@@ -133,9 +133,11 @@ def main() -> int:
 
     world_config_fail_fast_needles = [
         "CONFIG_FAIL_FAST",
+        "CONFIG_SCHEMA_VERSION",
         "dc::cfg::BuildWorldRuntimeMinPolicyTable(",
         "dc::cfg::ApplyMinPolicies(",
-        "INI(SYSTEM): config_fail_fast={}",
+        "ValidateSchemaVersion(",
+        "INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={}",
     ]
     for needle in world_config_fail_fast_needles:
         if needle not in runtime_network_text:
@@ -144,9 +146,11 @@ def main() -> int:
 
     channel_config_fail_fast_needles = [
         "CONFIG_FAIL_FAST",
+        "CONFIG_SCHEMA_VERSION",
         "dc::cfg::BuildChannelRuntimeMinPolicyTable(",
         "dc::cfg::ApplyMinPolicies(",
-        "INI(SYSTEM): config_fail_fast={}",
+        "ValidateSchemaVersion(",
+        "INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={}",
     ]
     for needle in channel_config_fail_fast_needles:
         if needle not in channel_runtime_text:

@@ -516,7 +516,9 @@ namespace svr {
 		constexpr std::uint32_t kDefaultBatchImmediate = 500;
 		constexpr std::uint32_t kDefaultBatchNormal = 200;
 		constexpr int kDefaultCharTtlSec = 60 * 60 * 24 * 7; // 7 days
+		constexpr int kRuntimeConfigSchemaVersion = 1;
 		bool config_fail_fast = false;
+		int config_schema_version = kRuntimeConfigSchemaVersion;
 
 		// inipp는 기본적으로 trim/escape 처리가 있음
 		// ini.default_section(ini.sections[""]);
@@ -643,6 +645,10 @@ namespace svr {
 			auto v = ini.sections["SYSTEM"]["CONFIG_FAIL_FAST"];
 			if (!v.empty()) config_fail_fast = (std::stoi(v) != 0);
 		}
+		{
+			auto v = ini.sections["SYSTEM"]["CONFIG_SCHEMA_VERSION"];
+			if (!v.empty()) config_schema_version = std::stoi(v);
+		}
 
 		// [AOI] (선택)
 		// - MAP_W/MAP_H : 임시 맵 크기(월드/존마다 다르면 확장 가능)
@@ -697,6 +703,21 @@ namespace svr {
 			spdlog::error("{}", policy_error);
 			return false;
 		}
+		if (!dc::cfg::ValidateSchemaVersion(
+			"SYSTEM.CONFIG_SCHEMA_VERSION",
+			config_schema_version,
+			kRuntimeConfigSchemaVersion,
+			config_fail_fast,
+			&policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
+		if (config_schema_version != kRuntimeConfigSchemaVersion) {
+			spdlog::warn(
+				"[config] schema version mismatch (continue with auto-heal mode). loaded={} expected={}",
+				config_schema_version,
+				kRuntimeConfigSchemaVersion);
+		}
 
 		// 5) AOI/섹터 sanity
 		dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);
@@ -708,7 +729,8 @@ namespace svr {
 		spdlog::info("INI(DB_WORK): pool_per_world={}, db_shards={}", db_pool_size_per_world_, db_shard_count_);
 		spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
 			flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
-		spdlog::info("INI(SYSTEM): config_fail_fast={}", config_fail_fast);
+		spdlog::info("INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={}",
+			config_fail_fast, config_schema_version, kRuntimeConfigSchemaVersion);
 		spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
 			redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
 		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",
