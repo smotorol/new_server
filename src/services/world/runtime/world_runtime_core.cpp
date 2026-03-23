@@ -103,6 +103,11 @@ namespace svr {
 			"[shutdown] step=3.2 wait_dqs_drain_end in_flight={} timed_out={}",
 			last_in_flight,
 			(last_in_flight != 0 ? 1 : 0));
+		if (last_in_flight != 0) {
+			spdlog::warn(
+				"[shutdown] dqs drain timed out. in_flight={} (continuing shutdown with forced worker stop)",
+				last_in_flight);
+		}
 
 		spdlog::info("[shutdown] step=4 cancel_delayed_close_timers");
 		CancelDelayedWorldCloseTimers_();

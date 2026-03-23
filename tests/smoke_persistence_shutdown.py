@@ -80,6 +80,7 @@ def main() -> int:
         "std::size_t last_in_flight = CountInFlightDqs_();",
         "last_in_flight = CountInFlightDqs_();",
         "[shutdown] step=3.2 wait_dqs_drain_end in_flight={} timed_out={}",
+        "[shutdown] dqs drain timed out. in_flight={} (continuing shutdown with forced worker stop)",
     ]
     for needle in shutdown_drain_needles:
         if needle not in core_text:

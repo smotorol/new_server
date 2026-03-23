@@ -30,6 +30,7 @@
 - [ ] Timeout path leaves deterministic logs and no deadlock.
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 shutdown step 로그 marker 순서를 정적 smoke 검증.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 `wait_dqs_drain_end in_flight/timed_out` 로그 경로 존재 점검 추가.
+- [x] timeout 분기 경고 로그(`[shutdown] dqs drain timed out ...`) 코드 경로 정적 smoke 점검 추가.
 
 ## E. Auth hardening
 - [ ] Unauthenticated gameplay packets are rejected and counted.
