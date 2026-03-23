@@ -255,6 +255,13 @@ namespace {
 		if (dc::cfg::TryParseInt("12x", parsed)) {
 			return false;
 		}
+		std::uint32_t parsed_u32 = 0;
+		if (!dc::cfg::TryParseU32("429", parsed_u32) || parsed_u32 != 429u) {
+			return false;
+		}
+		if (dc::cfg::TryParseU32("-1", parsed_u32) || dc::cfg::TryParseU32("1x", parsed_u32)) {
+			return false;
+		}
 
 		int value = 7;
 		std::string err;
@@ -270,6 +277,24 @@ namespace {
 		err.clear();
 		warn.clear();
 		if (dc::cfg::ParseIntOrKeep("X.KEY", "bad", value, true, &err, &warn)) {
+			return false;
+		}
+		if (err.empty()) {
+			return false;
+		}
+
+		std::uint32_t u32_value = 11;
+		err.clear();
+		warn.clear();
+		if (!dc::cfg::ParseU32OrKeep("X.U32", "bad", u32_value, false, &err, &warn)) {
+			return false;
+		}
+		if (u32_value != 11u || warn.empty()) {
+			return false;
+		}
+		err.clear();
+		warn.clear();
+		if (dc::cfg::ParseU32OrKeep("X.U32", "bad", u32_value, true, &err, &warn)) {
 			return false;
 		}
 		if (err.empty()) {

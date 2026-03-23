@@ -534,6 +534,18 @@ namespace svr {
 			}
 			return true;
 		};
+		auto parse_u32_field = [&](const std::string& key, const std::string& raw, std::uint32_t& target) -> bool {
+			parse_error.clear();
+			parse_warn.clear();
+			if (!dc::cfg::ParseU32OrKeep(key.c_str(), raw, target, config_fail_fast, &parse_error, &parse_warn)) {
+				spdlog::error("[config] {}", parse_error);
+				return false;
+			}
+			if (!parse_warn.empty()) {
+				spdlog::warn("[config] {}", parse_warn);
+			}
+			return true;
+		};
 
 		// inipp는 기본적으로 trim/escape 처리가 있음
 		// ini.default_section(ini.sections[""]);
@@ -564,9 +576,7 @@ namespace svr {
 		// ✅ Redis shard + WAIT 옵션
 		{
 			auto v = ini.sections["REDIS"]["SHARD_COUNT"];
-			int parsed = static_cast<int>(redis_shard_count_);
-			if (!parse_int_field("REDIS.SHARD_COUNT", v, parsed)) return false;
-			redis_shard_count_ = static_cast<std::uint32_t>(std::max(0, parsed));
+			if (!parse_u32_field("REDIS.SHARD_COUNT", v, redis_shard_count_)) return false;
 		}
 		{
 			auto v = ini.sections["REDIS"]["WAIT_REPLICAS"];
@@ -584,15 +594,11 @@ namespace svr {
 		}
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_IMMEDIATE"];
-			int parsed = static_cast<int>(flush_batch_immediate_);
-			if (!parse_int_field("WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", v, parsed)) return false;
-			flush_batch_immediate_ = static_cast<std::uint32_t>(std::max(0, parsed));
+			if (!parse_u32_field("WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", v, flush_batch_immediate_)) return false;
 		}
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_NORMAL"];
-			int parsed = static_cast<int>(flush_batch_normal_);
-			if (!parse_int_field("WRITE_BEHIND.FLUSH_BATCH_NORMAL", v, parsed)) return false;
-			flush_batch_normal_ = static_cast<std::uint32_t>(std::max(0, parsed));
+			if (!parse_u32_field("WRITE_BEHIND.FLUSH_BATCH_NORMAL", v, flush_batch_normal_)) return false;
 		}
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["CHAR_TTL_SEC"];
@@ -606,9 +612,7 @@ namespace svr {
 		}
 		{
 			auto v = ini.sections["DB_WORK"]["DB_SHARD_COUNT"];
-			int parsed = static_cast<int>(db_shard_count_);
-			if (!parse_int_field("DB_WORK.DB_SHARD_COUNT", v, parsed)) return false;
-			db_shard_count_ = static_cast<std::uint32_t>(std::max(0, parsed));
+			if (!parse_u32_field("DB_WORK.DB_SHARD_COUNT", v, db_shard_count_)) return false;
 		}
 
 		// [World]
@@ -655,9 +659,7 @@ namespace svr {
 		world_to_log_recv_buffer_size_ = 10'000'000;
 		{
 			auto v = ini.sections["NET_WORK"]["WORLD_TO_LOG_RECV_BUFFER_SIZE"];
-			int parsed = static_cast<int>(world_to_log_recv_buffer_size_);
-			if (!parse_int_field("NET_WORK.WORLD_TO_LOG_RECV_BUFFER_SIZE", v, parsed)) return false;
-			world_to_log_recv_buffer_size_ = static_cast<std::uint32_t>(std::max(0, parsed));
+			if (!parse_u32_field("NET_WORK.WORLD_TO_LOG_RECV_BUFFER_SIZE", v, world_to_log_recv_buffer_size_)) return false;
 		}
 		// ✅ io_context run() 스레드 개수(기본 1)
 		{

@@ -169,7 +169,9 @@ def main() -> int:
 
     parse_guard_header_needles = [
         "TryParseInt(const std::string& s, int& out)",
+        "TryParseU32(const std::string& s, std::uint32_t& out)",
         "ParseIntOrKeep(",
+        "ParseU32OrKeep(",
         "invalid numeric config:",
     ]
     if not all(needle in runtime_ini_sanity_text for needle in parse_guard_header_needles):
@@ -193,8 +195,11 @@ def main() -> int:
     config_parse_test_needles = [
         "bool TestConfigParseHelpers()",
         "dc::cfg::TryParseInt(\"123\", parsed)",
+        "dc::cfg::TryParseU32(\"429\", parsed_u32)",
         "dc::cfg::ParseIntOrKeep(\"X.KEY\", \"bad\", value, false",
         "dc::cfg::ParseIntOrKeep(\"X.KEY\", \"bad\", value, true",
+        "dc::cfg::ParseU32OrKeep(\"X.U32\", \"bad\", u32_value, false",
+        "dc::cfg::ParseU32OrKeep(\"X.U32\", \"bad\", u32_value, true",
         "config_parse_helpers=",
     ]
     for needle in config_parse_test_needles:

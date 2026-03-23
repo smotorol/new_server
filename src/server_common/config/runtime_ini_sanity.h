@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <initializer_list>
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -26,6 +27,22 @@ namespace dc::cfg {
 		}
 	}
 
+	inline bool TryParseU32(const std::string& s, std::uint32_t& out) noexcept
+	{
+		try {
+			std::size_t pos = 0;
+			const unsigned long long v = std::stoull(s, &pos);
+			if (pos != s.size() || v > static_cast<unsigned long long>(std::numeric_limits<std::uint32_t>::max())) {
+				return false;
+			}
+			out = static_cast<std::uint32_t>(v);
+			return true;
+		}
+		catch (...) {
+			return false;
+		}
+	}
+
 	inline bool ParseIntOrKeep(
 		const char* key,
 		const std::string& raw,
@@ -39,6 +56,35 @@ namespace dc::cfg {
 		}
 		int parsed = inout_value;
 		if (TryParseInt(raw, parsed)) {
+			inout_value = parsed;
+			return true;
+		}
+		if (fail_fast) {
+			if (out_error) {
+				*out_error = std::string("invalid numeric config: ") + key + "='" + raw + "'";
+			}
+			return false;
+		}
+		if (out_warn) {
+			*out_warn = std::string("invalid numeric config: ") + key + "='" + raw
+				+ "' -> keep(" + std::to_string(inout_value) + ")";
+		}
+		return true;
+	}
+
+	inline bool ParseU32OrKeep(
+		const char* key,
+		const std::string& raw,
+		std::uint32_t& inout_value,
+		bool fail_fast,
+		std::string* out_error = nullptr,
+		std::string* out_warn = nullptr)
+	{
+		if (raw.empty()) {
+			return true;
+		}
+		std::uint32_t parsed = inout_value;
+		if (TryParseU32(raw, parsed)) {
 			inout_value = parsed;
 			return true;
 		}
