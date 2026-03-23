@@ -1,0 +1,16 @@
+[session_close] reconnect grace close armed. char_id=1001 sid=12 serial=99 delay_ms=5000
+[session_close] delayed close fired char_id=1001 sid=12 serial=99
+[session_close] world close post-processing completed on normal path char_id=1001 sid=12 serial=99 removed=1
+[dupstats] char/s=1 account/s=2 both/s=0 dedup_same/s=1
+[authstats] unauth_packet_rejects/s=11 threshold=10 sampled_sid=500
+[FlushOneCharConflict] world=7 char_id=99 expected_ver=42 actual_ver=41
+[FlushDirtyCharsConflict] world=7 shard=3 char_id=99 expected_ver=42 actual_ver=41
+[shutdown] step=1 stop_accept_and_block_new_sessions
+[shutdown] step=2 stop_periodic_flush_scheduler
+[shutdown] step=3 enqueue_final_dirty_flush
+[shutdown] step=3.1 wait_dqs_drain_begin
+[shutdown] step=3.2 wait_dqs_drain_end
+[shutdown] step=4 cancel_delayed_close_timers
+[shutdown] step=5 stop_db_workers
+[shutdown] step=6 stop_actor_workers
+[shutdown] step=7 io_stopped_cleanup_complete

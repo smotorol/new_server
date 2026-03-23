@@ -25,20 +25,15 @@ def require_regex(text: str, pattern: str, label: str) -> bool:
     return True
 
 
-def main() -> int:
-    ap = argparse.ArgumentParser(description="Runtime log scenario checker (reconnect/dup/shutdown/auth)")
-    ap.add_argument("--log", required=True, help="Path to runtime log file")
-    args = ap.parse_args()
+def require_absent_regex(text: str, pattern: str, label: str) -> bool:
+    if re.search(pattern, text, flags=re.MULTILINE):
+        print(f"[FAIL] {label}: unexpected regex found: {pattern}")
+        return False
+    return True
 
-    log_path = Path(args.log)
-    if not log_path.exists():
-        print(f"[FAIL] missing log file: {log_path}")
-        return 2
 
-    text = log_path.read_text(encoding="utf-8", errors="ignore")
+def run_common_checks(text: str) -> bool:
     ok = True
-
-    # A/D/E 런타임 체크를 로그 기반으로 자동화
     ok &= require_regex(
         text,
         r"\[session_close\] reconnect grace close armed\. char_id=\d+ sid=\d+ serial=\d+ delay_ms=\d+",
@@ -79,11 +74,60 @@ def main() -> int:
         "[shutdown] step=7 io_stopped_cleanup_complete",
     ]
     ok &= require_in_order(text, shutdown_steps, "shutdown-order-runtime")
+    return ok
+
+
+def run_reconnect_within_grace_checks(text: str) -> bool:
+    ok = True
+    steps = [
+        "[session_close] reconnect grace close armed.",
+        "[session_close] delayed close canceled/released",
+    ]
+    ok &= require_in_order(text, steps, "reconnect-within-grace-order")
+    ok &= require_absent_regex(
+        text,
+        r"\[session_close\] delayed close fired char_id=\d+ sid=\d+ serial=\d+",
+        "reconnect-within-grace-no-fired")
+    return ok
+
+
+def run_reconnect_after_grace_checks(text: str) -> bool:
+    ok = True
+    steps = [
+        "[session_close] reconnect grace close armed.",
+        "[session_close] delayed close fired",
+        "[session_close] world close post-processing completed on normal path",
+    ]
+    ok &= require_in_order(text, steps, "reconnect-after-grace-order")
+    return ok
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Runtime log scenario checker (reconnect/dup/shutdown/auth)")
+    ap.add_argument("--log", required=True, help="Path to runtime log file")
+    ap.add_argument(
+        "--profile",
+        choices=["full", "reconnect_within_grace", "reconnect_after_grace"],
+        default="full",
+        help="Scenario profile to validate")
+    args = ap.parse_args()
+
+    log_path = Path(args.log)
+    if not log_path.exists():
+        print(f"[FAIL] missing log file: {log_path}")
+        return 2
+
+    text = log_path.read_text(encoding="utf-8", errors="ignore")
+    ok = run_common_checks(text)
+    if args.profile == "reconnect_within_grace":
+        ok &= run_reconnect_within_grace_checks(text)
+    elif args.profile == "reconnect_after_grace":
+        ok &= run_reconnect_after_grace_checks(text)
 
     if not ok:
         return 1
 
-    print("runtime_log_scenario_checks passed")
+    print(f"runtime_log_scenario_checks passed (profile={args.profile})")
     return 0
 
 

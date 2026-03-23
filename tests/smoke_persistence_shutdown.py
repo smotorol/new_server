@@ -224,7 +224,9 @@ def main() -> int:
         "flush-one-conflict-shape",
         "flush-dirty-conflict-shape",
         "shutdown-order-runtime",
-        "runtime_log_scenario_checks passed",
+        "reconnect-within-grace-order",
+        "reconnect-after-grace-order",
+        "runtime_log_scenario_checks passed (profile=",
     ]
     for needle in runtime_log_check_needles:
         if needle not in runtime_log_check_text:
@@ -247,6 +249,10 @@ def main() -> int:
     ci_gate_needles = [
         "runtime_log_scenario_checks.py",
         "runtime_log_sample_ok.log",
+        "runtime_log_sample_reconnect_within_grace_ok.log",
+        "runtime_log_sample_reconnect_after_grace_ok.log",
+        "--profile reconnect_within_grace",
+        "--profile reconnect_after_grace",
     ]
     for needle in ci_gate_needles:
         if needle not in ci_gate_text:

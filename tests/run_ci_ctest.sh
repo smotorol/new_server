@@ -34,3 +34,9 @@ fi
 # 런타임 로그 시나리오 체커 self-check (샘플 로그)
 python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
   --log "${repo_root}/tests/data/runtime_log_sample_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile reconnect_within_grace \
+  --log "${repo_root}/tests/data/runtime_log_sample_reconnect_within_grace_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile reconnect_after_grace \
+  --log "${repo_root}/tests/data/runtime_log_sample_reconnect_after_grace_ok.log"

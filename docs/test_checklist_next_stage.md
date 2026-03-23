@@ -9,6 +9,8 @@
 - [x] `smoke_persistence_shutdown` 정적 smoke에 duplicate-login category 카운터 증가 코드/`dupstats` 로그 코드 존재 점검 추가.
 - [x] `SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS` 설정값 파싱/정상화/로그 경로 추가.
 - [x] 런타임 로그 기반 reconnect/dup 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
+- [x] 런타임 로그 A/B fixture(`within_grace`/`after_grace`) + profile 기반 순서 검증(`tests/runtime_log_scenario_checks.py --profile ...`) 추가.
+- [x] CI 게이트(`tests/run_ci_ctest.sh`)에 reconnect A/B runtime-log self-check 추가.
 
 ## B. AOI broadcast
 - [ ] 1-cell moves produce expected entered/exited behavior.
