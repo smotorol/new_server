@@ -227,10 +227,8 @@ bool WorldHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid, 
 	if (!req) return false;
 
 	const std::uint32_t world_code = 0;
-	const std::uint64_t char_id = runtime().FindCharIdBySession(sid);
-	if (char_id == 0)
-	{
-		spdlog::warn("[Demo] add_gold but no bound char. sid={}", sid);
+	std::uint64_t char_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("add_gold", sid, char_id)) {
 		return true;
 	}
 
@@ -272,7 +270,10 @@ bool WorldHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid, 
 
 bool WorldHandler::HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t sid)
 {
-	const std::uint64_t char_id = GetActorIdBySession(sid);
+	std::uint64_t char_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("get_stats", sid, char_id)) {
+		return true;
+	}
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	auto cs = a.combat;
 
@@ -299,7 +300,10 @@ bool WorldHandler::HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t sid,
 	auto* req = proto::as<proto::C2S_heal_self>(body, body_len);
 	if (!req) return false;
 
-	const std::uint64_t char_id = GetActorIdBySession(sid);
+	std::uint64_t char_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("heal_self", sid, char_id)) {
+		return true;
+	}
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	auto& st = a.combat;
 	if (req->amount == 0) st.hp = st.max_hp;

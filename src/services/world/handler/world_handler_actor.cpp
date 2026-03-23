@@ -14,7 +14,10 @@ bool WorldHandler::HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t 
 	auto* req = proto::as<proto::C2S_actor_seq_test>(body, body_len);
 	if (!req) return false;
 
-	const std::uint64_t actor_id = GetActorIdBySession(sid);
+	std::uint64_t actor_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("actor_seq_test", sid, actor_id)) {
+		return true;
+	}
 
 	thread_local std::unordered_map<std::uint64_t, std::uint32_t> last_seq;
 	thread_local std::unordered_map<std::uint64_t, bool> in_progress;
@@ -59,7 +62,12 @@ bool WorldHandler::HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t 
 	auto* req = proto::as<proto::C2S_actor_forward>(body, body_len);
 	if (!req) return false;
 
-	const std::uint64_t actor_id = (req->target_actor_id != 0) ? req->target_actor_id : GetActorIdBySession(sid);
+	std::uint64_t actor_id = req->target_actor_id;
+	if (actor_id == 0) {
+		if (!ResolveAuthenticatedCharIdOrReject_("actor_forward", sid, actor_id)) {
+			return true;
+		}
+	}
 
 	thread_local std::unordered_map<std::uint64_t, bool> in_progress;
 	thread_local std::uint32_t error_count = 0;

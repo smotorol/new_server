@@ -47,6 +47,17 @@ namespace dc {
 			std::uint64_t char_id = 0;
 		};
 
+		struct SessionRef
+		{
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+
+			[[nodiscard]] bool valid() const noexcept
+			{
+				return sid != 0 && serial != 0;
+			}
+		};
+
 		struct PendingLoginRequest
 		{
 			std::uint64_t request_id = 0;
@@ -59,6 +70,15 @@ namespace dc {
 
 			std::string world_host;
 			std::uint16_t world_port = 0;
+		};
+
+		struct PendingWorldEnterNotifyRef
+		{
+			std::uint64_t account_id = 0;
+			std::uint64_t char_id = 0;
+			std::string login_session;
+			std::string world_token;
+			std::chrono::steady_clock::time_point issued_at{};
 		};
 
 		void MarkAccountRegistered(
@@ -118,6 +138,8 @@ namespace dc {
 			std::uint16_t world_port);
 
 		void ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now);
+		void ExpirePendingWorldEnterNotifyRefs_(std::chrono::steady_clock::time_point now);
+		void ErasePendingWorldEnterNotifyRef_NoLock_(const PendingWorldEnterNotifyRef& ref);
 
 		bool SendLoginResultFail_(
 			std::uint32_t sid,
@@ -132,7 +154,7 @@ namespace dc {
 
 		void RemoveLoginSession_NoLock_(std::uint32_t sid, std::uint32_t serial);
 		void AddDuplicateCandidateBySid_NoLock_(
-			std::uint32_t sid,
+			const SessionRef& ref,
 			std::uint32_t new_sid,
 			std::uint32_t new_serial,
 			std::vector<DuplicateSessionRef>& out);
@@ -153,10 +175,12 @@ namespace dc {
 		std::mutex login_sessions_mtx_;
 		std::mutex pending_login_mtx_;
 		std::unordered_map<std::uint32_t, LoginSessionAuthState> login_sessions_;
-		std::unordered_map<std::uint64_t, std::uint32_t> account_session_index_;
-		std::unordered_map<std::uint64_t, std::uint32_t> char_session_index_;
-		std::unordered_map<std::string, std::uint32_t> login_session_index_;
-		std::unordered_map<std::string, std::uint32_t> world_token_index_;
+		std::unordered_map<std::uint64_t, SessionRef> account_session_index_;
+		std::unordered_map<std::uint64_t, SessionRef> char_session_index_;
+		std::unordered_map<std::string, SessionRef> login_session_index_;
+		std::unordered_map<std::string, SessionRef> world_token_index_;
+		std::unordered_map<std::string, PendingWorldEnterNotifyRef> pending_world_enter_by_login_session_;
+		std::unordered_map<std::string, PendingWorldEnterNotifyRef> pending_world_enter_by_world_token_;
 		std::unordered_map<std::uint64_t, PendingLoginRequest> pending_login_requests_;
 
 		HostedLineEntry client_line_{};

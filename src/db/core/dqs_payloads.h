@@ -33,6 +33,7 @@ namespace svr::dqs_payload {
 	{
 		std::uint32_t world_code = 0;
 		std::uint64_t char_id = 0;
+		std::uint32_t expected_version = 0; // 0 means "no version check"
 		FlushOneChar() { std::memset(this, 0, sizeof(*this)); }
 	};
 
