@@ -120,6 +120,61 @@ namespace {
 		return true;
 	}
 
+
+
+	bool TestAoiMoveDiffRecipientsAndIds()
+	{
+		svr::ZoneActor z;
+		if (!z.InitSectorSystem({ 100, 100 }, 10, 1)) {
+			return false;
+		}
+
+		// mover(1): (1,1) -> (2,1)
+		z.JoinOrUpdate(1, { 15, 15 }, 1001, 1);
+		// enters on move-right: cell(3,1)
+		z.JoinOrUpdate(2, { 35, 15 }, 1002, 1);
+		// exits on move-right: cell(0,1)
+		z.JoinOrUpdate(3, { 5, 15 }, 1003, 1);
+		// remains visible: cell(2,1)
+		z.JoinOrUpdate(4, { 25, 15 }, 1004, 1);
+
+		auto d = z.Move(1, { 25, 15 }, 1001, 2);
+
+		auto sort_unique = [](std::vector<std::uint64_t>& v) {
+			std::sort(v.begin(), v.end());
+			v.erase(std::unique(v.begin(), v.end()), v.end());
+		};
+
+		auto entered = d.entered_vis;
+		auto exited = d.exited_vis;
+		auto now_vis = d.new_vis;
+		sort_unique(entered);
+		sort_unique(exited);
+		sort_unique(now_vis);
+
+		if (entered != std::vector<std::uint64_t>{2}) {
+			return false;
+		}
+		if (exited != std::vector<std::uint64_t>{3}) {
+			return false;
+		}
+		if (now_vis != std::vector<std::uint64_t>({2, 4})) {
+			return false;
+		}
+
+		for (auto id : entered) {
+			if (id == 0 || id == 1) return false;
+		}
+		for (auto id : exited) {
+			if (id == 0 || id == 1) return false;
+		}
+		for (auto id : now_vis) {
+			if (id == 0 || id == 1) return false;
+		}
+
+		return true;
+	}
+
 	bool TestFlushOneCharVersionFields()
 	{
 		svr::dqs_payload::FlushOneChar payload{};
@@ -180,16 +235,18 @@ int main()
 	const bool ok_batch = TestSpawnBatchLayout();
 	const bool ok_despawn_batch = TestDespawnBatchLayout();
 	const bool ok_aoi_one_cell = TestAoiOneCellEnteredLeft();
+	const bool ok_aoi_recipients = TestAoiMoveDiffRecipientsAndIds();
 	const bool ok_flush = TestFlushOneCharVersionFields();
 	const bool ok_dirty = TestFlushDirtyCharsConflictFields();
 
-	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty) {
+	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_aoi_recipients || !ok_flush || !ok_dirty) {
 		std::cerr
 			<< "world_regression_tests failed:"
 			<< " session=" << ok_session
 			<< " batch=" << ok_batch
 			<< " despawn_batch=" << ok_despawn_batch
 			<< " aoi_one_cell=" << ok_aoi_one_cell
+			<< " aoi_recipients=" << ok_aoi_recipients
 			<< " flush=" << ok_flush
 			<< " dirty=" << ok_dirty
 			<< "\n";
