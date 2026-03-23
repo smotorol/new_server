@@ -320,6 +320,15 @@ def main() -> int:
             print(f"[FAIL] aoi-malformed-guard: missing '{needle}'")
             ok = False
 
+    aoi_regression_needles = [
+        "bool TestAoiMoveBroadcastPacketAndRecipients()",
+        "aoi_move_broadcast=",
+    ]
+    for needle in aoi_regression_needles:
+        if needle not in world_regression_text:
+            print(f"[FAIL] aoi-broadcast-regression: missing '{needle}'")
+            ok = False
+
     flush_one_needles = [
         "slot.result = svr::dqs::ResultCode::success;",
         "slot.result = svr::dqs::ResultCode::conflict;",

@@ -246,6 +246,99 @@ namespace {
 		return true;
 	}
 
+	bool TestAoiMoveBroadcastPacketAndRecipients()
+	{
+		svr::ZoneActor z;
+		if (!z.InitSectorSystem({ 200, 200 }, 10, 1)) {
+			return false;
+		}
+
+		// mover at (5,5) -> move to (6,5)
+		z.JoinOrUpdate(1, { 55, 55 }, 10, 1);
+		// old-only watcher (x=4 column)
+		z.JoinOrUpdate(100, { 45, 55 }, 20, 1);
+		// always-visible watcher
+		z.JoinOrUpdate(300, { 55, 65 }, 30, 1);
+		// new-only watcher (x=7 column)
+		z.JoinOrUpdate(200, { 75, 55 }, 40, 1);
+
+		auto diff = z.Move(1, { 65, 55 }, 10, 2);
+		auto sanitized_entered = svr::aoi::SanitizeEntityIds(diff.entered_vis);
+		auto sanitized_exited = svr::aoi::SanitizeEntityIds(diff.exited_vis);
+		auto sanitized_new_vis = svr::aoi::SanitizeEntityIds(diff.new_vis);
+
+		auto has_id = [](const std::vector<std::uint64_t>& v, std::uint64_t id) {
+			return std::find(v.begin(), v.end(), id) != v.end();
+		};
+
+		// recipient expectations around mover
+		if (!has_id(sanitized_entered, 200) || has_id(sanitized_entered, 100)) {
+			return false;
+		}
+		if (!has_id(sanitized_exited, 100) || has_id(sanitized_exited, 200)) {
+			return false;
+		}
+		if (!has_id(sanitized_new_vis, 200) || !has_id(sanitized_new_vis, 300) || has_id(sanitized_new_vis, 100)) {
+			return false;
+		}
+
+		// ensure malformed IDs do not leak to recipients
+		if (has_id(sanitized_entered, 0) || has_id(sanitized_exited, 0) || has_id(sanitized_new_vis, 0)) {
+			return false;
+		}
+
+		// mover spawn batch packet shape/count/body size
+		std::vector<proto::S2C_player_spawn_item> spawn_items;
+		for (auto oid : sanitized_entered) {
+			auto it = z.players.find(oid);
+			if (it == z.players.end()) continue;
+			proto::S2C_player_spawn_item item{};
+			item.char_id = oid;
+			item.x = it->second.pos.x;
+			item.y = it->second.pos.y;
+			spawn_items.push_back(item);
+		}
+		const auto spawn_count = svr::aoi::ClampBatchEntityCount(spawn_items.size());
+		if (spawn_count == 0) {
+			return false;
+		}
+		spawn_items.resize(spawn_count);
+		const auto spawn_body_size = svr::aoi::SpawnBatchBodySize(spawn_count);
+		if (spawn_body_size == 0) {
+			return false;
+		}
+		std::vector<char> spawn_body(spawn_body_size);
+		auto* spawn_pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(spawn_body.data());
+		spawn_pkt->count = spawn_count;
+		for (std::size_t i = 0; i < spawn_count; ++i) {
+			spawn_pkt->items[i] = spawn_items[i];
+		}
+		if (spawn_pkt->count != spawn_count || spawn_pkt->items[0].char_id == 0) {
+			return false;
+		}
+
+		// mover despawn batch packet shape/count/body size
+		const auto despawn_count = svr::aoi::ClampBatchEntityCount(sanitized_exited.size());
+		if (despawn_count == 0) {
+			return false;
+		}
+		sanitized_exited.resize(despawn_count);
+		const auto despawn_body_size = svr::aoi::DespawnBatchBodySize(despawn_count);
+		if (despawn_body_size == 0) {
+			return false;
+		}
+		std::vector<char> despawn_body(despawn_body_size);
+		auto* despawn_pkt = reinterpret_cast<proto::S2C_player_despawn_batch*>(despawn_body.data());
+		despawn_pkt->count = despawn_count;
+		for (std::size_t i = 0; i < despawn_count; ++i) {
+			despawn_pkt->items[i].char_id = sanitized_exited[i];
+		}
+		if (despawn_pkt->count != despawn_count || despawn_pkt->items[0].char_id == 0) {
+			return false;
+		}
+		return true;
+	}
+
 	bool TestConfigParseHelpers()
 	{
 		int parsed = 0;
@@ -316,9 +409,10 @@ int main()
 	const bool ok_aoi_sanitize = TestAoiSanitizeEntityIds();
 	const bool ok_aoi_batch = TestAoiBatchHelpers();
 	const bool ok_aoi_move_recipients = TestAoiMoveEnteredExitedRecipients();
+	const bool ok_aoi_move_broadcast = TestAoiMoveBroadcastPacketAndRecipients();
 	const bool ok_config_parse_helpers = TestConfigParseHelpers();
 
-	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty || !ok_aoi_sanitize || !ok_aoi_batch || !ok_aoi_move_recipients || !ok_config_parse_helpers) {
+	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty || !ok_aoi_sanitize || !ok_aoi_batch || !ok_aoi_move_recipients || !ok_aoi_move_broadcast || !ok_config_parse_helpers) {
 		std::cerr
 			<< "world_regression_tests failed:"
 			<< " session=" << ok_session
@@ -330,6 +424,7 @@ int main()
 			<< " aoi_sanitize=" << ok_aoi_sanitize
 			<< " aoi_batch=" << ok_aoi_batch
 			<< " aoi_move_recipients=" << ok_aoi_move_recipients
+			<< " aoi_move_broadcast=" << ok_aoi_move_broadcast
 			<< " config_parse_helpers=" << ok_config_parse_helpers
 			<< "\n";
 		return 1;
