@@ -47,7 +47,16 @@ python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
   --profile auth_threshold_exceeded \
   --log "${repo_root}/tests/data/runtime_log_sample_dup_categories_ok.log"
 python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile unauth_reject_counted \
+  --log "${repo_root}/tests/data/runtime_log_sample_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
   --profile flush_success_conflict \
+  --log "${repo_root}/tests/data/runtime_log_sample_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile flush_dirty_throughput \
+  --log "${repo_root}/tests/data/runtime_log_sample_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile shutdown_clean_drain \
   --log "${repo_root}/tests/data/runtime_log_sample_ok.log"
 python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
   --profile shutdown_timeout \

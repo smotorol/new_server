@@ -33,6 +33,7 @@
 - [x] `smoke_persistence_shutdown` 정적 smoke에 `FlushOneCharConflict`/`FlushDirtyCharsConflict` 로그 포맷(핵심 필드) 존재 점검 추가.
 - [x] `world_regression_tests`에서 `FlushDirtyCharsResult`의 `shard_id/conflicts` 결과 필드 shape/기본 합계 일관성 점검.
 - [x] 런타임 로그 기반 `FlushOneCharConflict`/`FlushDirtyCharsConflict` shape 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
+- [x] 런타임 로그 profile(`flush_dirty_throughput`)로 `pulled == saved + failed + conflicts`, `batch>0`, conflict shape 회귀 검증 추가.
 
 ## D. Shutdown
 - [ ] `OnBeforeIoStop` emits ordered shutdown logs.
@@ -42,6 +43,7 @@
 - [x] `smoke_persistence_shutdown` 정적 smoke에 `wait_dqs_drain_end in_flight/timed_out` 로그 경로 존재 점검 추가.
 - [x] timeout 분기 경고 로그(`[shutdown] dqs drain timed out ...`) 코드 경로 정적 smoke 점검 추가.
 - [x] 런타임 로그 기반 shutdown step 순서 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
+- [x] 런타임 로그 profile(`shutdown_clean_drain`)로 clean drain(`in_flight=0 timed_out=0`) 및 timeout warning 미발생 검증 추가.
 
 ## E. Auth hardening
 - [ ] Unauthenticated gameplay packets are rejected and counted.
@@ -49,6 +51,7 @@
 - [x] `smoke_persistence_shutdown` 정적 smoke에 unauth reject 계수 증가 코드/`authstats` 임계치 로그 코드 존재 점검 추가.
 - [x] 런타임 로그 기반 `authstats` shape 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
 - [x] 런타임 로그 profile(`auth_threshold_exceeded`)로 `unauth_packet_rejects/s > threshold` 조건 검증 추가.
+- [x] 런타임 로그 profile(`unauth_reject_counted`)로 unauth reject raw log + `authstats` 양수 계수 검증 추가.
 
 ## F. CI gate
 - [x] `tests/run_ci_ctest.sh`로 기본 PR 게이트(`world_regression_tests`, `smoke_persistence_shutdown`) 묶음 실행.

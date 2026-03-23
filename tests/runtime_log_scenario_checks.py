@@ -146,6 +146,19 @@ def run_auth_threshold_checks(text: str) -> bool:
         relation="gt")
 
 
+def run_unauth_reject_counted_checks(text: str) -> bool:
+    ok = True
+    ok &= require_regex(
+        text,
+        r"\[auth\] rejected unauthenticated world packet\. op=\d+ sid=\d+",
+        "auth-unauth-reject-log")
+    ok &= require_regex(
+        text,
+        r"\[authstats\] unauth_packet_rejects/s=(?!0\b)\d+",
+        "auth-unauth-reject-count-positive")
+    return ok
+
+
 def run_flush_success_conflict_checks(text: str) -> bool:
     ok = True
     ok &= require_regex(
@@ -156,6 +169,52 @@ def run_flush_success_conflict_checks(text: str) -> bool:
         text,
         r"\[FlushOneCharConflict\] world=\d+ char_id=\d+ expected_ver=\d+ actual_ver=\d+",
         "flush-one-conflict")
+    return ok
+
+
+def run_flush_dirty_throughput_checks(text: str) -> bool:
+    ok = True
+    m = re.search(
+        r"\[FlushDirtyChars\] world=(\d+) shard=(\d+) pulled=(\d+) saved=(\d+) failed=(\d+) conflicts=(\d+) batch=(\d+) result=(\d+)",
+        text,
+        flags=re.MULTILINE)
+    if not m:
+        print("[FAIL] flush-dirty-throughput-shape: missing FlushDirtyChars summary line")
+        return False
+
+    pulled = int(m.group(3))
+    saved = int(m.group(4))
+    failed = int(m.group(5))
+    conflicts = int(m.group(6))
+    batch = int(m.group(7))
+
+    if pulled == 0:
+        print("[FAIL] flush-dirty-throughput-pulled-positive: expected pulled > 0")
+        ok = False
+    if batch == 0:
+        print("[FAIL] flush-dirty-throughput-batch-positive: expected batch > 0")
+        ok = False
+    if pulled != saved + failed + conflicts:
+        print(f"[FAIL] flush-dirty-throughput-balance: expected pulled({pulled}) == saved+failed+conflicts({saved + failed + conflicts})")
+        ok = False
+
+    ok &= require_regex(
+        text,
+        r"\[FlushDirtyCharsConflict\] world=\d+ shard=\d+ char_id=\d+ expected_ver=\d+ actual_ver=\d+",
+        "flush-dirty-throughput-conflict-shape")
+    return ok
+
+
+def run_shutdown_clean_drain_checks(text: str) -> bool:
+    ok = True
+    ok &= require_regex(
+        text,
+        r"\[shutdown\] step=3\.2 wait_dqs_drain_end in_flight=0 timed_out=0",
+        "shutdown-clean-drain")
+    ok &= require_absent_regex(
+        text,
+        r"\[shutdown\] dqs drain timed out\.",
+        "shutdown-clean-no-timeout-warning")
     return ok
 
 
@@ -194,7 +253,10 @@ def main() -> int:
             "reconnect_after_grace",
             "dup_categories",
             "auth_threshold_exceeded",
+            "unauth_reject_counted",
             "flush_success_conflict",
+            "flush_dirty_throughput",
+            "shutdown_clean_drain",
             "shutdown_timeout",
         ],
         default="full",
@@ -216,8 +278,14 @@ def main() -> int:
         ok &= run_dup_category_checks(text)
     elif args.profile == "auth_threshold_exceeded":
         ok &= run_auth_threshold_checks(text)
+    elif args.profile == "unauth_reject_counted":
+        ok &= run_unauth_reject_counted_checks(text)
     elif args.profile == "flush_success_conflict":
         ok &= run_flush_success_conflict_checks(text)
+    elif args.profile == "flush_dirty_throughput":
+        ok &= run_flush_dirty_throughput_checks(text)
+    elif args.profile == "shutdown_clean_drain":
+        ok &= run_shutdown_clean_drain_checks(text)
     elif args.profile == "shutdown_timeout":
         ok &= run_shutdown_timeout_checks(text)
 

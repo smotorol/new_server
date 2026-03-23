@@ -1,3 +1,4 @@
+[auth] rejected unauthenticated world packet. op=44 sid=500
 [session_close] reconnect grace close armed. char_id=1001 sid=12 serial=99 delay_ms=5000
 [dupstats] char/s=1 account/s=2 both/s=1 dedup_same/s=1
 [authstats] unauth_packet_rejects/s=11 threshold=10 sampled_sid=500

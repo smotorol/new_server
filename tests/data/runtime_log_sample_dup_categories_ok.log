@@ -1,3 +1,4 @@
+[auth] rejected unauthenticated world packet. op=44 sid=500
 [session_close] reconnect grace close armed. char_id=1001 sid=12 serial=99 delay_ms=5000
 [dupstats] char/s=2 account/s=3 both/s=1 dedup_same/s=1
 [authstats] unauth_packet_rejects/s=11 threshold=10 sampled_sid=500
@@ -9,7 +10,7 @@
 [shutdown] step=2 stop_periodic_flush_scheduler
 [shutdown] step=3 enqueue_final_dirty_flush
 [shutdown] step=3.1 wait_dqs_drain_begin
-[shutdown] step=3.2 wait_dqs_drain_end
+[shutdown] step=3.2 wait_dqs_drain_end in_flight=0 timed_out=0
 [shutdown] step=4 cancel_delayed_close_timers
 [shutdown] step=5 stop_db_workers
 [shutdown] step=6 stop_actor_workers

@@ -223,14 +223,19 @@ def main() -> int:
         "dupstats-all-categories-positive",
         "authstats-shape",
         "authstats-threshold-exceeded",
+        "auth-unauth-reject-log",
+        "auth-unauth-reject-count-positive",
         "flush-one-shape",
         "flush-one-conflict-shape",
         "flush-dirty-summary-shape",
         "flush-dirty-conflict-shape",
+        "flush-dirty-throughput-balance",
         "shutdown-order-runtime",
+        "shutdown-clean-drain",
         "reconnect-within-grace-order",
         "reconnect-after-grace-order",
         "flush-one-success",
+        "shutdown-clean-no-timeout-warning",
         "shutdown-timeout-flag",
         "shutdown-timeout-order",
         "runtime_log_scenario_checks passed (profile=",
@@ -241,6 +246,7 @@ def main() -> int:
             ok = False
 
     runtime_log_sample_needles = [
+        "[auth] rejected unauthenticated world packet.",
         "[session_close] reconnect grace close armed.",
         "[dupstats] char/s=",
         "[authstats] unauth_packet_rejects/s=",
@@ -266,7 +272,10 @@ def main() -> int:
         "--profile reconnect_after_grace",
         "--profile dup_categories",
         "--profile auth_threshold_exceeded",
+        "--profile unauth_reject_counted",
         "--profile flush_success_conflict",
+        "--profile flush_dirty_throughput",
+        "--profile shutdown_clean_drain",
         "--profile shutdown_timeout",
     ]
     for needle in ci_gate_needles:
