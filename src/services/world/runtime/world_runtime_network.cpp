@@ -80,10 +80,10 @@ namespace svr {
 			std::string parse_error;
 			std::string parse_warn;
 
-			auto parse_int_field = [&](const char* key, const std::string& raw, int& target) -> bool {
+			auto parse_int_field = [&](const std::string& key, const std::string& raw, int& target) -> bool {
 				parse_error.clear();
 				parse_warn.clear();
-				if (!dc::cfg::ParseIntOrKeep(key, raw, target, config_fail_fast, &parse_error, &parse_warn)) {
+				if (!dc::cfg::ParseIntOrKeep(key.c_str(), raw, target, config_fail_fast, &parse_error, &parse_warn)) {
 					spdlog::error("[config] {}", parse_error);
 					return false;
 				}
@@ -199,14 +199,14 @@ namespace svr {
 				{
 					auto port = ini.sections["World"][key("Port")];
 					int parsed_port = 0;
-					if (!parse_int_field("World.Port*", port, parsed_port)) return false;
+					if (!parse_int_field(std::string("World.") + key("Port"), port, parsed_port)) return false;
 					w.port = parsed_port;
 				}
 
 				{
 					auto idx = ini.sections["World"][key("WorldIdx")];
 					int parsed_idx = 0;
-					if (!parse_int_field("World.WorldIdx*", idx, parsed_idx)) return false;
+					if (!parse_int_field(std::string("World.") + key("WorldIdx"), idx, parsed_idx)) return false;
 					w.world_idx = parsed_idx;
 				}
 

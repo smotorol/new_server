@@ -34,6 +34,7 @@
 - `CONFIG_FAIL_FAST=1`이면 `CONFIG_SCHEMA_VERSION` 파싱 실패를 즉시 부팅 실패로 처리한다.
 - `CONFIG_FAIL_FAST=0`이면 경고 로그 후 기본값으로 진행한다.
 - 동일 안전 파싱 패턴은 `WRITE_BEHIND`, `DB_WORK`, `REDIS`, `NET_WORK`, `AOI`, `World` 주요 숫자 키에도 확장 적용한다.
+- `World.PortN`, `World.WorldIdxN` 같은 인덱스 키는 실제 키 문자열을 포함해 오류/경고를 남긴다(운영 디버깅 용이).
 
 ### 4) AOI/맵
 - 맵 크기/셀 단위/반경(`map_w`, `map_h`, `world_sight_unit`, `aoi_r`)은 0/음수 입력을 허용하지 않으며,

@@ -177,6 +177,8 @@ def main() -> int:
         "WRITE_BEHIND.FLUSH_INTERVAL_SEC",
         "invalid SYSTEM.CONFIG_FAIL_FAST",
         "SYSTEM.CONFIG_SCHEMA_VERSION",
+        "std::string(\"World.\") + key(\"Port\")",
+        "std::string(\"World.\") + key(\"WorldIdx\")",
     ]
     for needle in parse_guard_runtime_needles:
         if needle not in runtime_network_text:
