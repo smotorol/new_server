@@ -26,6 +26,35 @@ namespace dc::cfg {
 		}
 	}
 
+	inline bool ParseIntOrKeep(
+		const char* key,
+		const std::string& raw,
+		int& inout_value,
+		bool fail_fast,
+		std::string* out_error = nullptr,
+		std::string* out_warn = nullptr)
+	{
+		if (raw.empty()) {
+			return true;
+		}
+		int parsed = inout_value;
+		if (TryParseInt(raw, parsed)) {
+			inout_value = parsed;
+			return true;
+		}
+		if (fail_fast) {
+			if (out_error) {
+				*out_error = std::string("invalid numeric config: ") + key + "='" + raw + "'";
+			}
+			return false;
+		}
+		if (out_warn) {
+			*out_warn = std::string("invalid numeric config: ") + key + "='" + raw
+				+ "' -> keep(" + std::to_string(inout_value) + ")";
+		}
+		return true;
+	}
+
 	inline std::uint32_t ClampU32Min(std::uint32_t v, std::uint32_t min_v, std::uint32_t fallback) noexcept
 	{
 		if (v < min_v) return fallback;

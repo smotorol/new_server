@@ -77,6 +77,21 @@ namespace svr {
 			constexpr int kDefaultReconnectGraceCloseDelayMs = 5000;
 			bool config_fail_fast = false;
 			int config_schema_version = dc::cfg::kRuntimeConfigSchemaVersion;
+			std::string parse_error;
+			std::string parse_warn;
+
+			auto parse_int_field = [&](const char* key, const std::string& raw, int& target) -> bool {
+				parse_error.clear();
+				parse_warn.clear();
+				if (!dc::cfg::ParseIntOrKeep(key, raw, target, config_fail_fast, &parse_error, &parse_warn)) {
+					spdlog::error("[config] {}", parse_error);
+					return false;
+				}
+				if (!parse_warn.empty()) {
+					spdlog::warn("[config] {}", parse_warn);
+				}
+				return true;
+			};
 
 		// inipp는 기본적으로 trim/escape 처리가 있음
 		// ini.default_section(ini.sections[""]);
@@ -92,11 +107,11 @@ namespace svr {
 		}
 		{
 			auto v = ini.sections["REDIS"]["Port"];
-			if (!v.empty()) redis_port_ = std::stoi(v);
+			if (!parse_int_field("REDIS.Port", v, redis_port_)) return false;
 		}
 		{
 			auto v = ini.sections["REDIS"]["DB"];
-			if (!v.empty()) redis_db_ = std::stoi(v);
+			if (!parse_int_field("REDIS.DB", v, redis_db_)) return false;
 		}
 		redis_password_ = ini.sections["REDIS"]["Password"];
 		{
@@ -107,54 +122,62 @@ namespace svr {
 		// ✅ Redis shard + WAIT 옵션
 		{
 			auto v = ini.sections["REDIS"]["SHARD_COUNT"];
-			if (!v.empty()) redis_shard_count_ = (std::uint32_t)std::max(1, std::stoi(v));
+			int parsed = static_cast<int>(redis_shard_count_);
+			if (!parse_int_field("REDIS.SHARD_COUNT", v, parsed)) return false;
+			redis_shard_count_ = static_cast<std::uint32_t>(std::max(0, parsed));
 		}
 		{
 			auto v = ini.sections["REDIS"]["WAIT_REPLICAS"];
-			if (!v.empty()) redis_wait_replicas_ = std::max(0, std::stoi(v));
+			if (!parse_int_field("REDIS.WAIT_REPLICAS", v, redis_wait_replicas_)) return false;
 		}
 		{
 			auto v = ini.sections["REDIS"]["WAIT_TIMEOUT_MS"];
-			if (!v.empty()) redis_wait_timeout_ms_ = std::max(0, std::stoi(v));
+			if (!parse_int_field("REDIS.WAIT_TIMEOUT_MS", v, redis_wait_timeout_ms_)) return false;
 		}
 
 		// ✅ write-behind 튜닝
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_INTERVAL_SEC"];
-			if (!v.empty()) flush_interval_sec_ = std::max(1, std::stoi(v));
+			if (!parse_int_field("WRITE_BEHIND.FLUSH_INTERVAL_SEC", v, flush_interval_sec_)) return false;
 		}
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_IMMEDIATE"];
-			if (!v.empty()) flush_batch_immediate_ = (std::uint32_t)std::max(1, std::stoi(v));
+			int parsed = static_cast<int>(flush_batch_immediate_);
+			if (!parse_int_field("WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", v, parsed)) return false;
+			flush_batch_immediate_ = static_cast<std::uint32_t>(std::max(0, parsed));
 		}
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_NORMAL"];
-			if (!v.empty()) flush_batch_normal_ = (std::uint32_t)std::max(1, std::stoi(v));
+			int parsed = static_cast<int>(flush_batch_normal_);
+			if (!parse_int_field("WRITE_BEHIND.FLUSH_BATCH_NORMAL", v, parsed)) return false;
+			flush_batch_normal_ = static_cast<std::uint32_t>(std::max(0, parsed));
 		}
-			{
-				auto v = ini.sections["WRITE_BEHIND"]["CHAR_TTL_SEC"];
-				if (!v.empty()) char_ttl_sec_ = std::max(60, std::stoi(v));
-			}
-			{
-				auto v = ini.sections["SESSION"]["RECONNECT_GRACE_CLOSE_DELAY_MS"];
-				if (!v.empty()) reconnect_grace_close_delay_ms_ = std::max(100, std::stoi(v));
-			}
+		{
+			auto v = ini.sections["WRITE_BEHIND"]["CHAR_TTL_SEC"];
+			if (!parse_int_field("WRITE_BEHIND.CHAR_TTL_SEC", v, char_ttl_sec_)) return false;
+		}
+		{
+			auto v = ini.sections["SESSION"]["RECONNECT_GRACE_CLOSE_DELAY_MS"];
+			if (!parse_int_field("SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS", v, reconnect_grace_close_delay_ms_)) return false;
+		}
 
 		// ✅ DB/DQS 샤딩 관련
 		{
 			auto v = ini.sections["DB_WORK"]["DB_POOL_SIZE_PER_WORLD"];
-			if (!v.empty()) db_pool_size_per_world_ = std::max(1, std::stoi(v));
+			if (!parse_int_field("DB_WORK.DB_POOL_SIZE_PER_WORLD", v, db_pool_size_per_world_)) return false;
 		}
 		{
 			auto v = ini.sections["DB_WORK"]["DB_SHARD_COUNT"];
-			if (!v.empty()) db_shard_count_ = (std::uint32_t)std::max(1, std::stoi(v));
+			int parsed = static_cast<int>(db_shard_count_);
+			if (!parse_int_field("DB_WORK.DB_SHARD_COUNT", v, parsed)) return false;
+			db_shard_count_ = static_cast<std::uint32_t>(std::max(0, parsed));
 		}
 
 		// [World]
 		worldset_num_ = 0;
 		{
 			auto v = ini.sections["World"]["WorldSet_Num"];
-			if (!v.empty()) worldset_num_ = std::stoi(v);
+			if (!parse_int_field("World.WorldSet_Num", v, worldset_num_)) return false;
 		}
 
 		worlds_.clear();
@@ -173,15 +196,19 @@ namespace svr {
 			w.dsn = ini.sections["World"][key("DSN")];
 			w.dbname = ini.sections["World"][key("DBName")];
 
-			{
-				auto port = ini.sections["World"][key("Port")];
-				w.port = port.empty() ? 0 : std::stoi(port);
-			}
+				{
+					auto port = ini.sections["World"][key("Port")];
+					int parsed_port = 0;
+					if (!parse_int_field("World.Port*", port, parsed_port)) return false;
+					w.port = parsed_port;
+				}
 
-			{
-				auto idx = ini.sections["World"][key("WorldIdx")];
-				w.world_idx = idx.empty() ? 0 : std::stoi(idx);
-			}
+				{
+					auto idx = ini.sections["World"][key("WorldIdx")];
+					int parsed_idx = 0;
+					if (!parse_int_field("World.WorldIdx*", idx, parsed_idx)) return false;
+					w.world_idx = parsed_idx;
+				}
 
 			worlds_.push_back(std::move(w));
 		}
@@ -190,45 +217,39 @@ namespace svr {
 		world_to_log_recv_buffer_size_ = 10'000'000;
 		{
 			auto v = ini.sections["NET_WORK"]["WORLD_TO_LOG_RECV_BUFFER_SIZE"];
-			if (!v.empty()) world_to_log_recv_buffer_size_ = (std::uint32_t)std::stoul(v);
+			int parsed = static_cast<int>(world_to_log_recv_buffer_size_);
+			if (!parse_int_field("NET_WORK.WORLD_TO_LOG_RECV_BUFFER_SIZE", v, parsed)) return false;
+			world_to_log_recv_buffer_size_ = static_cast<std::uint32_t>(std::max(0, parsed));
 		}
 		// ✅ io_context run() 스레드 개수(기본 1)
 		{
 			auto v = ini.sections["NET_WORK"]["IO_THREAD_COUNT"];
-			if (!v.empty()) io_thread_count_ = std::max(1, std::stoi(v));
+			if (!parse_int_field("NET_WORK.IO_THREAD_COUNT", v, io_thread_count_)) return false;
 		}
 
 		// ✅ 로직(Actor) 스레드 개수(기본 1)
 		{
 			auto v = ini.sections["NET_WORK"]["LOGIC_THREAD_COUNT"];
-			if (!v.empty()) logic_thread_count_ = std::max(1, std::stoi(v));
+			if (!parse_int_field("NET_WORK.LOGIC_THREAD_COUNT", v, logic_thread_count_)) return false;
 		}
 		{
 			auto v = ini.sections["SYSTEM"]["CONFIG_FAIL_FAST"];
 			if (!v.empty()) {
 				int parsed = 0;
-				if (dc::cfg::TryParseInt(v, parsed)) {
-					config_fail_fast = (parsed != 0);
-				}
-				else {
-					spdlog::warn("[config] invalid SYSTEM.CONFIG_FAIL_FAST='{}' -> default(false)", v);
-				}
+					if (dc::cfg::TryParseInt(v, parsed)) {
+						config_fail_fast = (parsed != 0);
+					}
+					else {
+						spdlog::warn("[config] invalid SYSTEM.CONFIG_FAIL_FAST='{}' -> default(false)", v);
+					}
 			}
 		}
 		{
 			auto v = ini.sections["SYSTEM"]["CONFIG_SCHEMA_VERSION"];
 			if (!v.empty()) {
 				int parsed = config_schema_version;
-				if (dc::cfg::TryParseInt(v, parsed)) {
-					config_schema_version = parsed;
-				}
-				else if (config_fail_fast) {
-					spdlog::error("[config] invalid SYSTEM.CONFIG_SCHEMA_VERSION='{}'", v);
-					return false;
-				}
-				else {
-					spdlog::warn("[config] invalid SYSTEM.CONFIG_SCHEMA_VERSION='{}' -> default({})", v, config_schema_version);
-				}
+				if (!parse_int_field("SYSTEM.CONFIG_SCHEMA_VERSION", v, parsed)) return false;
+				config_schema_version = parsed;
 			}
 		}
 
@@ -240,19 +261,19 @@ namespace svr {
 
 		{
 			auto v = ini.sections["AOI"]["MAP_W"];
-			if (!v.empty()) g_aoi_ini_cfg.map_size.x = std::max(1, std::stoi(v));
+			if (!parse_int_field("AOI.MAP_W", v, g_aoi_ini_cfg.map_size.x)) return false;
 		}
 		{
 			auto v = ini.sections["AOI"]["MAP_H"];
-			if (!v.empty()) g_aoi_ini_cfg.map_size.y = std::max(1, std::stoi(v));
+			if (!parse_int_field("AOI.MAP_H", v, g_aoi_ini_cfg.map_size.y)) return false;
 		}
 		{
 			auto v = ini.sections["AOI"]["WORLD_SIGHT_UNIT"];
-			if (!v.empty()) g_aoi_ini_cfg.world_sight_unit = std::max(1, std::stoi(v));
+			if (!parse_int_field("AOI.WORLD_SIGHT_UNIT", v, g_aoi_ini_cfg.world_sight_unit)) return false;
 		}
 		{
 			auto v = ini.sections["AOI"]["AOI_RADIUS_CELLS"];
-			if (!v.empty()) g_aoi_ini_cfg.aoi_radius_cells = std::max(0, std::stoi(v));
+			if (!parse_int_field("AOI.AOI_RADIUS_CELLS", v, g_aoi_ini_cfg.aoi_radius_cells)) return false;
 		}
 
 		// ============================================================

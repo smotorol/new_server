@@ -165,15 +165,20 @@ def main() -> int:
             print(f"[FAIL] config-fail-fast-channel: missing '{needle}'")
             ok = False
 
-    parse_guard_needles = [
+    parse_guard_header_needles = [
         "TryParseInt(const std::string& s, int& out)",
-        "invalid SYSTEM.CONFIG_FAIL_FAST",
-        "invalid SYSTEM.CONFIG_SCHEMA_VERSION",
+        "ParseIntOrKeep(",
+        "invalid numeric config:",
     ]
-    if parse_guard_needles[0] not in runtime_ini_sanity_text:
-        print(f"[FAIL] config-parse-guard: missing '{parse_guard_needles[0]}'")
+    if not all(needle in runtime_ini_sanity_text for needle in parse_guard_header_needles):
+        print(f"[FAIL] config-parse-guard: missing parse helper(s)")
         ok = False
-    for needle in parse_guard_needles[1:]:
+    parse_guard_runtime_needles = [
+        "WRITE_BEHIND.FLUSH_INTERVAL_SEC",
+        "invalid SYSTEM.CONFIG_FAIL_FAST",
+        "SYSTEM.CONFIG_SCHEMA_VERSION",
+    ]
+    for needle in parse_guard_runtime_needles:
         if needle not in runtime_network_text:
             print(f"[FAIL] config-parse-guard-world: missing '{needle}'")
             ok = False
