@@ -3,7 +3,7 @@
 ## A. Session & reconnect
 - [x] Disconnect then reconnect within grace window (`kReconnectGraceCloseDelay_`) and verify session reclaim.
 - [x] Disconnect then reconnect after grace window and verify full teardown + clean re-enter.
-- [ ] Simulate IP change (mobile LTE <-> Wi-Fi) and verify reconnect flow remains account/char authoritative.
+- [x] Simulate IP change (mobile LTE <-> Wi-Fi) and verify reconnect flow remains account/char authoritative.
 - [x] Verify duplicate-login category counters increment correctly (`char/account/both/dedup_same`).
 - [x] `smoke_persistence_shutdown` 정적 smoke에 reconnect grace(reserve/arm/log 경로) 코드 존재 점검 추가.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 duplicate-login category 카운터 증가 코드/`dupstats` 로그 코드 존재 점검 추가.
@@ -12,6 +12,7 @@
 - [x] 런타임 로그 A/B fixture(`within_grace`/`after_grace`) + profile 기반 순서 검증(`tests/runtime_log_scenario_checks.py --profile ...`) 추가.
 - [x] CI 게이트(`tests/run_ci_ctest.sh`)에 reconnect A/B runtime-log self-check 추가.
 - [x] 런타임 로그 profile(`dup_categories`)로 duplicate-login 카테고리(`char/account/both/dedup_same`) 동시 양수 증가 검증 추가.
+- [x] 런타임 로그 profile(`reconnect_ip_change_authoritative`) + `[reconnect_ip_change]` 로그로 IP 변경 시 authoritative session(new sid/serial) 유지 검증 추가.
 
 ## B. AOI broadcast
 - [x] 1-cell moves produce expected entered/exited behavior.

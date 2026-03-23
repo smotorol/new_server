@@ -135,6 +135,25 @@ def run_reconnect_after_grace_checks(text: str) -> bool:
     return ok
 
 
+def run_reconnect_ip_change_authoritative_checks(text: str) -> bool:
+    ok = True
+    ok &= require_regex(
+        text,
+        r"\[reconnect_ip_change\] account_id=\d+ char_id=\d+ old_sid=\d+ old_serial=\d+ old_remote=[^ ]+ new_sid=\d+ new_serial=\d+ new_remote=[^ ]+ authoritative_sid=\d+ authoritative_serial=\d+",
+        "reconnect-ip-change-shape")
+    ok &= require_numeric_relation_from_log(
+        text,
+        r"\[reconnect_ip_change\].* new_sid=(\d+).* authoritative_sid=(\d+)",
+        "reconnect-ip-change-authoritative-sid",
+        relation="eq")
+    ok &= require_numeric_relation_from_log(
+        text,
+        r"\[reconnect_ip_change\].* new_serial=(\d+).* authoritative_serial=(\d+)",
+        "reconnect-ip-change-authoritative-serial",
+        relation="eq")
+    return ok
+
+
 def run_dup_category_checks(text: str) -> bool:
     return require_regex(
         text,
@@ -288,6 +307,7 @@ def main() -> int:
             "full",
             "reconnect_within_grace",
             "reconnect_after_grace",
+            "reconnect_ip_change_authoritative",
             "dup_categories",
             "auth_threshold_exceeded",
             "unauth_reject_counted",
@@ -312,6 +332,8 @@ def main() -> int:
         ok &= run_reconnect_within_grace_checks(text)
     elif args.profile == "reconnect_after_grace":
         ok &= run_reconnect_after_grace_checks(text)
+    elif args.profile == "reconnect_ip_change_authoritative":
+        ok &= run_reconnect_ip_change_authoritative_checks(text)
     elif args.profile == "dup_categories":
         ok &= run_dup_category_checks(text)
     elif args.profile == "auth_threshold_exceeded":

@@ -133,6 +133,7 @@ def main() -> int:
         "TryReserveDelayedWorldClose_(sid, serial)",
         "ArmReservedDelayedWorldClose_(",
         "[session_close] reconnect grace close armed. char_id={} sid={} serial={} delay_ms={}",
+        "[reconnect_ip_change] account_id={} char_id={} old_sid={} old_serial={} old_remote={} new_sid={} new_serial={} new_remote={} authoritative_sid={} authoritative_serial={}",
     ]
     reconnect_sources = [runtime_h_text, runtime_network_text, session_text]
     for needle in reconnect_needles:
@@ -245,6 +246,9 @@ def main() -> int:
         "shutdown-clean-drain",
         "reconnect-within-grace-order",
         "reconnect-after-grace-order",
+        "reconnect-ip-change-shape",
+        "reconnect-ip-change-authoritative-sid",
+        "reconnect-ip-change-authoritative-serial",
         "flush-one-success",
         "shutdown-clean-no-timeout-warning",
         "shutdown-timeout-flag",
@@ -281,10 +285,12 @@ def main() -> int:
         "runtime_log_sample_ok.log",
         "runtime_log_sample_reconnect_within_grace_ok.log",
         "runtime_log_sample_reconnect_after_grace_ok.log",
+        "runtime_log_sample_reconnect_ip_change_ok.log",
         "runtime_log_sample_dup_categories_ok.log",
         "runtime_log_sample_shutdown_timeout_ok.log",
         "--profile reconnect_within_grace",
         "--profile reconnect_after_grace",
+        "--profile reconnect_ip_change_authoritative",
         "--profile dup_categories",
         "--profile auth_threshold_exceeded",
         "--profile unauth_reject_counted",

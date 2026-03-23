@@ -6,6 +6,7 @@
 #include <array>
 #include <cstdint>
 #include <cstring>
+#include <string>
 
 #include <boost/asio.hpp>
 #include <boost/asio/awaitable.hpp>
@@ -47,7 +48,8 @@ namespace net {
 
 		asio::awaitable<void> start()
 		{
-			if (handler_) handler_->on_connected(session_index_, session_serial_);
+			const auto remote_endpoint = GetRemoteEndpointString_();
+			if (handler_) handler_->on_connected_with_endpoint(session_index_, session_serial_, remote_endpoint);
 
 			try {
 				co_await read_loop();
@@ -57,7 +59,7 @@ namespace net {
 			}
 
 			close();
-			if (handler_) handler_->on_disconnected(session_index_, session_serial_);
+			if (handler_) handler_->on_disconnected_with_endpoint(session_index_, session_serial_, remote_endpoint);
 			co_return;
 		}
 
@@ -94,6 +96,16 @@ namespace net {
 		}
 
 	private:
+		std::string GetRemoteEndpointString_() const
+		{
+			boost::system::error_code ec;
+			const auto ep = socket_.remote_endpoint(ec);
+			if (ec) {
+				return "unknown";
+			}
+			return ep.address().to_string() + ":" + std::to_string(ep.port());
+		}
+
 		struct OutMsg {
 			std::vector<std::uint8_t> bytes;
 		};

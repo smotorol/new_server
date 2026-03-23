@@ -41,6 +41,9 @@ python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
   --profile reconnect_after_grace \
   --log "${repo_root}/tests/data/runtime_log_sample_reconnect_after_grace_ok.log"
 python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile reconnect_ip_change_authoritative \
+  --log "${repo_root}/tests/data/runtime_log_sample_reconnect_ip_change_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
   --profile dup_categories \
   --log "${repo_root}/tests/data/runtime_log_sample_dup_categories_ok.log"
 python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \

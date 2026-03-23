@@ -1271,6 +1271,23 @@ namespace svr {
 			return;
 		}
 
+		const auto victim_remote = GetLatestRemoteEndpoint(victim.sid);
+		const auto new_remote = GetLatestRemoteEndpoint(new_sid);
+		if (!victim_remote.empty() && !new_remote.empty() && victim_remote != new_remote) {
+			spdlog::info(
+				"[reconnect_ip_change] account_id={} char_id={} old_sid={} old_serial={} old_remote={} new_sid={} new_serial={} new_remote={} authoritative_sid={} authoritative_serial={}",
+				(victim.account_id != 0 ? victim.account_id : fallback_account_id),
+				(victim.char_id != 0 ? victim.char_id : fallback_char_id),
+				victim.sid,
+				victim.serial,
+				victim_remote,
+				new_sid,
+				new_serial,
+				new_remote,
+				new_sid,
+				new_serial);
+		}
+
 		switch (stat_category) {
 		case SessionKickStatCategory::DuplicateChar:
 			svr::metrics::g_dup_login_char.fetch_add(1, std::memory_order_relaxed);
