@@ -504,7 +504,7 @@ namespace svr {
 				if (ArmReservedDelayedWorldClose_(
 					sid,
 					serial,
-					kReconnectGraceCloseDelay_,
+					std::chrono::milliseconds(reconnect_grace_close_delay_ms_),
 					0,
 					close_char_id))
 				{
@@ -513,7 +513,7 @@ namespace svr {
 						close_char_id,
 						sid,
 						serial,
-						kReconnectGraceCloseDelay_.count());
+						reconnect_grace_close_delay_ms_);
 					return;
 				}
 

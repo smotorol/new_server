@@ -66,10 +66,11 @@ namespace svr {
 		// ------------------------------------------------------------
 			// 0) local defaults (최종 fallback)
 			// ------------------------------------------------------------
-		constexpr int kDefaultFlushIntervalSec = 60;
-		constexpr std::uint32_t kDefaultBatchImmediate = 500;
-		constexpr std::uint32_t kDefaultBatchNormal = 200;
-		constexpr int kDefaultCharTtlSec = 60 * 60 * 24 * 7; // 7 days
+			constexpr int kDefaultFlushIntervalSec = 60;
+			constexpr std::uint32_t kDefaultBatchImmediate = 500;
+			constexpr std::uint32_t kDefaultBatchNormal = 200;
+			constexpr int kDefaultCharTtlSec = 60 * 60 * 24 * 7; // 7 days
+			constexpr int kDefaultReconnectGraceCloseDelayMs = 5000;
 
 		// inipp는 기본적으로 trim/escape 처리가 있음
 		// ini.default_section(ini.sections[""]);
@@ -124,10 +125,14 @@ namespace svr {
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_NORMAL"];
 			if (!v.empty()) flush_batch_normal_ = (std::uint32_t)std::max(1, std::stoi(v));
 		}
-		{
-			auto v = ini.sections["WRITE_BEHIND"]["CHAR_TTL_SEC"];
-			if (!v.empty()) char_ttl_sec_ = std::max(60, std::stoi(v));
-		}
+			{
+				auto v = ini.sections["WRITE_BEHIND"]["CHAR_TTL_SEC"];
+				if (!v.empty()) char_ttl_sec_ = std::max(60, std::stoi(v));
+			}
+			{
+				auto v = ini.sections["SESSION"]["RECONNECT_GRACE_CLOSE_DELAY_MS"];
+				if (!v.empty()) reconnect_grace_close_delay_ms_ = std::max(100, std::stoi(v));
+			}
 
 		// ✅ DB/DQS 샤딩 관련
 		{
@@ -241,9 +246,13 @@ namespace svr {
 
 		// 4) flush interval/batch/ttl sanity
 		flush_interval_sec_ = clamp_int_min(flush_interval_sec_, 1, kDefaultFlushIntervalSec);
-		flush_batch_immediate_ = clamp_u32_min(flush_batch_immediate_, 1u, kDefaultBatchImmediate);
-		flush_batch_normal_ = clamp_u32_min(flush_batch_normal_, 1u, kDefaultBatchNormal);
-		char_ttl_sec_ = clamp_int_min(char_ttl_sec_, 60, kDefaultCharTtlSec);
+			flush_batch_immediate_ = clamp_u32_min(flush_batch_immediate_, 1u, kDefaultBatchImmediate);
+			flush_batch_normal_ = clamp_u32_min(flush_batch_normal_, 1u, kDefaultBatchNormal);
+			char_ttl_sec_ = clamp_int_min(char_ttl_sec_, 60, kDefaultCharTtlSec);
+			reconnect_grace_close_delay_ms_ = clamp_int_min(
+				reconnect_grace_close_delay_ms_,
+				100,
+				kDefaultReconnectGraceCloseDelayMs);
 
 		// 5) db pool per world sanity
 		db_pool_size_per_world_ = clamp_int_min(db_pool_size_per_world_, 1, 2);
@@ -259,10 +268,11 @@ namespace svr {
 			db_acc_, worldset_num_, world_to_log_recv_buffer_size_);
 
 		spdlog::info("INI(DB_WORK): pool_per_world={}, db_shards={}", db_pool_size_per_world_, db_shard_count_);
-		spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
-			flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
-		spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
-			redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
+			spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
+				flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
+			spdlog::info("INI(SESSION): reconnect_grace_close_delay_ms={}", reconnect_grace_close_delay_ms_);
+			spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
+				redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
 		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",
 			g_aoi_ini_cfg.map_size.x, g_aoi_ini_cfg.map_size.y,
 			g_aoi_ini_cfg.world_sight_unit, g_aoi_ini_cfg.aoi_radius_cells);

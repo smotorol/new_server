@@ -5,8 +5,9 @@
 - [ ] Disconnect then reconnect after grace window and verify full teardown + clean re-enter.
 - [ ] Simulate IP change (mobile LTE <-> Wi-Fi) and verify reconnect flow remains account/char authoritative.
 - [ ] Verify duplicate-login category counters increment correctly (`char/account/both/dedup_same`).
-- [x] `smoke_persistence_shutdown` 정적 smoke에 reconnect grace(`kReconnectGraceCloseDelay_`, reserve/arm/log 경로) 코드 존재 점검 추가.
+- [x] `smoke_persistence_shutdown` 정적 smoke에 reconnect grace(reserve/arm/log 경로) 코드 존재 점검 추가.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 duplicate-login category 카운터 증가 코드/`dupstats` 로그 코드 존재 점검 추가.
+- [x] `SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS` 설정값 파싱/정상화/로그 경로 추가.
 
 ## B. AOI broadcast
 - [ ] 1-cell moves produce expected entered/exited behavior.

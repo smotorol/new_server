@@ -496,7 +496,6 @@ namespace svr {
 			DelayedCloseKeyHash> delayed_world_close_entries_;
 
 		static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
-		static constexpr std::chrono::milliseconds kReconnectGraceCloseDelay_{ 5000 };
 		std::atomic<std::uint64_t> duplicate_login_trace_seq_{ 1 };
 		mutable std::mutex expected_char_ver_mtx_;
 		std::unordered_map<std::uint64_t, std::uint32_t> expected_char_version_by_key_;
@@ -577,6 +576,7 @@ namespace svr {
 		std::uint32_t flush_batch_immediate_ = 500;
 		std::uint32_t flush_batch_normal_ = 200;
 		int char_ttl_sec_ = 60 * 60 * 24 * 7;
+		int reconnect_grace_close_delay_ms_ = 5000;
 
 		int worldset_num_ = 0;
 		std::vector<WorldInfo> worlds_;

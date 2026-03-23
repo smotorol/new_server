@@ -19,12 +19,14 @@ def _require_in_order(text: str, needles: list[str], label: str) -> bool:
 def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     core_cpp = repo_root / "src/services/world/runtime/world_runtime_core.cpp"
+    runtime_network_cpp = repo_root / "src/services/world/runtime/world_runtime_network.cpp"
     runtime_h = repo_root / "src/services/world/runtime/world_runtime.h"
     persistence_cpp = repo_root / "src/services/world/runtime/world_runtime_persistence.cpp"
     handler_core_cpp = repo_root / "src/services/world/handler/world_handler_core.cpp"
     session_cpp = repo_root / "src/services/world/runtime/world_runtime_session.cpp"
 
     core_text = core_cpp.read_text(encoding="utf-8")
+    runtime_network_text = runtime_network_cpp.read_text(encoding="utf-8")
     runtime_h_text = runtime_h.read_text(encoding="utf-8")
     persist_text = persistence_cpp.read_text(encoding="utf-8")
     handler_text = handler_core_cpp.read_text(encoding="utf-8")
@@ -97,12 +99,13 @@ def main() -> int:
             ok = False
 
     reconnect_needles = [
-        "kReconnectGraceCloseDelay_{ 5000 }",
+        "reconnect_grace_close_delay_ms_ = 5000",
+        "RECONNECT_GRACE_CLOSE_DELAY_MS",
         "TryReserveDelayedWorldClose_(sid, serial)",
         "ArmReservedDelayedWorldClose_(",
         "[session_close] reconnect grace close armed. char_id={} sid={} serial={} delay_ms={}",
     ]
-    reconnect_sources = [runtime_h_text, session_text]
+    reconnect_sources = [runtime_h_text, runtime_network_text, session_text]
     for needle in reconnect_needles:
         if not any(needle in src for src in reconnect_sources):
             print(f"[FAIL] reconnect-grace: missing '{needle}'")
