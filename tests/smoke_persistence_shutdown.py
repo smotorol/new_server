@@ -219,7 +219,10 @@ def main() -> int:
     runtime_log_check_needles = [
         "reconnect-grace-armed",
         "dupstats-shape",
+        "dupstats-positive-signal",
         "authstats-shape",
+        "flush-one-conflict-shape",
+        "flush-dirty-conflict-shape",
         "shutdown-order-runtime",
         "runtime_log_scenario_checks passed",
     ]
@@ -232,6 +235,8 @@ def main() -> int:
         "[session_close] reconnect grace close armed.",
         "[dupstats] char/s=",
         "[authstats] unauth_packet_rejects/s=",
+        "[FlushOneCharConflict]",
+        "[FlushDirtyCharsConflict]",
         "[shutdown] step=7 io_stopped_cleanup_complete",
     ]
     for needle in runtime_log_sample_needles:

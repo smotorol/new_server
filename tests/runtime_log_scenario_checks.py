@@ -49,8 +49,23 @@ def main() -> int:
         "dupstats-shape")
     ok &= require_regex(
         text,
+        r"\[dupstats\] char/s=(?!0\b)\d+|"
+        r"\[dupstats\] .*account/s=(?!0\b)\d+|"
+        r"\[dupstats\] .*both/s=(?!0\b)\d+|"
+        r"\[dupstats\] .*dedup_same/s=(?!0\b)\d+",
+        "dupstats-positive-signal")
+    ok &= require_regex(
+        text,
         r"\[authstats\] unauth_packet_rejects/s=\d+ threshold=\d+ sampled_sid=\d+",
         "authstats-shape")
+    ok &= require_regex(
+        text,
+        r"\[FlushOneCharConflict\] world=\d+ char_id=\d+ expected_ver=\d+ actual_ver=\d+",
+        "flush-one-conflict-shape")
+    ok &= require_regex(
+        text,
+        r"\[FlushDirtyCharsConflict\] world=\d+ shard=\d+ char_id=\d+ expected_ver=\d+ actual_ver=\d+",
+        "flush-dirty-conflict-shape")
 
     shutdown_steps = [
         "[shutdown] step=1 stop_accept_and_block_new_sessions",
