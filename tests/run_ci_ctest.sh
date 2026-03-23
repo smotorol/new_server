@@ -61,3 +61,6 @@ python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
 python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
   --profile shutdown_timeout \
   --log "${repo_root}/tests/data/runtime_log_sample_shutdown_timeout_ok.log"
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --profile aoi_move_broadcast \
+  --log "${repo_root}/tests/data/runtime_log_sample_ok.log"

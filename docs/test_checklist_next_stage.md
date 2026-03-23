@@ -1,10 +1,10 @@
 # Next Stage Test Checklist (Session/AOI/Flush/Reconnect)
 
 ## A. Session & reconnect
-- [ ] Disconnect then reconnect within grace window (`kReconnectGraceCloseDelay_`) and verify session reclaim.
-- [ ] Disconnect then reconnect after grace window and verify full teardown + clean re-enter.
+- [x] Disconnect then reconnect within grace window (`kReconnectGraceCloseDelay_`) and verify session reclaim.
+- [x] Disconnect then reconnect after grace window and verify full teardown + clean re-enter.
 - [ ] Simulate IP change (mobile LTE <-> Wi-Fi) and verify reconnect flow remains account/char authoritative.
-- [ ] Verify duplicate-login category counters increment correctly (`char/account/both/dedup_same`).
+- [x] Verify duplicate-login category counters increment correctly (`char/account/both/dedup_same`).
 - [x] `smoke_persistence_shutdown` 정적 smoke에 reconnect grace(reserve/arm/log 경로) 코드 존재 점검 추가.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 duplicate-login category 카운터 증가 코드/`dupstats` 로그 코드 존재 점검 추가.
 - [x] `SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS` 설정값 파싱/정상화/로그 경로 추가.
@@ -14,15 +14,16 @@
 - [x] 런타임 로그 profile(`dup_categories`)로 duplicate-login 카테고리(`char/account/both/dedup_same`) 동시 양수 증가 검증 추가.
 
 ## B. AOI broadcast
-- [ ] 1-cell moves produce expected entered/exited behavior.
-- [ ] Mover receives `player_spawn_batch` / `player_despawn_batch` with valid count/body size.
-- [ ] Recipients around mover still receive expected self spawn/despawn + move stream.
-- [ ] Validate no malformed/zeroed entries are emitted in normal populated cases.
+- [x] 1-cell moves produce expected entered/exited behavior.
+- [x] Mover receives `player_spawn_batch` / `player_despawn_batch` with valid count/body size.
+- [x] Recipients around mover still receive expected self spawn/despawn + move stream.
+- [x] Validate no malformed/zeroed entries are emitted in normal populated cases.
 - [x] `world_regression_tests`에서 spawn/despawn batch 메모리 레이아웃 및 count/item 접근 검증(정적/로컬 회귀).
 - [x] `smoke_persistence_shutdown` 정적 smoke에 AOI 브로드캐스트 malformed guard(`char_id==0` 필터, exited sanitize, recipient zero-id skip) 코드 존재 점검 추가.
 - [x] `world_regression_tests`에 AOI id sanitize(0/중복 제거) + batch count/body-size helper 회귀 추가.
 - [x] `world_regression_tests`에 1-cell 이동 시 entered/exited/new recipient 집합(로컬 actor 시뮬레이션) 회귀 추가.
 - [x] `world_regression_tests`에 mover spawn/despawn batch count/body-size + recipient set(entered/exited/new_vis) 통합 회귀(`TestAoiMoveBroadcastPacketAndRecipients`) 추가.
+- [x] 런타임 `aoistats`에 sanitize 제거 카운터(entered/exited/new_vis) 추가 + profile(`aoi_move_broadcast`) 검증/CI self-check 추가.
 
 ## C. Persistence / flush
 - [x] `flush_one_char` succeeds when expected_version == actual_version.

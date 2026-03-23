@@ -269,6 +269,9 @@ namespace svr {
 			const auto cur_exited = svr::metrics::g_aoi_exited_entities.load(std::memory_order_relaxed);
 			const auto cur_fanout = svr::metrics::g_aoi_move_fanout.load(std::memory_order_relaxed);
 			const auto cur_events = svr::metrics::g_aoi_move_events.load(std::memory_order_relaxed);
+			const auto cur_sanitize_removed_entered = svr::metrics::g_aoi_sanitize_removed_entered.load(std::memory_order_relaxed);
+			const auto cur_sanitize_removed_exited = svr::metrics::g_aoi_sanitize_removed_exited.load(std::memory_order_relaxed);
+			const auto cur_sanitize_removed_new_vis = svr::metrics::g_aoi_sanitize_removed_new_vis.load(std::memory_order_relaxed);
 			const auto cur_unauth_rejects = svr::metrics::g_world_unauth_packet_rejects.load(std::memory_order_relaxed);
 				const auto cur_dup_char = svr::metrics::g_dup_login_char.load(std::memory_order_relaxed);
 				const auto cur_dup_account = svr::metrics::g_dup_login_account.load(std::memory_order_relaxed);
@@ -281,6 +284,9 @@ namespace svr {
 			const auto d_exited = cur_exited - last_aoi_exited_entities_;
 			const auto d_fanout = cur_fanout - last_aoi_move_fanout_;
 			const auto d_events = cur_events - last_aoi_move_events_;
+			const auto d_sanitize_removed_entered = cur_sanitize_removed_entered - last_aoi_sanitize_removed_entered_;
+			const auto d_sanitize_removed_exited = cur_sanitize_removed_exited - last_aoi_sanitize_removed_exited_;
+			const auto d_sanitize_removed_new_vis = cur_sanitize_removed_new_vis - last_aoi_sanitize_removed_new_vis_;
 			const auto d_unauth_rejects = cur_unauth_rejects - last_unauth_packet_rejects_;
 				const auto d_dup_char = cur_dup_char - last_dup_login_char_;
 				const auto d_dup_account = cur_dup_account - last_dup_login_account_;
@@ -293,6 +299,9 @@ namespace svr {
 			last_aoi_exited_entities_ = cur_exited;
 			last_aoi_move_fanout_ = cur_fanout;
 			last_aoi_move_events_ = cur_events;
+			last_aoi_sanitize_removed_entered_ = cur_sanitize_removed_entered;
+			last_aoi_sanitize_removed_exited_ = cur_sanitize_removed_exited;
+			last_aoi_sanitize_removed_new_vis_ = cur_sanitize_removed_new_vis;
 			last_unauth_packet_rejects_ = cur_unauth_rejects;
 				last_dup_login_char_ = cur_dup_char;
 				last_dup_login_account_ = cur_dup_account;
@@ -301,17 +310,20 @@ namespace svr {
 				last_flush_dirty_conflicts_total_ = cur_flush_dirty_conflicts;
 				last_flush_dirty_conflicted_batches_ = cur_flush_dirty_conflicted_batches;
 
-			if (d_events > 0 || d_entered > 0 || d_exited > 0) {
+			if (d_events > 0 || d_entered > 0 || d_exited > 0 || d_sanitize_removed_entered > 0 || d_sanitize_removed_exited > 0 || d_sanitize_removed_new_vis > 0) {
 				const double avg_fanout = (d_events == 0)
 					? 0.0
 					: static_cast<double>(d_fanout) / static_cast<double>(d_events);
 				spdlog::info(
-					"[aoistats] moves/s={} fanout/s={} avg_fanout={:.2f} entered/s={} exited/s={}",
+					"[aoistats] moves/s={} fanout/s={} avg_fanout={:.2f} entered/s={} exited/s={} sanitize_removed/s(entered={},exited={},new_vis={})",
 					d_events,
 					d_fanout,
 					avg_fanout,
 					d_entered,
-					d_exited);
+					d_exited,
+					d_sanitize_removed_entered,
+					d_sanitize_removed_exited,
+					d_sanitize_removed_new_vis);
 			}
 
 			const auto& world_line = lines_.host(svr::WorldLineId::World);

@@ -532,6 +532,9 @@ namespace svr {
 		std::uint64_t last_aoi_exited_entities_ = 0;
 		std::uint64_t last_aoi_move_fanout_ = 0;
 		std::uint64_t last_aoi_move_events_ = 0;
+		std::uint64_t last_aoi_sanitize_removed_entered_ = 0;
+		std::uint64_t last_aoi_sanitize_removed_exited_ = 0;
+		std::uint64_t last_aoi_sanitize_removed_new_vis_ = 0;
 		std::uint64_t last_unauth_packet_rejects_ = 0;
 		std::uint64_t last_dup_login_char_ = 0;
 		std::uint64_t last_dup_login_account_ = 0;

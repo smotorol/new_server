@@ -90,6 +90,10 @@ def run_common_checks(text: str) -> bool:
         text,
         r"\[FlushDirtyCharsConflict\] world=\d+ shard=\d+ char_id=\d+ expected_ver=\d+ actual_ver=\d+",
         "flush-dirty-conflict-shape")
+    ok &= require_regex(
+        text,
+        r"\[aoistats\] moves/s=\d+ fanout/s=\d+ avg_fanout=\d+\.\d+ entered/s=\d+ exited/s=\d+ sanitize_removed/s\(entered=\d+,exited=\d+,new_vis=\d+\)",
+        "aoistats-shape")
 
     shutdown_steps = [
         "[shutdown] step=1 stop_accept_and_block_new_sessions",
@@ -218,6 +222,39 @@ def run_shutdown_clean_drain_checks(text: str) -> bool:
     return ok
 
 
+def run_aoi_move_broadcast_checks(text: str) -> bool:
+    m = re.search(
+        r"\[aoistats\] moves/s=(\d+) fanout/s=(\d+) avg_fanout=\d+\.\d+ entered/s=(\d+) exited/s=(\d+) sanitize_removed/s\(entered=(\d+),exited=(\d+),new_vis=(\d+)\)",
+        text,
+        flags=re.MULTILINE)
+    if not m:
+        print("[FAIL] aoi-move-broadcast-shape: missing aoistats summary line")
+        return False
+
+    moves = int(m.group(1))
+    fanout = int(m.group(2))
+    entered = int(m.group(3))
+    exited = int(m.group(4))
+    removed_entered = int(m.group(5))
+    removed_exited = int(m.group(6))
+    removed_new_vis = int(m.group(7))
+
+    ok = True
+    if moves <= 0:
+        print(f"[FAIL] aoi-move-events-positive: expected moves>0, got {moves}")
+        ok = False
+    if fanout <= 0:
+        print(f"[FAIL] aoi-move-fanout-positive: expected fanout>0, got {fanout}")
+        ok = False
+    if entered <= 0 or exited <= 0:
+        print(f"[FAIL] aoi-entered-exited-positive: expected entered/exited > 0, got entered={entered} exited={exited}")
+        ok = False
+    if removed_entered != 0 or removed_exited != 0 or removed_new_vis != 0:
+        print(f"[FAIL] aoi-sanitize-removed-zero: expected removed counters to be 0 in normal populated case, got entered={removed_entered} exited={removed_exited} new_vis={removed_new_vis}")
+        ok = False
+    return ok
+
+
 def run_shutdown_timeout_checks(text: str) -> bool:
     ok = True
     ok &= require_regex(
@@ -258,6 +295,7 @@ def main() -> int:
             "flush_dirty_throughput",
             "shutdown_clean_drain",
             "shutdown_timeout",
+            "aoi_move_broadcast",
         ],
         default="full",
         help="Scenario profile to validate")
@@ -288,6 +326,8 @@ def main() -> int:
         ok &= run_shutdown_clean_drain_checks(text)
     elif args.profile == "shutdown_timeout":
         ok &= run_shutdown_timeout_checks(text)
+    elif args.profile == "aoi_move_broadcast":
+        ok &= run_aoi_move_broadcast_checks(text)
 
     if not ok:
         return 1

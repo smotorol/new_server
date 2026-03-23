@@ -96,6 +96,17 @@ def main() -> int:
             print(f"[FAIL] authstats-threshold: missing '{needle}'")
             ok = False
 
+    aoi_stats_needles = [
+        "g_aoi_sanitize_removed_entered",
+        "g_aoi_sanitize_removed_exited",
+        "g_aoi_sanitize_removed_new_vis",
+        "sanitize_removed/s(entered={},exited={},new_vis={})",
+    ]
+    for needle in aoi_stats_needles:
+        if needle not in core_text and needle not in handler_zone_text:
+            print(f"[FAIL] aoistats-sanitize: missing '{needle}'")
+            ok = False
+
     shutdown_drain_needles = [
         "std::size_t last_in_flight = CountInFlightDqs_();",
         "last_in_flight = CountInFlightDqs_();",
@@ -238,6 +249,9 @@ def main() -> int:
         "shutdown-clean-no-timeout-warning",
         "shutdown-timeout-flag",
         "shutdown-timeout-order",
+        "aoistats-shape",
+        "aoi-move-broadcast-shape",
+        "aoi-sanitize-removed-zero",
         "runtime_log_scenario_checks passed (profile=",
     ]
     for needle in runtime_log_check_needles:
@@ -254,6 +268,7 @@ def main() -> int:
         "[FlushOneCharConflict]",
         "[FlushDirtyChars] world=",
         "[FlushDirtyCharsConflict]",
+        "[aoistats] moves/s=",
         "[shutdown] step=7 io_stopped_cleanup_complete",
     ]
     for needle in runtime_log_sample_needles:
@@ -277,6 +292,7 @@ def main() -> int:
         "--profile flush_dirty_throughput",
         "--profile shutdown_clean_drain",
         "--profile shutdown_timeout",
+        "--profile aoi_move_broadcast",
     ]
     for needle in ci_gate_needles:
         if needle not in ci_gate_text:
@@ -321,8 +337,9 @@ def main() -> int:
     aoi_malformed_guard_needles = [
         "const auto sanitized_entered = svr::aoi::SanitizeEntityIds(entered);",
         "auto sanitized_exited = svr::aoi::SanitizeEntityIds(exited);",
+        "const auto sanitized_new_vis = svr::aoi::SanitizeEntityIds(diff.new_vis);",
         "svr::aoi::ClampBatchEntityCount(",
-        "for (auto rid : svr::aoi::SanitizeEntityIds(diff.new_vis)) {",
+        "for (auto rid : sanitized_new_vis) {",
     ]
     for needle in aoi_malformed_guard_needles:
         if needle not in handler_zone_text:

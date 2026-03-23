@@ -6,6 +6,7 @@
 [FlushOneCharConflict] world=7 char_id=99 expected_ver=42 actual_ver=41
 [FlushDirtyChars] world=7 shard=3 pulled=10 saved=7 failed=1 conflicts=2 batch=64 result=0
 [FlushDirtyCharsConflict] world=7 shard=3 char_id=99 expected_ver=42 actual_ver=41
+[aoistats] moves/s=3 fanout/s=8 avg_fanout=2.67 entered/s=2 exited/s=2 sanitize_removed/s(entered=0,exited=0,new_vis=0)
 [shutdown] step=1 stop_accept_and_block_new_sessions
 [shutdown] step=2 stop_periodic_flush_scheduler
 [shutdown] step=3 enqueue_final_dirty_flush

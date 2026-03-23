@@ -14,6 +14,9 @@ namespace svr::metrics {
 	inline std::atomic<std::uint64_t> g_aoi_exited_entities{ 0 };    // AOI exited entities per move aggregation
 	inline std::atomic<std::uint64_t> g_aoi_move_fanout{ 0 };        // number of move recipients
 	inline std::atomic<std::uint64_t> g_aoi_move_events{ 0 };        // number of move events processed
+	inline std::atomic<std::uint64_t> g_aoi_sanitize_removed_entered{ 0 }; // removed ids during entered sanitize
+	inline std::atomic<std::uint64_t> g_aoi_sanitize_removed_exited{ 0 }; // removed ids during exited sanitize
+	inline std::atomic<std::uint64_t> g_aoi_sanitize_removed_new_vis{ 0 }; // removed ids during new_vis sanitize
 	inline std::atomic<std::uint64_t> g_world_unauth_packet_rejects{ 0 }; // packet rejected because session is not authenticated
 	inline std::atomic<std::uint32_t> g_world_unauth_last_sid{ 0 }; // sampled sid for unauth packet
 	inline std::atomic<std::uint64_t> g_dup_login_char{ 0 };

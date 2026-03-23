@@ -60,6 +60,11 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			std::memory_order_relaxed);
 
 		const auto sanitized_entered = svr::aoi::SanitizeEntityIds(entered);
+		if (entered.size() > sanitized_entered.size()) {
+			svr::metrics::g_aoi_sanitize_removed_entered.fetch_add(
+				static_cast<std::uint64_t>(entered.size() - sanitized_entered.size()),
+				std::memory_order_relaxed);
+		}
 		if (!sanitized_entered.empty()) {
 			std::vector<proto::S2C_player_spawn_item> spawn_items;
 			spawn_items.reserve(sanitized_entered.size());
@@ -91,6 +96,11 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 		}
 
 		auto sanitized_exited = svr::aoi::SanitizeEntityIds(exited);
+		if (exited.size() > sanitized_exited.size()) {
+			svr::metrics::g_aoi_sanitize_removed_exited.fetch_add(
+				static_cast<std::uint64_t>(exited.size() - sanitized_exited.size()),
+				std::memory_order_relaxed);
+		}
 
 		if (!sanitized_exited.empty()) {
 			const auto count = svr::aoi::ClampBatchEntityCount(sanitized_exited.size());
@@ -137,8 +147,14 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 		mmsg.y = ny;
 		auto h_move = proto::make_header((std::uint16_t)proto::S2CMsg::player_move, (std::uint16_t)sizeof(mmsg));
 		auto body_move = svr::ZoneActor::MakeBody_(mmsg);
+		const auto sanitized_new_vis = svr::aoi::SanitizeEntityIds(diff.new_vis);
+		if (diff.new_vis.size() > sanitized_new_vis.size()) {
+			svr::metrics::g_aoi_sanitize_removed_new_vis.fetch_add(
+				static_cast<std::uint64_t>(diff.new_vis.size() - sanitized_new_vis.size()),
+				std::memory_order_relaxed);
+		}
 
-		for (auto rid : svr::aoi::SanitizeEntityIds(diff.new_vis)) {
+		for (auto rid : sanitized_new_vis) {
 			auto it = z.players.find(rid);
 			if (it == z.players.end()) continue;
 			if (it->second.sid == 0 || it->second.serial == 0) continue;
