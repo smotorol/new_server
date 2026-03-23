@@ -17,6 +17,7 @@
 - [x] `world_regression_tests`에서 spawn/despawn batch 메모리 레이아웃 및 count/item 접근 검증(정적/로컬 회귀).
 - [x] `smoke_persistence_shutdown` 정적 smoke에 AOI 브로드캐스트 malformed guard(`char_id==0` 필터, exited sanitize, recipient zero-id skip) 코드 존재 점검 추가.
 - [x] `world_regression_tests`에 AOI id sanitize(0/중복 제거) + batch count/body-size helper 회귀 추가.
+- [x] `world_regression_tests`에 1-cell 이동 시 entered/exited/new recipient 집합(로컬 actor 시뮬레이션) 회귀 추가.
 
 ## C. Persistence / flush
 - [ ] `flush_one_char` succeeds when expected_version == actual_version.

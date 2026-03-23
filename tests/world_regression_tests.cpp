@@ -205,6 +205,46 @@ namespace {
 		return true;
 	}
 
+	bool TestAoiMoveEnteredExitedRecipients()
+	{
+		svr::ZoneActor z;
+		if (!z.InitSectorSystem({ 200, 200 }, 10, 1)) {
+			return false;
+		}
+
+		// mover at (5,5) -> move to (6,5)
+		z.JoinOrUpdate(1, { 55, 55 }, 10, 1);
+		// old-only watcher (x=4 column)
+		z.JoinOrUpdate(100, { 45, 55 }, 20, 1);
+		// always-visible watcher (center area)
+		z.JoinOrUpdate(300, { 55, 65 }, 30, 1);
+		// new-only watcher (x=7 column)
+		z.JoinOrUpdate(200, { 75, 55 }, 40, 1);
+
+		const auto diff = z.Move(1, { 65, 55 }, 10, 2);
+
+		const auto has_id = [](const std::vector<std::uint64_t>& v, std::uint64_t id) {
+			return std::find(v.begin(), v.end(), id) != v.end();
+		};
+
+		if (!has_id(diff.entered_vis, 200)) {
+			return false;
+		}
+		if (!has_id(diff.exited_vis, 100)) {
+			return false;
+		}
+		if (!has_id(diff.new_vis, 300) || !has_id(diff.new_vis, 200)) {
+			return false;
+		}
+		if (has_id(diff.new_vis, 1) || has_id(diff.entered_vis, 1) || has_id(diff.exited_vis, 1)) {
+			return false;
+		}
+		if (has_id(diff.new_vis, 0) || has_id(diff.entered_vis, 0) || has_id(diff.exited_vis, 0)) {
+			return false;
+		}
+		return true;
+	}
+
 } // namespace
 
 int main()
@@ -217,8 +257,9 @@ int main()
 	const bool ok_dirty = TestFlushDirtyCharsConflictFields();
 	const bool ok_aoi_sanitize = TestAoiSanitizeEntityIds();
 	const bool ok_aoi_batch = TestAoiBatchHelpers();
+	const bool ok_aoi_move_recipients = TestAoiMoveEnteredExitedRecipients();
 
-	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty || !ok_aoi_sanitize || !ok_aoi_batch) {
+	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty || !ok_aoi_sanitize || !ok_aoi_batch || !ok_aoi_move_recipients) {
 		std::cerr
 			<< "world_regression_tests failed:"
 			<< " session=" << ok_session
@@ -229,6 +270,7 @@ int main()
 			<< " dirty=" << ok_dirty
 			<< " aoi_sanitize=" << ok_aoi_sanitize
 			<< " aoi_batch=" << ok_aoi_batch
+			<< " aoi_move_recipients=" << ok_aoi_move_recipients
 			<< "\n";
 		return 1;
 	}
