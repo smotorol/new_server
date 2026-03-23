@@ -25,10 +25,10 @@
 - [x] `world_regression_tests`에 mover spawn/despawn batch count/body-size + recipient set(entered/exited/new_vis) 통합 회귀(`TestAoiMoveBroadcastPacketAndRecipients`) 추가.
 
 ## C. Persistence / flush
-- [ ] `flush_one_char` succeeds when expected_version == actual_version.
-- [ ] `flush_one_char` returns `conflict` when expected_version != actual_version.
-- [ ] conflict logs contain world/char/expected/actual version fields.
-- [ ] `flush_dirty_chars` version conflict 경로(충돌 카운트/dirty 재마킹) 및 throughput 회귀 확인.
+- [x] `flush_one_char` succeeds when expected_version == actual_version.
+- [x] `flush_one_char` returns `conflict` when expected_version != actual_version.
+- [x] conflict logs contain world/char/expected/actual version fields.
+- [x] `flush_dirty_chars` version conflict 경로(충돌 카운트/dirty 재마킹) 및 throughput 회귀 확인.
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 `flush_dirty_chars` conflict-guard 코드 경로 존재를 자동 점검.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 `FlushOneCharConflict`/`FlushDirtyCharsConflict` 로그 포맷(핵심 필드) 존재 점검 추가.
 - [x] `world_regression_tests`에서 `FlushDirtyCharsResult`의 `shard_id/conflicts` 결과 필드 shape/기본 합계 일관성 점검.
@@ -36,9 +36,9 @@
 - [x] 런타임 로그 profile(`flush_dirty_throughput`)로 `pulled == saved + failed + conflicts`, `batch>0`, conflict shape 회귀 검증 추가.
 
 ## D. Shutdown
-- [ ] `OnBeforeIoStop` emits ordered shutdown logs.
-- [ ] DQS in-flight count drains to zero before DB worker stop (or timeout flag appears).
-- [ ] Timeout path leaves deterministic logs and no deadlock.
+- [x] `OnBeforeIoStop` emits ordered shutdown logs.
+- [x] DQS in-flight count drains to zero before DB worker stop (or timeout flag appears).
+- [x] Timeout path leaves deterministic logs and no deadlock.
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 shutdown step 로그 marker 순서를 정적 smoke 검증.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 `wait_dqs_drain_end in_flight/timed_out` 로그 경로 존재 점검 추가.
 - [x] timeout 분기 경고 로그(`[shutdown] dqs drain timed out ...`) 코드 경로 정적 smoke 점검 추가.
@@ -46,8 +46,8 @@
 - [x] 런타임 로그 profile(`shutdown_clean_drain`)로 clean drain(`in_flight=0 timed_out=0`) 및 timeout warning 미발생 검증 추가.
 
 ## E. Auth hardening
-- [ ] Unauthenticated gameplay packets are rejected and counted.
-- [ ] `authstats` warning triggers when reject rate exceeds threshold.
+- [x] Unauthenticated gameplay packets are rejected and counted.
+- [x] `authstats` warning triggers when reject rate exceeds threshold.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 unauth reject 계수 증가 코드/`authstats` 임계치 로그 코드 존재 점검 추가.
 - [x] 런타임 로그 기반 `authstats` shape 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
 - [x] 런타임 로그 profile(`auth_threshold_exceeded`)로 `unauth_packet_rejects/s > threshold` 조건 검증 추가.
