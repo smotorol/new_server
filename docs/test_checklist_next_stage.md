@@ -46,6 +46,7 @@
 
 ## F. CI gate
 - [x] `tests/run_ci_ctest.sh`로 기본 PR 게이트(`world_regression_tests`, `smoke_persistence_shutdown`) 묶음 실행.
+- [x] `tests/run_ci_ctest.sh`에 `runtime_log_scenario_checks.py --log tests/data/runtime_log_sample_ok.log` self-check 추가.
 
 ## G. Config validation policy
 - [x] INI 파싱/정규화/보정/확정값 로깅 규약 문서(`docs/config_validation_policy.md`) 추가.

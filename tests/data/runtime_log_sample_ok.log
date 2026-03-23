@@ -1,0 +1,12 @@
+[session_close] reconnect grace close armed. char_id=1001 sid=12 serial=99 delay_ms=5000
+[dupstats] char/s=1 account/s=2 both/s=0 dedup_same/s=1
+[authstats] unauth_packet_rejects/s=11 threshold=10 sampled_sid=500
+[shutdown] step=1 stop_accept_and_block_new_sessions
+[shutdown] step=2 stop_periodic_flush_scheduler
+[shutdown] step=3 enqueue_final_dirty_flush
+[shutdown] step=3.1 wait_dqs_drain_begin
+[shutdown] step=3.2 wait_dqs_drain_end
+[shutdown] step=4 cancel_delayed_close_timers
+[shutdown] step=5 stop_db_workers
+[shutdown] step=6 stop_actor_workers
+[shutdown] step=7 io_stopped_cleanup_complete

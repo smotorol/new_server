@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="$(cd -- "${script_dir}/.." && pwd)"
+
 if ! command -v ctest >/dev/null 2>&1; then
   echo "ctest not found"
   exit 1
@@ -27,3 +30,7 @@ else
   # 기본 PR 게이트: 빠른 회귀 + 정적 스모크
   ctest --output-on-failure -R "^(world_regression_tests|smoke_persistence_shutdown)$"
 fi
+
+# 런타임 로그 시나리오 체커 self-check (샘플 로그)
+python3 "${repo_root}/tests/runtime_log_scenario_checks.py" \
+  --log "${repo_root}/tests/data/runtime_log_sample_ok.log"

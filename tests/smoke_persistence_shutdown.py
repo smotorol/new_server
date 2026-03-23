@@ -31,6 +31,8 @@ def main() -> int:
     login_runtime_cpp = repo_root / "src/services/login/runtime/login_line_runtime.cpp"
     world_regression_cpp = repo_root / "tests/world_regression_tests.cpp"
     runtime_log_check_py = repo_root / "tests/runtime_log_scenario_checks.py"
+    ci_gate_sh = repo_root / "tests/run_ci_ctest.sh"
+    runtime_log_sample = repo_root / "tests/data/runtime_log_sample_ok.log"
 
     core_text = core_cpp.read_text(encoding="utf-8")
     runtime_network_text = runtime_network_cpp.read_text(encoding="utf-8")
@@ -45,6 +47,8 @@ def main() -> int:
     login_runtime_text = login_runtime_cpp.read_text(encoding="utf-8")
     world_regression_text = world_regression_cpp.read_text(encoding="utf-8")
     runtime_log_check_text = runtime_log_check_py.read_text(encoding="utf-8")
+    ci_gate_text = ci_gate_sh.read_text(encoding="utf-8")
+    runtime_log_sample_text = runtime_log_sample.read_text(encoding="utf-8")
 
     ok = True
 
@@ -222,6 +226,26 @@ def main() -> int:
     for needle in runtime_log_check_needles:
         if needle not in runtime_log_check_text:
             print(f"[FAIL] runtime-log-checker: missing '{needle}'")
+            ok = False
+
+    runtime_log_sample_needles = [
+        "[session_close] reconnect grace close armed.",
+        "[dupstats] char/s=",
+        "[authstats] unauth_packet_rejects/s=",
+        "[shutdown] step=7 io_stopped_cleanup_complete",
+    ]
+    for needle in runtime_log_sample_needles:
+        if needle not in runtime_log_sample_text:
+            print(f"[FAIL] runtime-log-sample: missing '{needle}'")
+            ok = False
+
+    ci_gate_needles = [
+        "runtime_log_scenario_checks.py",
+        "runtime_log_sample_ok.log",
+    ]
+    for needle in ci_gate_needles:
+        if needle not in ci_gate_text:
+            print(f"[FAIL] ci-gate-runtime-log-check: missing '{needle}'")
             ok = False
 
     dup_needles_session = [
