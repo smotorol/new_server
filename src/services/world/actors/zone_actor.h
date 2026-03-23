@@ -60,6 +60,8 @@ class ZoneActor final : public net::IActor {
 				max_cx = (map_size.x - 1) / unit;
 				max_cy = (map_size.y - 1) / unit;
 
+				BuildEdgeCaches_();
+
 				inited = true;
 				return true;
 			}
@@ -543,24 +545,8 @@ class ZoneActor final : public net::IActor {
 		}
 
 		std::vector<std::uint64_t> GatherNeighborsVec(std::int32_t cx, std::int32_t cy) {
-			std::vector<std::uint64_t> out;
-			std::size_t approx = 0;
-			for (int dy = -1; dy <= 1; ++dy) {
-				for (int dx = -1; dx <= 1; ++dx) {
-					auto it = cells.find(CellKey(cx + dx, cy + dy));
-					if (it == cells.end()) continue;
-					approx += it->second.size();
-				}
-			}
-			out.reserve(approx);
-			for (int dy = -1; dy <= 1; ++dy) {
-				for (int dx = -1; dx <= 1; ++dx) {
-					auto it = cells.find(CellKey(cx + dx, cy + dy));
-					if (it == cells.end()) continue;
-					for (auto id : it->second) out.push_back(id);
-				}
-			}
-			return out;
+			const auto cell_keys = sector_container_.BroadCells(cx, cy);
+			return GatherNeighborsFromCells(cell_keys);
 		}
 
 		std::vector<std::uint64_t> GatherNeighborsFromCells(

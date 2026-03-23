@@ -8,6 +8,7 @@
 #include "db/core/dqs_types.h"
 #include "proto/common/proto_base.h"
 #include "server_common/session/session_key.h"
+#include "services/world/actors/zone_actor.h"
 
 namespace {
 
@@ -76,6 +77,49 @@ namespace {
 		return true;
 	}
 
+
+	bool TestAoiOneCellEnteredLeft()
+	{
+		svr::ZoneActor z;
+		if (!z.InitSectorSystem({ 100, 100 }, 10, 1)) {
+			return false;
+		}
+
+		const auto entered = z.CalcEnteredCells(5, 5, 6, 5);
+		const auto left = z.CalcLeftCells(5, 5, 6, 5);
+
+		if (entered.size() != 3 || left.size() != 3) {
+			return false;
+		}
+
+		std::vector<std::int64_t> expected_entered{
+			svr::ZoneActor::SectorContainer::CellKey(7, 4),
+			svr::ZoneActor::SectorContainer::CellKey(7, 5),
+			svr::ZoneActor::SectorContainer::CellKey(7, 6),
+		};
+		std::vector<std::int64_t> expected_left{
+			svr::ZoneActor::SectorContainer::CellKey(4, 4),
+			svr::ZoneActor::SectorContainer::CellKey(4, 5),
+			svr::ZoneActor::SectorContainer::CellKey(4, 6),
+		};
+
+		auto sortv = [](std::vector<std::int64_t>& v) { std::sort(v.begin(), v.end()); };
+		auto entered_sorted = entered;
+		auto left_sorted = left;
+		sortv(entered_sorted);
+		sortv(left_sorted);
+		sortv(expected_entered);
+		sortv(expected_left);
+
+		if (entered_sorted != expected_entered) {
+			return false;
+		}
+		if (left_sorted != expected_left) {
+			return false;
+		}
+		return true;
+	}
+
 	bool TestFlushOneCharVersionFields()
 	{
 		svr::dqs_payload::FlushOneChar payload{};
@@ -135,15 +179,17 @@ int main()
 	const bool ok_session = TestSessionKeyPackUnpack();
 	const bool ok_batch = TestSpawnBatchLayout();
 	const bool ok_despawn_batch = TestDespawnBatchLayout();
+	const bool ok_aoi_one_cell = TestAoiOneCellEnteredLeft();
 	const bool ok_flush = TestFlushOneCharVersionFields();
 	const bool ok_dirty = TestFlushDirtyCharsConflictFields();
 
-	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_flush || !ok_dirty) {
+	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty) {
 		std::cerr
 			<< "world_regression_tests failed:"
 			<< " session=" << ok_session
 			<< " batch=" << ok_batch
 			<< " despawn_batch=" << ok_despawn_batch
+			<< " aoi_one_cell=" << ok_aoi_one_cell
 			<< " flush=" << ok_flush
 			<< " dirty=" << ok_dirty
 			<< "\n";

@@ -130,6 +130,32 @@ def main() -> int:
             print(f"[FAIL] dupstats-log: missing '{needle}'")
             ok = False
 
+
+    aoi_runtime_needles = [
+        "BuildEdgeCaches_();",
+        "const auto entered_cells = CalcEnteredCells(old_cx, old_cy, pi.cx, pi.cy);",
+        "const auto left_cells = CalcLeftCells(old_cx, old_cy, pi.cx, pi.cy);",
+        "const auto cell_keys = sector_container_.BroadCells(cx, cy);",
+        "return GatherNeighborsFromCells(cell_keys);",
+    ]
+    for needle in aoi_runtime_needles:
+        if needle not in handler_text and needle not in runtime_h_text and needle not in session_text and needle not in persist_text:
+            # fallback search in zone actor header text
+            zone_actor_text = (repo_root / "src/services/world/actors/zone_actor.h").read_text(encoding="utf-8")
+            if needle not in zone_actor_text:
+                print(f"[FAIL] aoi-runtime: missing '{needle}'")
+                ok = False
+
+    flush_one_needles = [
+        "slot.result = svr::dqs::ResultCode::success;",
+        "slot.result = svr::dqs::ResultCode::conflict;",
+        "r.result = slot.result;",
+    ]
+    for needle in flush_one_needles:
+        if needle not in persist_text:
+            print(f"[FAIL] flush-one-runtime: missing '{needle}'")
+            ok = False
+
     if not ok:
         return 1
 
