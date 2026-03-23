@@ -51,6 +51,17 @@ namespace dc {
 			std::uint64_t char_id = 0;
 		};
 
+		struct SessionRef
+		{
+			std::uint32_t sid = 0;
+			std::uint32_t serial = 0;
+
+			[[nodiscard]] bool valid() const noexcept
+			{
+				return sid != 0 && serial != 0;
+			}
+		};
+
 		struct PendingLoginRequest
 		{
 			std::uint64_t request_id = 0;
@@ -142,7 +153,7 @@ namespace dc {
 			std::string_view login_session,
 			std::string_view world_token);
 		void AddDuplicateCandidateBySid_NoLock_(
-			std::uint32_t sid,
+			const SessionRef& ref,
 			std::uint32_t new_sid,
 			std::uint32_t new_serial,
 			std::vector<DuplicateSessionRef>& out);
@@ -163,16 +174,10 @@ namespace dc {
 		std::mutex login_sessions_mtx_;
 		std::mutex pending_login_mtx_;
 		std::unordered_map<std::uint32_t, LoginSessionAuthState> login_sessions_;
-		std::unordered_map<std::uint64_t, std::uint32_t> account_session_index_;
-		std::unordered_map<std::uint64_t, std::uint32_t> char_session_index_;
-		std::unordered_map<std::string, std::uint32_t> login_session_index_;
-		std::unordered_map<std::string, std::uint32_t> world_token_index_;
-
-		// login client 소켓이 먼저 끊겨도 world_enter_success_notify가 늦게 도착할 수 있다.
-		// 이 경우 login_session/world_token 기준으로 후속 notify를 소비할 수 있게
-		// detached 상태를 잠시 보관한다.
-		std::unordered_map<std::string, LoginSessionAuthState> detached_world_enter_by_token_;
-		std::unordered_map<std::string, std::string> detached_world_enter_token_by_login_session_;
+		std::unordered_map<std::uint64_t, SessionRef> account_session_index_;
+		std::unordered_map<std::uint64_t, SessionRef> char_session_index_;
+		std::unordered_map<std::string, SessionRef> login_session_index_;
+		std::unordered_map<std::string, SessionRef> world_token_index_;
 		std::unordered_map<std::uint64_t, PendingLoginRequest> pending_login_requests_;
 
 		HostedLineEntry client_line_{};

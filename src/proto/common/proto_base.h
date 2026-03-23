@@ -40,6 +40,8 @@ namespace proto {
 		player_despawn = 41,
 		player_move = 42,
 		player_move_batch = 43,
+		player_spawn_batch = 44,
+		player_despawn_batch = 45,
 
 
 		actor_bound = 100,
@@ -131,6 +133,30 @@ namespace proto {
 	struct S2C_player_despawn {
 		u64 char_id;
 		S2C_player_despawn() : char_id(0) {}
+	};
+
+	struct S2C_player_spawn_item {
+		u64 char_id;
+		i32 x;
+		i32 y;
+		S2C_player_spawn_item() : char_id(0), x(0), y(0) {}
+	};
+
+	struct S2C_player_spawn_batch {
+		u16 count;
+		S2C_player_spawn_item items[1];
+		S2C_player_spawn_batch() : count(0) {}
+	};
+
+	struct S2C_player_despawn_item {
+		u64 char_id;
+		S2C_player_despawn_item() : char_id(0) {}
+	};
+
+	struct S2C_player_despawn_batch {
+		u16 count;
+		S2C_player_despawn_item items[1];
+		S2C_player_despawn_batch() : count(0) {}
 	};
 
 	struct S2C_player_move {
@@ -248,7 +274,11 @@ namespace proto {
 	static_assert(sizeof(C2S_attack_player) == 8);
 	static_assert(sizeof(C2S_move) == 8);
 	static_assert(sizeof(S2C_player_spawn) == 16);
+	static_assert(sizeof(S2C_player_spawn_item) == 16);
+	static_assert(sizeof(S2C_player_spawn_batch) == 18);
 	static_assert(sizeof(S2C_player_despawn) == 8);
+	static_assert(sizeof(S2C_player_despawn_item) == 8);
+	static_assert(sizeof(S2C_player_despawn_batch) == 10);
 	static_assert(sizeof(S2C_player_move) == 16);
 	static_assert(sizeof(S2C_attack_result) == 40);
 	static_assert(sizeof(C2S_actor_seq_test) == 8);

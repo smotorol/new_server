@@ -12,7 +12,10 @@ bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t
 	auto* req = proto::as<proto::C2S_attack_monster>(body, body_len);
 	if (!req) return false;
 
-	const std::uint64_t attacker_id = GetActorIdBySession(sid);
+	std::uint64_t attacker_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("attack_monster", sid, attacker_id)) {
+		return true;
+	}
 	auto& attacker = runtime().GetOrCreatePlayerActor(attacker_id);
 	const std::uint32_t attacker_atk = attacker.combat.atk;
 	const std::uint32_t zone_id = attacker.zone_id;
@@ -89,8 +92,10 @@ bool WorldHandler::HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t 
 	auto* req = proto::as<proto::C2S_attack_player>(body, body_len);
 	if (!req) return false;
 
-	const std::uint64_t attacker_id = runtime().FindCharIdBySession(sid);
-	if (attacker_id == 0) return true;
+	std::uint64_t attacker_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("attack_player", sid, attacker_id)) {
+		return true;
+	}
 
 	auto& target = runtime().GetOrCreatePlayerActor(req->target_char_id);
 	const std::uint32_t target_sid = target.sid;

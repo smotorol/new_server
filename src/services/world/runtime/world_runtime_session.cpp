@@ -1,5 +1,6 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "services/world/common/string_utils.h"
+#include "services/world/metrics/world_metrics.h"
 #include "server_common/session/session_key.h"
 
 namespace svr {
@@ -485,9 +486,36 @@ namespace svr {
 			"HandleWorldSessionClosed aborted pending enter-world flow before close processing.");
 
 		MarkEnterWorldSessionClosing(sid, serial);
+
+		std::uint64_t close_char_id = 0;
+		if (const auto current = FindAuthenticatedWorldSessionBySid_(sid); current.has_value()) {
+			close_char_id = current->char_id;
+		}
+
 		boost::asio::dispatch(
 			duplicate_session_strand_,
-			[this, sid, serial]() {
+			[this, sid, serial, close_char_id]() {
+			if (TryReserveDelayedWorldClose_(sid, serial)) {
+				if (ArmReservedDelayedWorldClose_(
+					sid,
+					serial,
+					std::chrono::milliseconds(reconnect_grace_close_delay_ms_),
+					0,
+					close_char_id))
+				{
+					spdlog::info(
+						"[session_close] reconnect grace close armed. char_id={} sid={} serial={} delay_ms={}",
+						close_char_id,
+						sid,
+						serial,
+						reconnect_grace_close_delay_ms_);
+					return;
+				}
+
+				DelayedCloseEntry released_entry{};
+				ReleaseDelayedWorldCloseReservation_(sid, serial, &released_entry);
+			}
+
 			ProcessWorldSessionClosedOnIo_(sid, serial);
 		});
 	}
@@ -858,16 +886,18 @@ namespace svr {
 				}
 
 				if (victim.char_id != 0) {
-					auto char_it = authed_sid_by_char_id_.find(victim.char_id);
-					if (char_it != authed_sid_by_char_id_.end() && char_it->second == victim_sid) {
-						authed_sid_by_char_id_.erase(char_it);
+					auto char_it = authed_session_key_by_char_id_.find(victim.char_id);
+					if (char_it != authed_session_key_by_char_id_.end() &&
+						dc::MatchesPackedSessionKey(char_it->second, victim.sid, victim.serial)) {
+						authed_session_key_by_char_id_.erase(char_it);
 					}
 				}
 
 				if (victim.account_id != 0) {
-					auto account_it = authed_sid_by_account_id_.find(victim.account_id);
-					if (account_it != authed_sid_by_account_id_.end() && account_it->second == victim_sid) {
-						authed_sid_by_account_id_.erase(account_it);
+					auto account_it = authed_session_key_by_account_id_.find(victim.account_id);
+					if (account_it != authed_session_key_by_account_id_.end() &&
+						dc::MatchesPackedSessionKey(account_it->second, victim.sid, victim.serial)) {
+						authed_session_key_by_account_id_.erase(account_it);
 					}
 				}
 
@@ -891,19 +921,25 @@ namespace svr {
 			}
 
 			if (result.kind != BindAuthedWorldSessionResultKind::AlreadyBoundSameSession) {
-				auto char_sid_it = authed_sid_by_char_id_.find(char_id);
-				if (char_sid_it != authed_sid_by_char_id_.end()) {
-					auto old_it = authed_sessions_by_sid_.find(char_sid_it->second);
+				auto char_sid_it = authed_session_key_by_char_id_.find(char_id);
+				if (char_sid_it != authed_session_key_by_char_id_.end()) {
+					auto old_it = authed_sessions_by_sid_.find(dc::UnpackSessionSid(char_sid_it->second));
 					if (old_it != authed_sessions_by_sid_.end()) {
-						result.old_char_session = old_it->second;
+						const auto expected_serial = dc::UnpackSessionSerial(char_sid_it->second);
+						if (old_it->second.serial == expected_serial) {
+							result.old_char_session = old_it->second;
+						}
 					}
 				}
 
-				auto account_sid_it = authed_sid_by_account_id_.find(account_id);
-				if (account_sid_it != authed_sid_by_account_id_.end()) {
-					auto old_it = authed_sessions_by_sid_.find(account_sid_it->second);
+				auto account_sid_it = authed_session_key_by_account_id_.find(account_id);
+				if (account_sid_it != authed_session_key_by_account_id_.end()) {
+					auto old_it = authed_sessions_by_sid_.find(dc::UnpackSessionSid(account_sid_it->second));
 					if (old_it != authed_sessions_by_sid_.end()) {
-						result.old_account_session = old_it->second;
+						const auto expected_serial = dc::UnpackSessionSerial(account_sid_it->second);
+						if (old_it->second.serial == expected_serial) {
+							result.old_account_session = old_it->second;
+						}
 					}
 				}
 
@@ -918,8 +954,8 @@ namespace svr {
 				}
 
 				authed_sessions_by_sid_[sid] = result.current_session;
-				authed_sid_by_char_id_[char_id] = sid;
-				authed_sid_by_account_id_[account_id] = sid;
+				authed_session_key_by_char_id_[char_id] = dc::PackSessionKey(sid, serial);
+				authed_session_key_by_account_id_[account_id] = dc::PackSessionKey(sid, serial);
 
 				if (result.has_old_char_session() && result.has_old_account_session()) {
 					result.kind = BindAuthedWorldSessionResultKind::ReplacedBoth;
@@ -1049,16 +1085,18 @@ namespace svr {
 			}
 
 			if (result.session.char_id != 0) {
-				auto char_it = authed_sid_by_char_id_.find(result.session.char_id);
-				if (char_it != authed_sid_by_char_id_.end() && char_it->second == sid) {
-					authed_sid_by_char_id_.erase(char_it);
+				auto char_it = authed_session_key_by_char_id_.find(result.session.char_id);
+				if (char_it != authed_session_key_by_char_id_.end() &&
+					dc::MatchesPackedSessionKey(char_it->second, sid, serial)) {
+					authed_session_key_by_char_id_.erase(char_it);
 				}
 			}
 
 			if (result.session.account_id != 0) {
-				auto account_it = authed_sid_by_account_id_.find(result.session.account_id);
-				if (account_it != authed_sid_by_account_id_.end() && account_it->second == sid) {
-					authed_sid_by_account_id_.erase(account_it);
+				auto account_it = authed_session_key_by_account_id_.find(result.session.account_id);
+				if (account_it != authed_session_key_by_account_id_.end() &&
+					dc::MatchesPackedSessionKey(account_it->second, sid, serial)) {
+					authed_session_key_by_account_id_.erase(account_it);
 				}
 			}
 
@@ -1117,13 +1155,16 @@ namespace svr {
 
 		std::lock_guard lk(world_session_mtx_);
 
-		auto sid_it = authed_sid_by_char_id_.find(char_id);
-		if (sid_it == authed_sid_by_char_id_.end()) {
+		auto sid_it = authed_session_key_by_char_id_.find(char_id);
+		if (sid_it == authed_session_key_by_char_id_.end()) {
 			return std::nullopt;
 		}
 
-		auto session_it = authed_sessions_by_sid_.find(sid_it->second);
+		auto session_it = authed_sessions_by_sid_.find(dc::UnpackSessionSid(sid_it->second));
 		if (session_it == authed_sessions_by_sid_.end()) {
+			return std::nullopt;
+		}
+		if (session_it->second.serial != dc::UnpackSessionSerial(sid_it->second)) {
 			return std::nullopt;
 		}
 
@@ -1230,9 +1271,25 @@ namespace svr {
 			return;
 		}
 
-		// TODO:
-		// stat_category 기준 운영 카운터/메트릭 집계를 여기에 연결한다.
-		// 예: duplicate_char / duplicate_account / duplicate_both / deduplicated_same_session
+		switch (stat_category) {
+		case SessionKickStatCategory::DuplicateChar:
+			svr::metrics::g_dup_login_char.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case SessionKickStatCategory::DuplicateAccount:
+			svr::metrics::g_dup_login_account.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case SessionKickStatCategory::DuplicateBoth:
+			svr::metrics::g_dup_login_both.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case SessionKickStatCategory::DuplicateDeduplicatedSameSession:
+			svr::metrics::g_dup_login_dedup_same_session.fetch_add(1, std::memory_order_relaxed);
+			break;
+		case SessionKickStatCategory::None:
+		case SessionKickStatCategory::Other:
+		default:
+			break;
+		}
+
 		DuplicateLoginLogContext ctx{};
 		ctx.trace_id = duplicate_login_trace_seq_.fetch_add(1, std::memory_order_relaxed);
 		ctx.account_id = victim.account_id != 0 ? victim.account_id : fallback_account_id;

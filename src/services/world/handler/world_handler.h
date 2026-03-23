@@ -42,6 +42,11 @@ protected:
 	const svr::IWorldRuntime& runtime() const noexcept { return runtime_; }
 
 private:
+	bool ResolveAuthenticatedCharIdOrReject_(
+		const char* op_name,
+		std::uint32_t sid,
+		std::uint64_t& out_char_id) const;
+
 	bool HandleEnterWorldWithToken(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 
 	bool HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);

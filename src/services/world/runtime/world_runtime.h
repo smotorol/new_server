@@ -411,6 +411,10 @@ namespace svr {
 		void ScheduleFlush_();
 		void EnqueueFlushDirty_(bool immediate);
 		void EnqueueFlushDirtyWorld_(std::uint32_t world_code, std::uint32_t batch);
+		std::size_t CountInFlightDqs_() const;
+		void UpdateExpectedCharVersion_(std::uint32_t world_code, std::uint64_t char_id, std::uint32_t version);
+		std::uint32_t TryGetExpectedCharVersion_(std::uint32_t world_code, std::uint64_t char_id) const;
+		void EraseExpectedCharVersion_(std::uint32_t world_code, std::uint64_t char_id);
 
 		bool InitDQS();
 		void OnDQSRunOne(std::uint32_t slot_index);
@@ -486,8 +490,8 @@ namespace svr {
 
 		// 신규 인증 세션 바인딩(account_id + char_id + sid + serial)
 		std::unordered_map<std::uint32_t, WorldAuthedSession> authed_sessions_by_sid_;
-		std::unordered_map<std::uint64_t, std::uint32_t> authed_sid_by_char_id_;
-		std::unordered_map<std::uint64_t, std::uint32_t> authed_sid_by_account_id_;
+		std::unordered_map<std::uint64_t, std::uint64_t> authed_session_key_by_char_id_;
+		std::unordered_map<std::uint64_t, std::uint64_t> authed_session_key_by_account_id_;
 		std::unordered_map<std::uint32_t, WorldEnterStage> world_enter_stage_by_sid_;
 		std::unordered_map<std::uint64_t, std::uint32_t> pending_enter_sid_by_char_id_;
 
@@ -500,10 +504,12 @@ namespace svr {
 
 		static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
 		std::atomic<std::uint64_t> duplicate_login_trace_seq_{ 1 };
+		mutable std::mutex expected_char_ver_mtx_;
+		std::unordered_map<std::uint64_t, std::uint32_t> expected_char_version_by_key_;
 
 		static constexpr std::uint32_t MAX_DB_SYC_DATA_NUM = 200000;
 		std::vector<svr::dqs::DqsSlot> dqs_slots_;
-		std::mutex dqs_mtx_;
+		mutable std::mutex dqs_mtx_;
 		std::deque<std::uint32_t> dqs_empty_;
 		std::atomic<std::uint64_t> dqs_drop_count_{ 0 };
 
@@ -522,6 +528,17 @@ namespace svr {
 		std::chrono::steady_clock::time_point next_stat_tp_{};
 		std::uint64_t last_move_pkts_ = 0;
 		std::uint64_t last_move_items_ = 0;
+		std::uint64_t last_aoi_entered_entities_ = 0;
+		std::uint64_t last_aoi_exited_entities_ = 0;
+		std::uint64_t last_aoi_move_fanout_ = 0;
+		std::uint64_t last_aoi_move_events_ = 0;
+		std::uint64_t last_unauth_packet_rejects_ = 0;
+		std::uint64_t last_dup_login_char_ = 0;
+		std::uint64_t last_dup_login_account_ = 0;
+		std::uint64_t last_dup_login_both_ = 0;
+		std::uint64_t last_dup_login_dedup_same_session_ = 0;
+		std::uint64_t last_flush_dirty_conflicts_total_ = 0;
+		std::uint64_t last_flush_dirty_conflicted_batches_ = 0;
 
 		std::uint64_t bench_base_c2s_move_rx_ = 0;
 		std::uint64_t bench_base_s2c_ack_tx_ = 0;
@@ -566,6 +583,7 @@ namespace svr {
 		std::uint32_t flush_batch_immediate_ = 500;
 		std::uint32_t flush_batch_normal_ = 200;
 		int char_ttl_sec_ = 60 * 60 * 24 * 7;
+		int reconnect_grace_close_delay_ms_ = 5000;
 
 		int worldset_num_ = 0;
 		std::vector<WorldInfo> worlds_;
