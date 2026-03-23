@@ -81,8 +81,16 @@ bool BenchController::Setup(int conns, std::string host, std::uint16_t port)
 		conns_ = spawn_clients_(host_, port_, conns);
 	}
 
-	// ready 대기는 락 밖에서
-	for (auto& c : conns_) c.handler->wait_ready();
+	// bench_setup은 "연결만" 보장하면 된다.
+	// actor_bound(ready)는 enter_world 이후에만 오므로 여기서 wait_ready()를 쓰면 무한 대기가 발생한다.
+	constexpr auto kConnectTimeout = std::chrono::seconds(5);
+	for (auto& c : conns_) {
+		if (!c.handler->wait_connected_for(kConnectTimeout)) {
+			std::cout << "[bench_setup] connect timeout (" << kConnectTimeout.count() << "s)\n";
+			Teardown();
+			return false;
+		}
+	}
 
 	CNetworkEX::SetBenchQuiet(true);
 	ResetStats();
