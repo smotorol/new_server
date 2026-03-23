@@ -1,5 +1,6 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "server_common/config/aoi_config.h"
+#include <thread>
 
 namespace svr {
 
@@ -82,18 +83,42 @@ namespace svr {
 
 
 	void WorldRuntime::OnBeforeIoStop() {
-		{
-			flush_timer_.cancel();
+		spdlog::info("[shutdown] step=1 stop_accept_and_block_new_sessions");
+		lines_.stop_all_reverse();
+
+		spdlog::info("[shutdown] step=2 stop_periodic_flush_scheduler");
+		flush_timer_.cancel();
+
+		spdlog::info("[shutdown] step=3 enqueue_final_dirty_flush");
+		EnqueueFlushDirty_(/*immediate=*/true);
+
+		spdlog::info("[shutdown] step=3.1 wait_dqs_drain_begin");
+		const auto drain_deadline = std::chrono::steady_clock::now() + std::chrono::seconds(3);
+		std::size_t last_in_flight = CountInFlightDqs_();
+		while (last_in_flight != 0 && std::chrono::steady_clock::now() < drain_deadline) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+			last_in_flight = CountInFlightDqs_();
+		}
+		spdlog::info(
+			"[shutdown] step=3.2 wait_dqs_drain_end in_flight={} timed_out={}",
+			last_in_flight,
+			(last_in_flight != 0 ? 1 : 0));
+		if (last_in_flight != 0) {
+			spdlog::warn(
+				"[shutdown] dqs drain timed out. in_flight={} (continuing shutdown with forced worker stop)",
+				last_in_flight);
 		}
 
+		spdlog::info("[shutdown] step=4 cancel_delayed_close_timers");
 		CancelDelayedWorldCloseTimers_();
 
+		spdlog::info("[shutdown] step=5 stop_db_workers");
 		if (db_shards_) {
 			db_shards_->stop();
 			db_shards_.reset();
 		}
 
-		// ✅ Actor(로직) 워커 종료
+		spdlog::info("[shutdown] step=6 stop_actor_workers");
 		actors_.stop();
 	}
 
@@ -144,8 +169,8 @@ namespace svr {
 		{
 			std::lock_guard lk(world_session_mtx_);
 			authed_sessions_by_sid_.clear();
-			authed_sid_by_char_id_.clear();
-			authed_sid_by_account_id_.clear();
+			authed_session_key_by_char_id_.clear();
+			authed_session_key_by_account_id_.clear();
 		}
 
 		account_line_.host.Stop();
@@ -159,6 +184,7 @@ namespace svr {
 		account_sid_.store(0, std::memory_order_relaxed);
 		account_serial_.store(0, std::memory_order_relaxed);
 
+		spdlog::info("[shutdown] step=7 io_stopped_cleanup_complete");
 		spdlog::info("WorldServer released.");
 	}
 
@@ -239,6 +265,55 @@ namespace svr {
 				spdlog::info("[netstats] s2c_move pkts/s={} items/s={}", d_pkts, d_items);
 			}
 
+			const auto cur_entered = svr::metrics::g_aoi_entered_entities.load(std::memory_order_relaxed);
+			const auto cur_exited = svr::metrics::g_aoi_exited_entities.load(std::memory_order_relaxed);
+			const auto cur_fanout = svr::metrics::g_aoi_move_fanout.load(std::memory_order_relaxed);
+			const auto cur_events = svr::metrics::g_aoi_move_events.load(std::memory_order_relaxed);
+			const auto cur_unauth_rejects = svr::metrics::g_world_unauth_packet_rejects.load(std::memory_order_relaxed);
+				const auto cur_dup_char = svr::metrics::g_dup_login_char.load(std::memory_order_relaxed);
+				const auto cur_dup_account = svr::metrics::g_dup_login_account.load(std::memory_order_relaxed);
+				const auto cur_dup_both = svr::metrics::g_dup_login_both.load(std::memory_order_relaxed);
+				const auto cur_dup_dedup = svr::metrics::g_dup_login_dedup_same_session.load(std::memory_order_relaxed);
+				const auto cur_flush_dirty_conflicts = svr::metrics::g_flush_dirty_conflicts_total.load(std::memory_order_relaxed);
+				const auto cur_flush_dirty_conflicted_batches = svr::metrics::g_flush_dirty_conflicted_batches.load(std::memory_order_relaxed);
+
+			const auto d_entered = cur_entered - last_aoi_entered_entities_;
+			const auto d_exited = cur_exited - last_aoi_exited_entities_;
+			const auto d_fanout = cur_fanout - last_aoi_move_fanout_;
+			const auto d_events = cur_events - last_aoi_move_events_;
+			const auto d_unauth_rejects = cur_unauth_rejects - last_unauth_packet_rejects_;
+				const auto d_dup_char = cur_dup_char - last_dup_login_char_;
+				const auto d_dup_account = cur_dup_account - last_dup_login_account_;
+				const auto d_dup_both = cur_dup_both - last_dup_login_both_;
+				const auto d_dup_dedup = cur_dup_dedup - last_dup_login_dedup_same_session_;
+				const auto d_flush_dirty_conflicts = cur_flush_dirty_conflicts - last_flush_dirty_conflicts_total_;
+				const auto d_flush_dirty_conflicted_batches = cur_flush_dirty_conflicted_batches - last_flush_dirty_conflicted_batches_;
+
+			last_aoi_entered_entities_ = cur_entered;
+			last_aoi_exited_entities_ = cur_exited;
+			last_aoi_move_fanout_ = cur_fanout;
+			last_aoi_move_events_ = cur_events;
+			last_unauth_packet_rejects_ = cur_unauth_rejects;
+				last_dup_login_char_ = cur_dup_char;
+				last_dup_login_account_ = cur_dup_account;
+				last_dup_login_both_ = cur_dup_both;
+				last_dup_login_dedup_same_session_ = cur_dup_dedup;
+				last_flush_dirty_conflicts_total_ = cur_flush_dirty_conflicts;
+				last_flush_dirty_conflicted_batches_ = cur_flush_dirty_conflicted_batches;
+
+			if (d_events > 0 || d_entered > 0 || d_exited > 0) {
+				const double avg_fanout = (d_events == 0)
+					? 0.0
+					: static_cast<double>(d_fanout) / static_cast<double>(d_events);
+				spdlog::info(
+					"[aoistats] moves/s={} fanout/s={} avg_fanout={:.2f} entered/s={} exited/s={}",
+					d_events,
+					d_fanout,
+					avg_fanout,
+					d_entered,
+					d_exited);
+			}
+
 			const auto& world_line = lines_.host(svr::WorldLineId::World);
 			const auto& zone_line = lines_.host(svr::WorldLineId::Zone);
 			const auto& control_line = lines_.host(svr::WorldLineId::Control);
@@ -261,8 +336,52 @@ namespace svr {
 				control_line.stats().peak_sessions.load(std::memory_order_relaxed),
 				control_line.stats().session_open_count.load(std::memory_order_relaxed),
 				control_line.stats().session_close_count.load(std::memory_order_relaxed));
-		}
-	}
 
+			constexpr std::uint64_t kUnauthWarnThresholdPerSec = 10;
+			if (d_unauth_rejects >= kUnauthWarnThresholdPerSec) {
+				const auto sampled_sid = svr::metrics::g_world_unauth_last_sid.load(std::memory_order_relaxed);
+				spdlog::warn(
+					"[authstats] unauth_packet_rejects/s={} threshold={} sampled_sid={}",
+					d_unauth_rejects,
+					kUnauthWarnThresholdPerSec,
+					sampled_sid);
+			}
+			else if (d_unauth_rejects > 0) {
+				spdlog::info("[authstats] unauth_packet_rejects/s={}", d_unauth_rejects);
+			}
+
+				if (d_dup_char > 0 || d_dup_account > 0 || d_dup_both > 0 || d_dup_dedup > 0) {
+					spdlog::info(
+						"[dupstats] char/s={} account/s={} both/s={} dedup_same/s={}",
+						d_dup_char,
+						d_dup_account,
+						d_dup_both,
+						d_dup_dedup);
+				}
+
+				if (d_flush_dirty_conflicts > 0 || d_flush_dirty_conflicted_batches > 0) {
+					spdlog::info(
+						"[flushstats] dirty_conflicts/s={} conflicted_batches/s={} est_conflicts/min={}",
+						d_flush_dirty_conflicts,
+						d_flush_dirty_conflicted_batches,
+						d_flush_dirty_conflicts * 60ULL);
+				}
+
+				constexpr std::uint64_t kFlushDirtyConflictWarnThresholdPerMin = 60;
+				const auto est_conflicts_per_min = d_flush_dirty_conflicts * 60ULL;
+				if (est_conflicts_per_min >= kFlushDirtyConflictWarnThresholdPerMin) {
+					const auto sample_world = svr::metrics::g_flush_dirty_conflict_world_sample.load(std::memory_order_relaxed);
+					const auto sample_shard = svr::metrics::g_flush_dirty_conflict_shard_sample.load(std::memory_order_relaxed);
+					const auto sample_char = svr::metrics::g_flush_dirty_conflict_char_sample.load(std::memory_order_relaxed);
+					spdlog::warn(
+						"[flushstats] high_conflict_rate est_conflicts/min={} threshold={} sample_world={} sample_shard={} sample_char={}",
+						est_conflicts_per_min,
+						kFlushDirtyConflictWarnThresholdPerMin,
+						sample_world,
+						sample_shard,
+						sample_char);
+				}
+			}
+		}
 
 } // namespace svr

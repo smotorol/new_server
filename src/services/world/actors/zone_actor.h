@@ -9,6 +9,7 @@
 #include <deque>
 #include <cstring>
 #include <chrono>
+#include <iterator>
 
 #include "net/actor/actor_system.h"
 #include "proto/common/proto_base.h"
@@ -58,6 +59,7 @@ class ZoneActor final : public net::IActor {
 				// 셀 인덱스 최대치(0..max)
 				max_cx = (map_size.x - 1) / unit;
 				max_cy = (map_size.y - 1) / unit;
+				BuildEdgeCaches_();
 
 				inited = true;
 				return true;
@@ -562,6 +564,54 @@ class ZoneActor final : public net::IActor {
 			return out;
 		}
 
+		std::vector<std::uint64_t> GatherNeighborsFromCells(
+			const std::vector<std::int64_t>& cell_keys) const {
+			std::vector<std::uint64_t> out;
+			if (cell_keys.empty()) return out;
+
+			std::unordered_set<std::int64_t> unique_cells;
+			unique_cells.reserve(cell_keys.size());
+			std::size_t approx = 0;
+
+			for (auto ck : cell_keys) {
+				if (!unique_cells.insert(ck).second) continue;
+				auto it = cells.find(ck);
+				if (it == cells.end()) continue;
+				approx += it->second.size();
+			}
+
+			out.reserve(approx);
+			for (auto ck : unique_cells) {
+				auto it = cells.find(ck);
+				if (it == cells.end()) continue;
+				for (auto id : it->second) out.push_back(id);
+			}
+			return out;
+		}
+
+		static void RemoveFromVis_(std::vector<std::uint64_t>& v, std::uint64_t char_id) {
+			v.erase(std::remove(v.begin(), v.end(), char_id), v.end());
+		}
+
+		static void CalcEnteredExitedFromVis_(
+			const std::vector<std::uint64_t>& old_vis,
+			const std::vector<std::uint64_t>& new_vis,
+			std::vector<std::uint64_t>& entered,
+			std::vector<std::uint64_t>& exited) {
+			auto oldv = old_vis;
+			auto newv = new_vis;
+			std::sort(oldv.begin(), oldv.end());
+			std::sort(newv.begin(), newv.end());
+
+			entered.clear();
+			exited.clear();
+			entered.reserve(newv.size());
+			exited.reserve(oldv.size());
+
+			std::set_difference(newv.begin(), newv.end(), oldv.begin(), oldv.end(), std::back_inserter(entered));
+			std::set_difference(oldv.begin(), oldv.end(), newv.begin(), newv.end(), std::back_inserter(exited));
+		}
+
 		void JoinOrUpdate(std::uint64_t char_id, Vec2i pos, std::uint32_t sid, std::uint32_t serial) {
 			auto& pi = players[char_id];
 			pi.pos = pos;
@@ -763,6 +813,8 @@ class ZoneActor final : public net::IActor {
 			Vec2i new_pos{};
 			std::vector<std::uint64_t> old_vis;
 			std::vector<std::uint64_t> new_vis;;
+			std::vector<std::uint64_t> entered_vis;
+			std::vector<std::uint64_t> exited_vis;
 		};
 
 		MoveDiff Move(std::uint64_t char_id, Vec2i new_pos, std::uint32_t sid, std::uint32_t serial) {
@@ -774,13 +826,14 @@ class ZoneActor final : public net::IActor {
 				// old_vis empty, new_vis will be based on current
 				auto& pi = players[char_id];
 				d.new_vis = GatherNeighborsVec(pi.cx, pi.cy);
-				d.new_vis.erase(std::remove(d.new_vis.begin(), d.new_vis.end(), char_id), d.new_vis.end());
+				RemoveFromVis_(d.new_vis, char_id);
+				d.entered_vis = d.new_vis;
 				return d;
 			}
 
 			auto& pi = it->second;
-			d.old_vis = GatherNeighborsVec(pi.cx, pi.cy);
-			d.old_vis.erase(std::remove(d.old_vis.begin(), d.old_vis.end(), char_id), d.old_vis.end());
+			const auto old_cx = pi.cx;
+			const auto old_cy = pi.cy;
 
 			pi.sid = sid;
 			pi.serial = serial;
@@ -805,7 +858,27 @@ class ZoneActor final : public net::IActor {
 			pi.pos = new_pos;
 
 			d.new_vis = GatherNeighborsVec(pi.cx, pi.cy);
-			d.new_vis.erase(std::remove(d.new_vis.begin(), d.new_vis.end(), char_id), d.new_vis.end());
+			RemoveFromVis_(d.new_vis, char_id);
+
+			const int dx = pi.cx - old_cx;
+			const int dy = pi.cy - old_cy;
+			if (dx == 0 && dy == 0) {
+				return d;
+			}
+
+			if (dx >= -1 && dx <= 1 && dy >= -1 && dy <= 1) {
+				const auto entered_cells = CalcEnteredCells(old_cx, old_cy, pi.cx, pi.cy);
+				const auto left_cells = CalcLeftCells(old_cx, old_cy, pi.cx, pi.cy);
+				d.entered_vis = GatherNeighborsFromCells(entered_cells);
+				d.exited_vis = GatherNeighborsFromCells(left_cells);
+				RemoveFromVis_(d.entered_vis, char_id);
+				RemoveFromVis_(d.exited_vis, char_id);
+				return d;
+			}
+
+			d.old_vis = GatherNeighborsVec(old_cx, old_cy);
+			RemoveFromVis_(d.old_vis, char_id);
+			CalcEnteredExitedFromVis_(d.old_vis, d.new_vis, d.entered_vis, d.exited_vis);
 			return d;
 		}
 	};

@@ -2,6 +2,13 @@
 
 namespace svr {
 
+	namespace {
+		std::uint64_t MakeWorldCharKey_(std::uint32_t world_code, std::uint64_t char_id)
+		{
+			return (static_cast<std::uint64_t>(world_code) << 56) ^ char_id;
+		}
+	}
+
 
 	void WorldRuntime::Post(std::function<void()> fn)
 	{
@@ -64,10 +71,14 @@ namespace svr {
 
 			}
 
-			// 2) flush_dirty_chars 결과 처리: 로그 + 추가 flush 결정은 메인에서만
-			if constexpr (std::is_same_v<T, svr::dqs_result::FlushDirtyCharsResult>) {
-				spdlog::info("[FlushDirtyChars] world={}, pulled={}, saved={}, failed={}, batch={}, result={}",
-					rr.world_code, rr.pulled, rr.saved, rr.failed, rr.max_batch, (int)rr.result);
+				// 2) flush_dirty_chars 결과 처리: 로그 + 추가 flush 결정은 메인에서만
+					if constexpr (std::is_same_v<T, svr::dqs_result::FlushDirtyCharsResult>) {
+						spdlog::info("[FlushDirtyChars] world={}, shard={}, pulled={}, saved={}, failed={}, conflicts={}, batch={}, result={}",
+							rr.world_code, rr.shard_id, rr.pulled, rr.saved, rr.failed, rr.conflicts, rr.max_batch, (int)rr.result);
+						if (rr.conflicts > 0) {
+							svr::metrics::g_flush_dirty_conflicts_total.fetch_add(rr.conflicts, std::memory_order_relaxed);
+							svr::metrics::g_flush_dirty_conflicted_batches.fetch_add(1, std::memory_order_relaxed);
+						}
 
 				// ✅ batch만큼 꽉 찼으면 남은 dirty가 더 있을 확률이 높다
 				// - 과도 루프 방지 위해: 결과가 꽉 찬 경우에만 “추가 1회” enqueue
@@ -79,11 +90,17 @@ namespace svr {
 
 			}
 
-			// 3) flush_one_char 결과 처리: 로그/추가 후처리(필요시)는 메인에서만
-			if constexpr (std::is_same_v<T, svr::dqs_result::FlushOneCharResult>) {
-				spdlog::info("[FlushOneChar] world={}, char_id={}, saved={}, result={}",
-					rr.world_code, rr.char_id, rr.saved, (int)rr.result);
-				return;
+				// 3) flush_one_char 결과 처리: 로그/추가 후처리(필요시)는 메인에서만
+				if constexpr (std::is_same_v<T, svr::dqs_result::FlushOneCharResult>) {
+					spdlog::info(
+						"[FlushOneChar] world={}, char_id={}, saved={}, result={}, expected_ver={}, actual_ver={}",
+						rr.world_code, rr.char_id, rr.saved, (int)rr.result, rr.expected_version, rr.actual_version);
+					if (rr.result == svr::dqs::ResultCode::conflict) {
+						spdlog::warn(
+							"[FlushOneCharConflict] world={} char_id={} expected_ver={} actual_ver={}",
+							rr.world_code, rr.char_id, rr.expected_version, rr.actual_version);
+					}
+					return;
 
 			}
 
@@ -163,6 +180,18 @@ namespace svr {
 
 		}
 		return true;
+	}
+
+	std::size_t WorldRuntime::CountInFlightDqs_() const
+	{
+		std::lock_guard lk(dqs_mtx_);
+		std::size_t in_flight = 0;
+		for (const auto& slot : dqs_slots_) {
+			if (slot.in_use) {
+				++in_flight;
+			}
+		}
+		return in_flight;
 	}
 
 
@@ -279,33 +308,64 @@ namespace svr {
 							std::uint32_t pulled = 0;
 							std::uint32_t saved = 0;
 							std::uint32_t failed = 0;
+							std::uint32_t conflicts = 0;
 
-							if (world_code >= world_pools_.size() || !world_pools_[world_code] || world_pools_[world_code]->conns.empty())
-							{
-								slot.result = svr::dqs::ResultCode::db_error;
-								svr::dqs_result::FlushDirtyCharsResult r{};
-								r.world_code = world_code;
-								r.max_batch = (std::uint32_t)max_batch;
-								r.pulled = 0; r.saved = 0; r.failed = 0;
-								r.result = slot.result;
-								PostDqsResult(std::move(r));
-								break;
+								if (world_code >= world_pools_.size() || !world_pools_[world_code] || world_pools_[world_code]->conns.empty())
+								{
+									slot.result = svr::dqs::ResultCode::db_error;
+									svr::dqs_result::FlushDirtyCharsResult r{};
+										r.world_code = world_code;
+										r.shard_id = shard_id;
+										r.max_batch = (std::uint32_t)max_batch;
+										r.pulled = 0; r.saved = 0; r.failed = 0; r.conflicts = 0;
+										r.result = slot.result;
+										PostDqsResult(std::move(r));
+									break;
 							}
 
 							auto& conn = world_pools_[world_code]->next();
 
-							auto ids = redis_cache_->take_dirty_batch(world_code, shard_id, max_batch);
-							pulled = (std::uint32_t)ids.size();
-							for (auto char_id : ids)
-							{
-								auto blob = redis_cache_->get_character_blob(world_code, char_id);
-								if (!blob)
-									continue;
-								try
-								{
-									db::save_character_blob(conn, char_id, *blob);
-									++saved;
-								}
+								auto ids = redis_cache_->take_dirty_batch(world_code, shard_id, max_batch);
+								pulled = (std::uint32_t)ids.size();
+								bool conflict_logged = false;
+									for (auto char_id : ids)
+									{
+									auto blob = redis_cache_->get_character_blob(world_code, char_id);
+									if (!blob)
+										continue;
+
+									std::uint32_t actual_version = 0;
+									svr::demo::DemoCharState parsed{};
+									if (svr::demo::TryDeserializeDemo(*blob, parsed) && parsed.char_id == char_id) {
+										actual_version = parsed.version;
+									}
+									const auto expected_version = TryGetExpectedCharVersion_(world_code, char_id);
+										if (svr::dqs::is_version_conflict(expected_version, actual_version)) {
+											++conflicts;
+											if (!conflict_logged) {
+												conflict_logged = true;
+												svr::metrics::g_flush_dirty_conflict_world_sample.store(world_code, std::memory_order_relaxed);
+												svr::metrics::g_flush_dirty_conflict_shard_sample.store(shard_id, std::memory_order_relaxed);
+												svr::metrics::g_flush_dirty_conflict_char_sample.store(char_id, std::memory_order_relaxed);
+												spdlog::warn(
+													"[FlushDirtyCharsConflict] world={} shard={} char_id={} expected_ver={} actual_ver={}",
+													world_code,
+													shard_id,
+													char_id,
+													expected_version,
+													actual_version);
+											}
+											redis_cache_->mark_dirty(world_code, char_id);
+											slot.result = svr::dqs::ResultCode::conflict;
+											continue;
+									}
+
+									try
+									{
+										db::save_character_blob(conn, char_id, *blob);
+										EraseExpectedCharVersion_(world_code, char_id);
+										++saved;
+									}
 								catch (const std::exception& e)
 								{
 									spdlog::error("FlushDirtyChars DB fail world={}, char_id={}, err={}", world_code, char_id, e.what());
@@ -316,14 +376,16 @@ namespace svr {
 							}
 
 							// ✅ 워커는 결과만 만들고, 로그/재스케줄/추가 flush는 메인에서
-							svr::dqs_result::FlushDirtyCharsResult r{};
-							r.world_code = world_code;
-							r.max_batch = (std::uint32_t)max_batch;
-							r.pulled = pulled;
-							r.saved = saved;
-							r.failed = failed;
-							r.result = slot.result;
-							PostDqsResult(std::move(r));
+								svr::dqs_result::FlushDirtyCharsResult r{};
+								r.world_code = world_code;
+								r.shard_id = shard_id;
+								r.max_batch = (std::uint32_t)max_batch;
+								r.pulled = pulled;
+								r.saved = saved;
+								r.failed = failed;
+								r.conflicts = conflicts;
+								r.result = slot.result;
+								PostDqsResult(std::move(r));
 						}
 						break;
 					case svr::dqs::QueryCase::flush_one_char:
@@ -340,6 +402,7 @@ namespace svr {
 
 							const std::uint32_t world_code = payload.world_code;
 							const std::uint64_t char_id = payload.char_id;
+							const std::uint32_t expected_version = payload.expected_version;
 							bool saved = false;
 
 							if (world_code >= world_pools_.size() || !world_pools_[world_code] || world_pools_[world_code]->conns.empty())
@@ -348,6 +411,7 @@ namespace svr {
 								svr::dqs_result::FlushOneCharResult r{};
 								r.world_code = world_code;
 								r.char_id = char_id;
+								r.expected_version = expected_version;
 								r.saved = false;
 								r.result = slot.result;
 								PostDqsResult(std::move(r));
@@ -360,6 +424,26 @@ namespace svr {
 								svr::dqs_result::FlushOneCharResult r{};
 								r.world_code = world_code;
 								r.char_id = char_id;
+								r.expected_version = expected_version;
+								r.saved = false;
+								r.result = slot.result;
+								PostDqsResult(std::move(r));
+								break;
+							}
+
+							std::uint32_t actual_version = 0;
+							svr::demo::DemoCharState parsed{};
+							if (svr::demo::TryDeserializeDemo(*blob, parsed) && parsed.char_id == char_id) {
+								actual_version = parsed.version;
+							}
+
+							if (svr::dqs::is_version_conflict(expected_version, actual_version)) {
+								slot.result = svr::dqs::ResultCode::conflict;
+								svr::dqs_result::FlushOneCharResult r{};
+								r.world_code = world_code;
+								r.char_id = char_id;
+								r.expected_version = expected_version;
+								r.actual_version = actual_version;
 								r.saved = false;
 								r.result = slot.result;
 								PostDqsResult(std::move(r));
@@ -383,6 +467,8 @@ namespace svr {
 							svr::dqs_result::FlushOneCharResult r{};
 							r.world_code = world_code;
 							r.char_id = char_id;
+							r.expected_version = expected_version;
+							r.actual_version = actual_version;
 							r.saved = saved;
 							r.result = slot.result;
 							PostDqsResult(std::move(r));
@@ -505,6 +591,11 @@ namespace svr {
 		if (!redis_cache_) return;
 		const int ttl = char_ttl_sec_;
 
+		svr::demo::DemoCharState st{};
+		if (svr::demo::TryDeserializeDemo(blob, st) && st.char_id == char_id) {
+			UpdateExpectedCharVersion_(world_code, char_id, st.version);
+		}
+
 		try { redis_cache_->upsert_character(world_code, char_id, blob, ttl); }
 		catch (const std::exception& e) { spdlog::error("CacheCharacterState failed: {}", e.what()); }
 	}
@@ -531,12 +622,58 @@ namespace svr {
 		svr::dqs_payload::FlushOneChar payload{};
 		payload.world_code = world_code;
 		payload.char_id = char_id;
+		payload.expected_version = 0;
+
+		if (auto blob = TryLoadCharacterState(world_code, char_id)) {
+			svr::demo::DemoCharState st{};
+			if (svr::demo::TryDeserializeDemo(*blob, st) && st.char_id == char_id) {
+				payload.expected_version = st.version;
+			}
+		}
 
 		(void)PushDQSData(
 			(std::uint8_t)svr::dqs::ProcessCode::world,
 			(std::uint8_t)svr::dqs::QueryCase::flush_one_char,
 			reinterpret_cast<const char*>(&payload),
 			(int)sizeof(payload));
+	}
+
+	void WorldRuntime::UpdateExpectedCharVersion_(
+		std::uint32_t world_code,
+		std::uint64_t char_id,
+		std::uint32_t version)
+	{
+		if (char_id == 0 || version == 0) {
+			return;
+		}
+		std::lock_guard lk(expected_char_ver_mtx_);
+		expected_char_version_by_key_[MakeWorldCharKey_(world_code, char_id)] = version;
+	}
+
+	std::uint32_t WorldRuntime::TryGetExpectedCharVersion_(
+		std::uint32_t world_code,
+		std::uint64_t char_id) const
+	{
+		if (char_id == 0) {
+			return 0;
+		}
+		std::lock_guard lk(expected_char_ver_mtx_);
+		const auto it = expected_char_version_by_key_.find(MakeWorldCharKey_(world_code, char_id));
+		if (it == expected_char_version_by_key_.end()) {
+			return 0;
+		}
+		return it->second;
+	}
+
+	void WorldRuntime::EraseExpectedCharVersion_(
+		std::uint32_t world_code,
+		std::uint64_t char_id)
+	{
+		if (char_id == 0) {
+			return;
+		}
+		std::lock_guard lk(expected_char_ver_mtx_);
+		expected_char_version_by_key_.erase(MakeWorldCharKey_(world_code, char_id));
 	}
 
 

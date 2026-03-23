@@ -36,6 +36,7 @@ namespace svr::dqs {
 		success = 0,
 		db_error = 1,
 		invalid_data = 2,
+		conflict = 3,
 
 	};
 
@@ -74,5 +75,15 @@ namespace svr::dqs {
 
 	}
 
+	inline bool is_version_conflict(
+		std::uint32_t expected_version,
+		std::uint32_t actual_version) noexcept
+	{
+		// expected/actual version이 모두 유효할 때만 충돌로 본다.
+		return expected_version != 0 &&
+			actual_version != 0 &&
+			actual_version != expected_version;
+	}
 
-} // namespace logsvr::dqs
+
+} // namespace svr::dqs

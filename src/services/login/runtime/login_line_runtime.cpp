@@ -60,28 +60,32 @@ namespace dc {
 
 		if (it->second.account_id != 0) {
 			auto ia = account_session_index_.find(it->second.account_id);
-			if (ia != account_session_index_.end() && ia->second == sid) {
+			if (ia != account_session_index_.end() &&
+				dc::IsSameSessionKey(ia->second.sid, ia->second.serial, sid, serial)) {
 				account_session_index_.erase(ia);
 			}
 		}
 
 		if (it->second.char_id != 0) {
 			auto ic = char_session_index_.find(it->second.char_id);
-			if (ic != char_session_index_.end() && ic->second == sid) {
+			if (ic != char_session_index_.end() &&
+				dc::IsSameSessionKey(ic->second.sid, ic->second.serial, sid, serial)) {
 				char_session_index_.erase(ic);
 			}
 		}
 
 		if (!it->second.login_session.empty()) {
 			auto ils = login_session_index_.find(it->second.login_session);
-			if (ils != login_session_index_.end() && ils->second == sid) {
+			if (ils != login_session_index_.end() &&
+				dc::IsSameSessionKey(ils->second.sid, ils->second.serial, sid, serial)) {
 				login_session_index_.erase(ils);
 			}
 		}
 
 		if (!it->second.world_token.empty()) {
 			auto iwt = world_token_index_.find(it->second.world_token);
-			if (iwt != world_token_index_.end() && iwt->second == sid) {
+			if (iwt != world_token_index_.end() &&
+				dc::IsSameSessionKey(iwt->second.sid, iwt->second.serial, sid, serial)) {
 				world_token_index_.erase(iwt);
 			}
 		}
@@ -90,17 +94,25 @@ namespace dc {
 	}
 
 	void LoginLineRuntime::AddDuplicateCandidateBySid_NoLock_(
-		std::uint32_t sid,
+		const SessionRef& ref,
 		std::uint32_t new_sid,
 		std::uint32_t new_serial,
 		std::vector<DuplicateSessionRef>& out)
 	{
+		if (!ref.valid()) {
+			return;
+		}
+
+		const auto sid = ref.sid;
 		auto it = login_sessions_.find(sid);
 		if (it == login_sessions_.end()) {
 			return;
 		}
 
 		const auto& st = it->second;
+		if (st.serial != ref.serial) {
+			return;
+		}
 
 		if (st.sid == new_sid && st.serial == new_serial) {
 			return;
@@ -324,6 +336,8 @@ namespace dc {
 			char_session_index_.clear();
 			login_session_index_.clear();
 			world_token_index_.clear();
+			pending_world_enter_by_login_session_.clear();
+			pending_world_enter_by_world_token_.clear();
 		}
 
 		{
@@ -480,10 +494,18 @@ namespace dc {
 			st.issued_at = std::chrono::steady_clock::now();
 			st.expires_at = st.issued_at + dc::k_login_sessions_pending_client_sid;
 
-			account_session_index_[account_id] = pending.client_sid;
-			char_session_index_[char_id] = pending.client_sid;
-			login_session_index_[st.login_session] = pending.client_sid;
-			world_token_index_[st.world_token] = pending.client_sid;
+			account_session_index_[account_id] = SessionRef{ pending.client_sid, pending.client_serial };
+			char_session_index_[char_id] = SessionRef{ pending.client_sid, pending.client_serial };
+			login_session_index_[st.login_session] = SessionRef{ pending.client_sid, pending.client_serial };
+			world_token_index_[st.world_token] = SessionRef{ pending.client_sid, pending.client_serial };
+			PendingWorldEnterNotifyRef pending_ref{};
+			pending_ref.account_id = account_id;
+			pending_ref.char_id = char_id;
+			pending_ref.login_session = st.login_session;
+			pending_ref.world_token = st.world_token;
+			pending_ref.issued_at = std::chrono::steady_clock::now();
+			pending_world_enter_by_login_session_[pending_ref.login_session] = pending_ref;
+			pending_world_enter_by_world_token_[pending_ref.world_token] = pending_ref;
 		}
 
 		if (!victims.empty()) {
@@ -515,24 +537,65 @@ namespace dc {
 	{
 		std::lock_guard lk(login_sessions_mtx_);
 
+		auto find_pending_ref = [&]() -> const PendingWorldEnterNotifyRef* {
+			if (!world_token.empty()) {
+				const auto it = pending_world_enter_by_world_token_.find(std::string(world_token));
+				if (it != pending_world_enter_by_world_token_.end()) {
+					return &it->second;
+				}
+			}
+
+			if (!login_session.empty()) {
+				const auto it = pending_world_enter_by_login_session_.find(std::string(login_session));
+				if (it != pending_world_enter_by_login_session_.end()) {
+					return &it->second;
+				}
+			}
+			return nullptr;
+		};
+
 		std::uint32_t sid = 0;
 		if (!world_token.empty()) {
 			const auto iwt = world_token_index_.find(std::string(world_token));
 			if (iwt != world_token_index_.end()) {
-				sid = iwt->second;
+				sid = iwt->second.sid;
 			}
 		}
 
 		if (sid == 0 && !login_session.empty()) {
 			const auto ils = login_session_index_.find(std::string(login_session));
 			if (ils != login_session_index_.end()) {
-				sid = ils->second;
+				sid = ils->second.sid;
 			}
 		}
 
 		if (sid == 0) {
-			spdlog::warn(
-				"OnWorldEnterSuccessNotify exact session not found. account_id={} char_id={} login_session={} token={}",
+			const auto* pending_ref = find_pending_ref();
+			if (pending_ref == nullptr) {
+				spdlog::warn(
+					"OnWorldEnterSuccessNotify exact session not found. account_id={} char_id={} login_session={} token={}",
+					account_id,
+					char_id,
+					login_session,
+					world_token);
+				return;
+			}
+
+			if (pending_ref->account_id != account_id || pending_ref->char_id != char_id) {
+				spdlog::warn(
+					"OnWorldEnterSuccessNotify pending ref mismatch. account_id={} char_id={} ref_account_id={} ref_char_id={} login_session={} token={}",
+					account_id,
+					char_id,
+					pending_ref->account_id,
+					pending_ref->char_id,
+					login_session,
+					world_token);
+				return;
+			}
+
+			ErasePendingWorldEnterNotifyRef_NoLock_(*pending_ref);
+			spdlog::info(
+				"OnWorldEnterSuccessNotify consumed pending ref without active login session. account_id={} char_id={} login_session={} token={}",
 				account_id,
 				char_id,
 				login_session,
@@ -543,7 +606,7 @@ namespace dc {
 		auto it = login_sessions_.find(sid);
 		if (it == login_sessions_.end()) {
 			const auto ia = account_session_index_.find(account_id);
-			if (ia != account_session_index_.end() && ia->second == sid) {
+			if (ia != account_session_index_.end() && ia->second.sid == sid) {
 				account_session_index_.erase(ia);
 			}
 			spdlog::warn(
@@ -568,7 +631,13 @@ namespace dc {
 			return;
 		}
 
+		PendingWorldEnterNotifyRef pending_ref{};
+		pending_ref.account_id = st.account_id;
+		pending_ref.char_id = st.char_id;
+		pending_ref.login_session = st.login_session;
+		pending_ref.world_token = st.world_token;
 		RemoveLoginSession_NoLock_(st.sid, st.serial);
+		ErasePendingWorldEnterNotifyRef_NoLock_(pending_ref);
 
 		spdlog::info(
 			"OnWorldEnterSuccessNotify removed login session sid={} serial={} account_id={} char_id={}",
@@ -597,6 +666,35 @@ namespace dc {
 
 		for (const auto& e : expired) {
 			SendLoginResultFail_(e.client_sid, e.client_serial, "account_timeout");
+		}
+	}
+
+	void LoginLineRuntime::ErasePendingWorldEnterNotifyRef_NoLock_(const PendingWorldEnterNotifyRef& ref)
+	{
+		if (!ref.login_session.empty()) {
+			pending_world_enter_by_login_session_.erase(ref.login_session);
+		}
+		if (!ref.world_token.empty()) {
+			pending_world_enter_by_world_token_.erase(ref.world_token);
+		}
+	}
+
+	void LoginLineRuntime::ExpirePendingWorldEnterNotifyRefs_(std::chrono::steady_clock::time_point now)
+	{
+		constexpr auto kPendingNotifyTtl = std::chrono::seconds(90);
+		std::lock_guard lk(login_sessions_mtx_);
+
+		for (auto it = pending_world_enter_by_world_token_.begin();
+			it != pending_world_enter_by_world_token_.end();) {
+			if (now - it->second.issued_at >= kPendingNotifyTtl) {
+				if (!it->second.login_session.empty()) {
+					pending_world_enter_by_login_session_.erase(it->second.login_session);
+				}
+				it = pending_world_enter_by_world_token_.erase(it);
+			}
+			else {
+				++it;
+			}
 		}
 	}
 
@@ -672,6 +770,7 @@ namespace dc {
 	void LoginLineRuntime::OnMainLoopTick(std::chrono::steady_clock::time_point now)
 	{
 		ExpirePendingLoginRequests_(now);
+		ExpirePendingWorldEnterNotifyRefs_(now);
 	}
 
 } // namespace dc

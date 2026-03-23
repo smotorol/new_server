@@ -20,4 +20,32 @@ namespace dc {
 		return lhs_sid == rhs_sid && lhs_serial == rhs_serial;
 	}
 
+	[[nodiscard]] inline constexpr std::uint64_t PackSessionKey(
+		std::uint32_t sid,
+		std::uint32_t serial) noexcept
+	{
+		return (static_cast<std::uint64_t>(sid) << 32) |
+			static_cast<std::uint64_t>(serial);
+	}
+
+	[[nodiscard]] inline constexpr std::uint32_t UnpackSessionSid(
+		std::uint64_t session_key) noexcept
+	{
+		return static_cast<std::uint32_t>(session_key >> 32);
+	}
+
+	[[nodiscard]] inline constexpr std::uint32_t UnpackSessionSerial(
+		std::uint64_t session_key) noexcept
+	{
+		return static_cast<std::uint32_t>(session_key & 0xFFFFFFFFULL);
+	}
+
+	[[nodiscard]] inline constexpr bool MatchesPackedSessionKey(
+		std::uint64_t packed_key,
+		std::uint32_t sid,
+		std::uint32_t serial) noexcept
+	{
+		return packed_key == PackSessionKey(sid, serial);
+	}
+
 } // namespace dc
