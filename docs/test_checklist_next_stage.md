@@ -57,3 +57,4 @@
 - [x] `SYSTEM` 섹션 예시 스키마(`docs/server_system_schema_example.ini`) 추가.
 - [x] `WRITE_BEHIND`/`DB_WORK`/`REDIS`/`NET_WORK`/`AOI`/`World` 주요 숫자 키 안전 파싱 확장.
 - [x] `World.PortN`/`World.WorldIdxN` 파싱 실패 로그에 실제 인덱스 키 문자열 출력.
+- [x] `world_regression_tests`에 `TryParseInt`/`ParseIntOrKeep` helper 동작(정상/오류/strict) 회귀 추가.

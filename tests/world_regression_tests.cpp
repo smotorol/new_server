@@ -7,6 +7,7 @@
 #include "db/core/dqs_results.h"
 #include "db/core/dqs_types.h"
 #include "proto/common/proto_base.h"
+#include "server_common/config/runtime_ini_sanity.h"
 #include "server_common/session/session_key.h"
 #include "services/world/actors/zone_actor.h"
 #include "services/world/common/aoi_broadcast_sanitize.h"
@@ -245,6 +246,38 @@ namespace {
 		return true;
 	}
 
+	bool TestConfigParseHelpers()
+	{
+		int parsed = 0;
+		if (!dc::cfg::TryParseInt("123", parsed) || parsed != 123) {
+			return false;
+		}
+		if (dc::cfg::TryParseInt("12x", parsed)) {
+			return false;
+		}
+
+		int value = 7;
+		std::string err;
+		std::string warn;
+		if (!dc::cfg::ParseIntOrKeep("X.KEY", "bad", value, false, &err, &warn)) {
+			return false;
+		}
+		if (value != 7 || warn.empty()) {
+			return false;
+		}
+
+		value = 9;
+		err.clear();
+		warn.clear();
+		if (dc::cfg::ParseIntOrKeep("X.KEY", "bad", value, true, &err, &warn)) {
+			return false;
+		}
+		if (err.empty()) {
+			return false;
+		}
+		return true;
+	}
+
 } // namespace
 
 int main()
@@ -258,8 +291,9 @@ int main()
 	const bool ok_aoi_sanitize = TestAoiSanitizeEntityIds();
 	const bool ok_aoi_batch = TestAoiBatchHelpers();
 	const bool ok_aoi_move_recipients = TestAoiMoveEnteredExitedRecipients();
+	const bool ok_config_parse_helpers = TestConfigParseHelpers();
 
-	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty || !ok_aoi_sanitize || !ok_aoi_batch || !ok_aoi_move_recipients) {
+	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty || !ok_aoi_sanitize || !ok_aoi_batch || !ok_aoi_move_recipients || !ok_config_parse_helpers) {
 		std::cerr
 			<< "world_regression_tests failed:"
 			<< " session=" << ok_session
@@ -271,6 +305,7 @@ int main()
 			<< " aoi_sanitize=" << ok_aoi_sanitize
 			<< " aoi_batch=" << ok_aoi_batch
 			<< " aoi_move_recipients=" << ok_aoi_move_recipients
+			<< " config_parse_helpers=" << ok_config_parse_helpers
 			<< "\n";
 		return 1;
 	}

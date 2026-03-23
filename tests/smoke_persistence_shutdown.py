@@ -29,6 +29,7 @@ def main() -> int:
     handler_zone_cpp = repo_root / "src/services/world/handler/world_handler_zone.cpp"
     session_cpp = repo_root / "src/services/world/runtime/world_runtime_session.cpp"
     login_runtime_cpp = repo_root / "src/services/login/runtime/login_line_runtime.cpp"
+    world_regression_cpp = repo_root / "tests/world_regression_tests.cpp"
 
     core_text = core_cpp.read_text(encoding="utf-8")
     runtime_network_text = runtime_network_cpp.read_text(encoding="utf-8")
@@ -41,6 +42,7 @@ def main() -> int:
     handler_zone_text = handler_zone_cpp.read_text(encoding="utf-8")
     session_text = session_cpp.read_text(encoding="utf-8")
     login_runtime_text = login_runtime_cpp.read_text(encoding="utf-8")
+    world_regression_text = world_regression_cpp.read_text(encoding="utf-8")
 
     ok = True
 
@@ -186,6 +188,18 @@ def main() -> int:
             ok = False
         if needle not in channel_runtime_text:
             print(f"[FAIL] config-parse-guard-channel: missing '{needle}'")
+            ok = False
+
+    config_parse_test_needles = [
+        "bool TestConfigParseHelpers()",
+        "dc::cfg::TryParseInt(\"123\", parsed)",
+        "dc::cfg::ParseIntOrKeep(\"X.KEY\", \"bad\", value, false",
+        "dc::cfg::ParseIntOrKeep(\"X.KEY\", \"bad\", value, true",
+        "config_parse_helpers=",
+    ]
+    for needle in config_parse_test_needles:
+        if needle not in world_regression_text:
+            print(f"[FAIL] config-parse-regression: missing '{needle}'")
             ok = False
 
     dup_needles_session = [
