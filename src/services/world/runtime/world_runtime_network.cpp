@@ -205,11 +205,31 @@ namespace svr {
 		}
 		{
 			auto v = ini.sections["SYSTEM"]["CONFIG_FAIL_FAST"];
-			if (!v.empty()) config_fail_fast = (std::stoi(v) != 0);
+			if (!v.empty()) {
+				int parsed = 0;
+				if (dc::cfg::TryParseInt(v, parsed)) {
+					config_fail_fast = (parsed != 0);
+				}
+				else {
+					spdlog::warn("[config] invalid SYSTEM.CONFIG_FAIL_FAST='{}' -> default(false)", v);
+				}
+			}
 		}
 		{
 			auto v = ini.sections["SYSTEM"]["CONFIG_SCHEMA_VERSION"];
-			if (!v.empty()) config_schema_version = std::stoi(v);
+			if (!v.empty()) {
+				int parsed = config_schema_version;
+				if (dc::cfg::TryParseInt(v, parsed)) {
+					config_schema_version = parsed;
+				}
+				else if (config_fail_fast) {
+					spdlog::error("[config] invalid SYSTEM.CONFIG_SCHEMA_VERSION='{}'", v);
+					return false;
+				}
+				else {
+					spdlog::warn("[config] invalid SYSTEM.CONFIG_SCHEMA_VERSION='{}' -> default({})", v, config_schema_version);
+				}
+			}
 		}
 
 		// [AOI] (선택)

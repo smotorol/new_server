@@ -22,6 +22,7 @@ def main() -> int:
     runtime_network_cpp = repo_root / "src/services/world/runtime/world_runtime_network.cpp"
     channel_runtime_cpp = repo_root / "src/services/channel/runtime/channel_runtime.cpp"
     runtime_h = repo_root / "src/services/world/runtime/world_runtime.h"
+    runtime_ini_sanity_h = repo_root / "src/server_common/config/runtime_ini_sanity.h"
     persistence_cpp = repo_root / "src/services/world/runtime/world_runtime_persistence.cpp"
     enter_world_cpp = repo_root / "src/services/world/runtime/world_runtime_enter_world.cpp"
     handler_core_cpp = repo_root / "src/services/world/handler/world_handler_core.cpp"
@@ -33,6 +34,7 @@ def main() -> int:
     runtime_network_text = runtime_network_cpp.read_text(encoding="utf-8")
     channel_runtime_text = channel_runtime_cpp.read_text(encoding="utf-8")
     runtime_h_text = runtime_h.read_text(encoding="utf-8")
+    runtime_ini_sanity_text = runtime_ini_sanity_h.read_text(encoding="utf-8")
     persist_text = persistence_cpp.read_text(encoding="utf-8")
     enter_world_text = enter_world_cpp.read_text(encoding="utf-8")
     handler_text = handler_core_cpp.read_text(encoding="utf-8")
@@ -161,6 +163,22 @@ def main() -> int:
     for needle in channel_config_fail_fast_needles:
         if needle not in channel_runtime_text:
             print(f"[FAIL] config-fail-fast-channel: missing '{needle}'")
+            ok = False
+
+    parse_guard_needles = [
+        "TryParseInt(const std::string& s, int& out)",
+        "invalid SYSTEM.CONFIG_FAIL_FAST",
+        "invalid SYSTEM.CONFIG_SCHEMA_VERSION",
+    ]
+    if parse_guard_needles[0] not in runtime_ini_sanity_text:
+        print(f"[FAIL] config-parse-guard: missing '{parse_guard_needles[0]}'")
+        ok = False
+    for needle in parse_guard_needles[1:]:
+        if needle not in runtime_network_text:
+            print(f"[FAIL] config-parse-guard-world: missing '{needle}'")
+            ok = False
+        if needle not in channel_runtime_text:
+            print(f"[FAIL] config-parse-guard-channel: missing '{needle}'")
             ok = False
 
     dup_needles_session = [

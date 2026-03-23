@@ -5,6 +5,7 @@
   **파싱(parse) → 정규화(normalize) → 보정(sanity clamp) → 확정값 로그** 순서를 서버 공통 규약으로 고정한다.
 - 현재 구현은 `world_runtime_network.cpp`, `channel_runtime.cpp` 기준이며,
   본 문서는 두 런타임의 설정 처리 규칙을 동일한 정책으로 정리한다.
+- 예시 SYSTEM 섹션은 `docs/server_system_schema_example.ini` 참고.
 
 ## 표준 처리 파이프라인
 1. **Parse**: INI 섹션/키를 읽는다.
@@ -27,6 +28,11 @@
 ### 3) 세션/재접속
 - `SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS`는 정책 기본값(현재 5000ms)을 기준으로 로드/보정.
 - 최종값을 `INI(SESSION)` 로그로 출력한다.
+
+### 6) SYSTEM 키 파싱 안정성
+- `SYSTEM.CONFIG_FAIL_FAST`, `SYSTEM.CONFIG_SCHEMA_VERSION`은 숫자 파싱 실패 시 예외로 프로세스가 죽지 않도록 안전 파싱을 사용한다.
+- `CONFIG_FAIL_FAST=1`이면 `CONFIG_SCHEMA_VERSION` 파싱 실패를 즉시 부팅 실패로 처리한다.
+- `CONFIG_FAIL_FAST=0`이면 경고 로그 후 기본값으로 진행한다.
 
 ### 4) AOI/맵
 - 맵 크기/셀 단위/반경(`map_w`, `map_h`, `world_sight_unit`, `aoi_r`)은 0/음수 입력을 허용하지 않으며,

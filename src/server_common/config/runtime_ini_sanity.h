@@ -10,6 +10,22 @@
 
 namespace dc::cfg {
 
+	inline bool TryParseInt(const std::string& s, int& out) noexcept
+	{
+		try {
+			std::size_t pos = 0;
+			const int v = std::stoi(s, &pos);
+			if (pos != s.size()) {
+				return false;
+			}
+			out = v;
+			return true;
+		}
+		catch (...) {
+			return false;
+		}
+	}
+
 	inline std::uint32_t ClampU32Min(std::uint32_t v, std::uint32_t min_v, std::uint32_t fallback) noexcept
 	{
 		if (v < min_v) return fallback;
