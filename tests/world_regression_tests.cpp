@@ -9,6 +9,7 @@
 #include "proto/common/proto_base.h"
 #include "server_common/session/session_key.h"
 #include "services/world/actors/zone_actor.h"
+#include "services/world/common/aoi_broadcast_sanitize.h"
 
 namespace {
 
@@ -172,6 +173,38 @@ namespace {
 		return true;
 	}
 
+	bool TestAoiSanitizeEntityIds()
+	{
+		const std::vector<std::uint64_t> input{ 0, 10, 10, 11, 0, 11, 12 };
+		const auto sanitized = svr::aoi::SanitizeEntityIds(input);
+		const std::vector<std::uint64_t> expected{ 10, 11, 12 };
+		return sanitized == expected;
+	}
+
+	bool TestAoiBatchHelpers()
+	{
+		if (svr::aoi::ClampBatchEntityCount(0) != 0) {
+			return false;
+		}
+		if (svr::aoi::ClampBatchEntityCount(99999) != svr::aoi::kMaxBatchEntityCount) {
+			return false;
+		}
+		if (svr::aoi::SpawnBatchBodySize(0) != 0 || svr::aoi::DespawnBatchBodySize(0) != 0) {
+			return false;
+		}
+
+		const std::uint16_t count = 3;
+		const auto spawn_size = svr::aoi::SpawnBatchBodySize(count);
+		const auto despawn_size = svr::aoi::DespawnBatchBodySize(count);
+		if (spawn_size != sizeof(proto::S2C_player_spawn_batch) + 2 * sizeof(proto::S2C_player_spawn_item)) {
+			return false;
+		}
+		if (despawn_size != sizeof(proto::S2C_player_despawn_batch) + 2 * sizeof(proto::S2C_player_despawn_item)) {
+			return false;
+		}
+		return true;
+	}
+
 } // namespace
 
 int main()
@@ -182,8 +215,10 @@ int main()
 	const bool ok_aoi_one_cell = TestAoiOneCellEnteredLeft();
 	const bool ok_flush = TestFlushOneCharVersionFields();
 	const bool ok_dirty = TestFlushDirtyCharsConflictFields();
+	const bool ok_aoi_sanitize = TestAoiSanitizeEntityIds();
+	const bool ok_aoi_batch = TestAoiBatchHelpers();
 
-	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty) {
+	if (!ok_session || !ok_batch || !ok_despawn_batch || !ok_aoi_one_cell || !ok_flush || !ok_dirty || !ok_aoi_sanitize || !ok_aoi_batch) {
 		std::cerr
 			<< "world_regression_tests failed:"
 			<< " session=" << ok_session
@@ -192,6 +227,8 @@ int main()
 			<< " aoi_one_cell=" << ok_aoi_one_cell
 			<< " flush=" << ok_flush
 			<< " dirty=" << ok_dirty
+			<< " aoi_sanitize=" << ok_aoi_sanitize
+			<< " aoi_batch=" << ok_aoi_batch
 			<< "\n";
 		return 1;
 	}

@@ -153,10 +153,10 @@ def main() -> int:
                 ok = False
 
     aoi_malformed_guard_needles = [
-        "if (oid == 0) {",
-        "std::vector<std::uint64_t> sanitized_exited;",
-        "if (rid == 0) continue;",
-        "for (auto rid : sanitized_exited) {",
+        "const auto sanitized_entered = svr::aoi::SanitizeEntityIds(entered);",
+        "auto sanitized_exited = svr::aoi::SanitizeEntityIds(exited);",
+        "svr::aoi::ClampBatchEntityCount(",
+        "for (auto rid : svr::aoi::SanitizeEntityIds(diff.new_vis)) {",
     ]
     for needle in aoi_malformed_guard_needles:
         if needle not in handler_zone_text:
