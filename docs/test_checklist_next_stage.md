@@ -15,6 +15,7 @@
 - [ ] Recipients around mover still receive expected self spawn/despawn + move stream.
 - [ ] Validate no malformed/zeroed entries are emitted in normal populated cases.
 - [x] `world_regression_tests`에서 spawn/despawn batch 메모리 레이아웃 및 count/item 접근 검증(정적/로컬 회귀).
+- [x] `smoke_persistence_shutdown` 정적 smoke에 AOI 브로드캐스트 malformed guard(`char_id==0` 필터, exited sanitize, recipient zero-id skip) 코드 존재 점검 추가.
 
 ## C. Persistence / flush
 - [ ] `flush_one_char` succeeds when expected_version == actual_version.
@@ -40,3 +41,7 @@
 
 ## F. CI gate
 - [x] `tests/run_ci_ctest.sh`로 기본 PR 게이트(`world_regression_tests`, `smoke_persistence_shutdown`) 묶음 실행.
+
+## G. Config validation policy
+- [x] INI 파싱/정규화/보정/확정값 로깅 규약 문서(`docs/config_validation_policy.md`) 추가.
+- [ ] 선언형 스키마 기반 validation/fail-fast 모드 분리 구현.

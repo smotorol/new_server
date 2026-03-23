@@ -24,6 +24,7 @@ def main() -> int:
     persistence_cpp = repo_root / "src/services/world/runtime/world_runtime_persistence.cpp"
     enter_world_cpp = repo_root / "src/services/world/runtime/world_runtime_enter_world.cpp"
     handler_core_cpp = repo_root / "src/services/world/handler/world_handler_core.cpp"
+    handler_zone_cpp = repo_root / "src/services/world/handler/world_handler_zone.cpp"
     session_cpp = repo_root / "src/services/world/runtime/world_runtime_session.cpp"
     login_runtime_cpp = repo_root / "src/services/login/runtime/login_line_runtime.cpp"
 
@@ -33,6 +34,7 @@ def main() -> int:
     persist_text = persistence_cpp.read_text(encoding="utf-8")
     enter_world_text = enter_world_cpp.read_text(encoding="utf-8")
     handler_text = handler_core_cpp.read_text(encoding="utf-8")
+    handler_zone_text = handler_zone_cpp.read_text(encoding="utf-8")
     session_text = session_cpp.read_text(encoding="utf-8")
     login_runtime_text = login_runtime_cpp.read_text(encoding="utf-8")
 
@@ -149,6 +151,17 @@ def main() -> int:
             if needle not in zone_actor_text:
                 print(f"[FAIL] aoi-runtime: missing '{needle}'")
                 ok = False
+
+    aoi_malformed_guard_needles = [
+        "if (oid == 0) {",
+        "std::vector<std::uint64_t> sanitized_exited;",
+        "if (rid == 0) continue;",
+        "for (auto rid : sanitized_exited) {",
+    ]
+    for needle in aoi_malformed_guard_needles:
+        if needle not in handler_zone_text:
+            print(f"[FAIL] aoi-malformed-guard: missing '{needle}'")
+            ok = False
 
     flush_one_needles = [
         "slot.result = svr::dqs::ResultCode::success;",

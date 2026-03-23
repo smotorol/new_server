@@ -63,6 +63,9 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			std::vector<proto::S2C_player_spawn_item> spawn_items;
 			spawn_items.reserve(entered.size());
 			for (auto oid : entered) {
+				if (oid == 0) {
+					continue;
+				}
 				auto itp = z.players.find(oid);
 				if (itp == z.players.end()) {
 					continue;
@@ -89,15 +92,26 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			}
 		}
 
+		std::vector<std::uint64_t> sanitized_exited;
 		if (!exited.empty()) {
-			const auto count = static_cast<std::uint16_t>(exited.size());
+			sanitized_exited.reserve(exited.size());
+			for (auto rid : exited) {
+				if (rid == 0) {
+					continue;
+				}
+				sanitized_exited.push_back(rid);
+			}
+		}
+
+		if (!sanitized_exited.empty()) {
+			const auto count = static_cast<std::uint16_t>(sanitized_exited.size());
 			const std::size_t body_size = sizeof(proto::S2C_player_despawn_batch) +
 				((std::size_t)count - 1) * sizeof(proto::S2C_player_despawn_item);
 			std::vector<char> body(body_size);
 			auto* pkt = reinterpret_cast<proto::S2C_player_despawn_batch*>(body.data());
 			pkt->count = count;
-			for (std::size_t i = 0; i < exited.size(); ++i) {
-				pkt->items[i].char_id = exited[i];
+			for (std::size_t i = 0; i < sanitized_exited.size(); ++i) {
+				pkt->items[i].char_id = sanitized_exited[i];
 			}
 			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn_batch, (std::uint16_t)body_size);
 			self->Send(dwProID, sid, serial, h, body.data());
@@ -116,12 +130,14 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 		auto body_self_des = svr::ZoneActor::MakeBody_(self_des);
 
 		for (auto rid : entered) {
+			if (rid == 0) continue;
 			auto it = z.players.find(rid);
 			if (it == z.players.end()) continue;
 			if (it->second.sid == 0 || it->second.serial == 0) continue;
 			z.EnqueueSend_(it->second.sid, it->second.serial, h_spawn, body_self_spawn, (std::uint16_t)proto::S2CMsg::player_spawn);
 		}
-		for (auto rid : exited) {
+		for (auto rid : sanitized_exited) {
+			if (rid == 0) continue;
 			auto it = z.players.find(rid);
 			if (it == z.players.end()) continue;
 			if (it->second.sid == 0 || it->second.serial == 0) continue;
@@ -136,6 +152,7 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 		auto body_move = svr::ZoneActor::MakeBody_(mmsg);
 
 		for (auto rid : diff.new_vis) {
+			if (rid == 0) continue;
 			auto it = z.players.find(rid);
 			if (it == z.players.end()) continue;
 			if (it->second.sid == 0 || it->second.serial == 0) continue;
