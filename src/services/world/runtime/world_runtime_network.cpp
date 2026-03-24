@@ -1,6 +1,9 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "server_common/session/session_key.h"
 #include "server_common/config/aoi_config.h"
+#include "server_common/config/runtime_ini_schema.h"
+#include "server_common/config/runtime_ini_sanity.h"
+#include "server_common/config/runtime_ini_version.h"
 #include "server_common/log/flow_event_codes.h"
 
 namespace svr {
@@ -72,6 +75,35 @@ namespace svr {
 			constexpr std::uint32_t kDefaultBatchNormal = 200;
 			constexpr int kDefaultCharTtlSec = 60 * 60 * 24 * 7; // 7 days
 			constexpr int kDefaultReconnectGraceCloseDelayMs = 5000;
+			bool config_fail_fast = false;
+			int config_schema_version = dc::cfg::kRuntimeConfigSchemaVersion;
+			std::string parse_error;
+			std::string parse_warn;
+
+			auto parse_int_field = [&](const std::string& key, const std::string& raw, int& target) -> bool {
+				parse_error.clear();
+				parse_warn.clear();
+				if (!dc::cfg::ParseIntOrKeep(key.c_str(), raw, target, config_fail_fast, &parse_error, &parse_warn)) {
+					spdlog::error("[config] {}", parse_error);
+					return false;
+				}
+				if (!parse_warn.empty()) {
+					spdlog::warn("[config] {}", parse_warn);
+				}
+				return true;
+			};
+			auto parse_u32_field = [&](const std::string& key, const std::string& raw, std::uint32_t& target) -> bool {
+				parse_error.clear();
+				parse_warn.clear();
+				if (!dc::cfg::ParseU32OrKeep(key.c_str(), raw, target, config_fail_fast, &parse_error, &parse_warn)) {
+					spdlog::error("[config] {}", parse_error);
+					return false;
+				}
+				if (!parse_warn.empty()) {
+					spdlog::warn("[config] {}", parse_warn);
+				}
+				return true;
+			};
 
 		// inipp는 기본적으로 trim/escape 처리가 있음
 		// ini.default_section(ini.sections[""]);
@@ -87,11 +119,11 @@ namespace svr {
 		}
 		{
 			auto v = ini.sections["REDIS"]["Port"];
-			if (!v.empty()) redis_port_ = std::stoi(v);
+			if (!parse_int_field("REDIS.Port", v, redis_port_)) return false;
 		}
 		{
 			auto v = ini.sections["REDIS"]["DB"];
-			if (!v.empty()) redis_db_ = std::stoi(v);
+			if (!parse_int_field("REDIS.DB", v, redis_db_)) return false;
 		}
 		redis_password_ = ini.sections["REDIS"]["Password"];
 		{
@@ -102,54 +134,54 @@ namespace svr {
 		// ✅ Redis shard + WAIT 옵션
 		{
 			auto v = ini.sections["REDIS"]["SHARD_COUNT"];
-			if (!v.empty()) redis_shard_count_ = (std::uint32_t)std::max(1, std::stoi(v));
+			if (!parse_u32_field("REDIS.SHARD_COUNT", v, redis_shard_count_)) return false;
 		}
 		{
 			auto v = ini.sections["REDIS"]["WAIT_REPLICAS"];
-			if (!v.empty()) redis_wait_replicas_ = std::max(0, std::stoi(v));
+			if (!parse_int_field("REDIS.WAIT_REPLICAS", v, redis_wait_replicas_)) return false;
 		}
 		{
 			auto v = ini.sections["REDIS"]["WAIT_TIMEOUT_MS"];
-			if (!v.empty()) redis_wait_timeout_ms_ = std::max(0, std::stoi(v));
+			if (!parse_int_field("REDIS.WAIT_TIMEOUT_MS", v, redis_wait_timeout_ms_)) return false;
 		}
 
 		// ✅ write-behind 튜닝
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_INTERVAL_SEC"];
-			if (!v.empty()) flush_interval_sec_ = std::max(1, std::stoi(v));
+			if (!parse_int_field("WRITE_BEHIND.FLUSH_INTERVAL_SEC", v, flush_interval_sec_)) return false;
 		}
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_IMMEDIATE"];
-			if (!v.empty()) flush_batch_immediate_ = (std::uint32_t)std::max(1, std::stoi(v));
+			if (!parse_u32_field("WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", v, flush_batch_immediate_)) return false;
 		}
 		{
 			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_NORMAL"];
-			if (!v.empty()) flush_batch_normal_ = (std::uint32_t)std::max(1, std::stoi(v));
+			if (!parse_u32_field("WRITE_BEHIND.FLUSH_BATCH_NORMAL", v, flush_batch_normal_)) return false;
 		}
-			{
-				auto v = ini.sections["WRITE_BEHIND"]["CHAR_TTL_SEC"];
-				if (!v.empty()) char_ttl_sec_ = std::max(60, std::stoi(v));
-			}
-			{
-				auto v = ini.sections["SESSION"]["RECONNECT_GRACE_CLOSE_DELAY_MS"];
-				if (!v.empty()) reconnect_grace_close_delay_ms_ = std::max(100, std::stoi(v));
-			}
+		{
+			auto v = ini.sections["WRITE_BEHIND"]["CHAR_TTL_SEC"];
+			if (!parse_int_field("WRITE_BEHIND.CHAR_TTL_SEC", v, char_ttl_sec_)) return false;
+		}
+		{
+			auto v = ini.sections["SESSION"]["RECONNECT_GRACE_CLOSE_DELAY_MS"];
+			if (!parse_int_field("SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS", v, reconnect_grace_close_delay_ms_)) return false;
+		}
 
 		// ✅ DB/DQS 샤딩 관련
 		{
 			auto v = ini.sections["DB_WORK"]["DB_POOL_SIZE_PER_WORLD"];
-			if (!v.empty()) db_pool_size_per_world_ = std::max(1, std::stoi(v));
+			if (!parse_int_field("DB_WORK.DB_POOL_SIZE_PER_WORLD", v, db_pool_size_per_world_)) return false;
 		}
 		{
 			auto v = ini.sections["DB_WORK"]["DB_SHARD_COUNT"];
-			if (!v.empty()) db_shard_count_ = (std::uint32_t)std::max(1, std::stoi(v));
+			if (!parse_u32_field("DB_WORK.DB_SHARD_COUNT", v, db_shard_count_)) return false;
 		}
 
 		// [World]
 		worldset_num_ = 0;
 		{
 			auto v = ini.sections["World"]["WorldSet_Num"];
-			if (!v.empty()) worldset_num_ = std::stoi(v);
+			if (!parse_int_field("World.WorldSet_Num", v, worldset_num_)) return false;
 		}
 
 		worlds_.clear();
@@ -168,15 +200,19 @@ namespace svr {
 			w.dsn = ini.sections["World"][key("DSN")];
 			w.dbname = ini.sections["World"][key("DBName")];
 
-			{
-				auto port = ini.sections["World"][key("Port")];
-				w.port = port.empty() ? 0 : std::stoi(port);
-			}
+				{
+					auto port = ini.sections["World"][key("Port")];
+					int parsed_port = 0;
+					if (!parse_int_field(std::string("World.") + key("Port"), port, parsed_port)) return false;
+					w.port = parsed_port;
+				}
 
-			{
-				auto idx = ini.sections["World"][key("WorldIdx")];
-				w.world_idx = idx.empty() ? 0 : std::stoi(idx);
-			}
+				{
+					auto idx = ini.sections["World"][key("WorldIdx")];
+					int parsed_idx = 0;
+					if (!parse_int_field(std::string("World.") + key("WorldIdx"), idx, parsed_idx)) return false;
+					w.world_idx = parsed_idx;
+				}
 
 			worlds_.push_back(std::move(w));
 		}
@@ -185,18 +221,38 @@ namespace svr {
 		world_to_log_recv_buffer_size_ = 10'000'000;
 		{
 			auto v = ini.sections["NET_WORK"]["WORLD_TO_LOG_RECV_BUFFER_SIZE"];
-			if (!v.empty()) world_to_log_recv_buffer_size_ = (std::uint32_t)std::stoul(v);
+			if (!parse_u32_field("NET_WORK.WORLD_TO_LOG_RECV_BUFFER_SIZE", v, world_to_log_recv_buffer_size_)) return false;
 		}
 		// ✅ io_context run() 스레드 개수(기본 1)
 		{
 			auto v = ini.sections["NET_WORK"]["IO_THREAD_COUNT"];
-			if (!v.empty()) io_thread_count_ = std::max(1, std::stoi(v));
+			if (!parse_int_field("NET_WORK.IO_THREAD_COUNT", v, io_thread_count_)) return false;
 		}
 
 		// ✅ 로직(Actor) 스레드 개수(기본 1)
 		{
 			auto v = ini.sections["NET_WORK"]["LOGIC_THREAD_COUNT"];
-			if (!v.empty()) logic_thread_count_ = std::max(1, std::stoi(v));
+			if (!parse_int_field("NET_WORK.LOGIC_THREAD_COUNT", v, logic_thread_count_)) return false;
+		}
+		{
+			auto v = ini.sections["SYSTEM"]["CONFIG_FAIL_FAST"];
+			if (!v.empty()) {
+				int parsed = 0;
+					if (dc::cfg::TryParseInt(v, parsed)) {
+						config_fail_fast = (parsed != 0);
+					}
+					else {
+						spdlog::warn("[config] invalid SYSTEM.CONFIG_FAIL_FAST='{}' -> default(false)", v);
+					}
+			}
+		}
+		{
+			auto v = ini.sections["SYSTEM"]["CONFIG_SCHEMA_VERSION"];
+			if (!v.empty()) {
+				int parsed = config_schema_version;
+				if (!parse_int_field("SYSTEM.CONFIG_SCHEMA_VERSION", v, parsed)) return false;
+				config_schema_version = parsed;
+			}
 		}
 
 		// [AOI] (선택)
@@ -207,62 +263,85 @@ namespace svr {
 
 		{
 			auto v = ini.sections["AOI"]["MAP_W"];
-			if (!v.empty()) g_aoi_ini_cfg.map_size.x = std::max(1, std::stoi(v));
+			if (!parse_int_field("AOI.MAP_W", v, g_aoi_ini_cfg.map_size.x)) return false;
 		}
 		{
 			auto v = ini.sections["AOI"]["MAP_H"];
-			if (!v.empty()) g_aoi_ini_cfg.map_size.y = std::max(1, std::stoi(v));
+			if (!parse_int_field("AOI.MAP_H", v, g_aoi_ini_cfg.map_size.y)) return false;
 		}
 		{
 			auto v = ini.sections["AOI"]["WORLD_SIGHT_UNIT"];
-			if (!v.empty()) g_aoi_ini_cfg.world_sight_unit = std::max(1, std::stoi(v));
+			if (!parse_int_field("AOI.WORLD_SIGHT_UNIT", v, g_aoi_ini_cfg.world_sight_unit)) return false;
 		}
 		{
 			auto v = ini.sections["AOI"]["AOI_RADIUS_CELLS"];
-			if (!v.empty()) g_aoi_ini_cfg.aoi_radius_cells = std::max(0, std::stoi(v));
+			if (!parse_int_field("AOI.AOI_RADIUS_CELLS", v, g_aoi_ini_cfg.aoi_radius_cells)) return false;
 		}
 
 		// ============================================================
 		// ✅ normalize / default rules (최종 확정값 계산)
 		// ============================================================
 
-		// 1) db shard count: 최소 1
-		db_shard_count_ = clamp_u32_min(db_shard_count_, 1u, 1u);
-
-		// 2) redis shard count:
-		//    - 0 또는 미설정이면 db_shard_count_로 동기화
-		//    - 1 미만이면 1
-		if (redis_shard_count_ == 0) {
-			redis_shard_count_ = db_shard_count_;
-
-		}
-		redis_shard_count_ = clamp_u32_min(redis_shard_count_, 1u, 1u);
-
-		// 3) WAIT: 둘 다 양수일 때만 활성화, 아니면 0으로 통일
-		if (!(redis_wait_replicas_ > 0 && redis_wait_timeout_ms_ > 0)) {
-			redis_wait_replicas_ = 0;
-			redis_wait_timeout_ms_ = 0;
-
-		}
+		// 1~3) shard/wait sanity
+		dc::cfg::NormalizeShardAndRedisWait(
+			db_shard_count_,
+			redis_shard_count_,
+			redis_wait_replicas_,
+			redis_wait_timeout_ms_);
 
 		// 4) flush interval/batch/ttl sanity
-		flush_interval_sec_ = clamp_int_min(flush_interval_sec_, 1, kDefaultFlushIntervalSec);
-			flush_batch_immediate_ = clamp_u32_min(flush_batch_immediate_, 1u, kDefaultBatchImmediate);
-			flush_batch_normal_ = clamp_u32_min(flush_batch_normal_, 1u, kDefaultBatchNormal);
-			char_ttl_sec_ = clamp_int_min(char_ttl_sec_, 60, kDefaultCharTtlSec);
-			reconnect_grace_close_delay_ms_ = clamp_int_min(
-				reconnect_grace_close_delay_ms_,
-				100,
-				kDefaultReconnectGraceCloseDelayMs);
+		std::string policy_error;
+		dc::cfg::WorldRuntimePolicyTargets policy_targets{};
+		policy_targets.flush_interval_sec = &flush_interval_sec_;
+		policy_targets.char_ttl_sec = &char_ttl_sec_;
+		policy_targets.db_pool_size_per_world = &db_pool_size_per_world_;
+		policy_targets.flush_batch_immediate = &flush_batch_immediate_;
+		policy_targets.flush_batch_normal = &flush_batch_normal_;
+		policy_targets.reconnect_grace_close_delay_ms = &reconnect_grace_close_delay_ms_;
 
-		// 5) db pool per world sanity
-		db_pool_size_per_world_ = clamp_int_min(db_pool_size_per_world_, 1, 2);
+		dc::cfg::WorldRuntimePolicyDefaults policy_defaults{};
+		policy_defaults.default_flush_interval_sec = kDefaultFlushIntervalSec;
+		policy_defaults.default_char_ttl_sec = kDefaultCharTtlSec;
+		policy_defaults.default_db_pool_size_per_world = 2;
+		policy_defaults.default_batch_immediate = kDefaultBatchImmediate;
+		policy_defaults.default_batch_normal = kDefaultBatchNormal;
+		policy_defaults.default_reconnect_grace_close_delay_ms = kDefaultReconnectGraceCloseDelayMs;
 
-		// 6) AOI/섹터 sanity
-		g_aoi_ini_cfg.map_size.x = std::max(1, g_aoi_ini_cfg.map_size.x);
-		g_aoi_ini_cfg.map_size.y = std::max(1, g_aoi_ini_cfg.map_size.y);
-		g_aoi_ini_cfg.world_sight_unit = std::max(1, g_aoi_ini_cfg.world_sight_unit);
-		g_aoi_ini_cfg.aoi_radius_cells = std::max(0, g_aoi_ini_cfg.aoi_radius_cells);
+		const auto policy_table = dc::cfg::BuildWorldRuntimeMinPolicyTable(policy_targets, policy_defaults);
+		if (!dc::cfg::ApplyMinPolicies(policy_table.int_specs, policy_table.u32_specs, config_fail_fast, &policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
+		if (!dc::cfg::ValidateSchemaCompatibility(
+			"SYSTEM.CONFIG_SCHEMA_VERSION",
+			config_schema_version,
+			dc::cfg::kRuntimeConfigSchemaVersion,
+			dc::cfg::kRuntimeConfigSchemaMinSupported,
+			dc::cfg::kRuntimeConfigSchemaMaxSupported,
+			config_fail_fast,
+			&policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
+		if (config_schema_version < dc::cfg::kRuntimeConfigSchemaMinSupported ||
+			config_schema_version > dc::cfg::kRuntimeConfigSchemaMaxSupported) {
+			spdlog::warn(
+				"[config] schema version unsupported (continue with auto-heal mode). loaded={} supported=[{},{}]",
+				config_schema_version,
+				dc::cfg::kRuntimeConfigSchemaMinSupported,
+				dc::cfg::kRuntimeConfigSchemaMaxSupported);
+		}
+		else if (config_schema_version != dc::cfg::kRuntimeConfigSchemaVersion) {
+			spdlog::warn(
+				"[config] schema version mismatch (continue with auto-heal mode). loaded={} expected={} supported=[{},{}]",
+				config_schema_version,
+				dc::cfg::kRuntimeConfigSchemaVersion,
+				dc::cfg::kRuntimeConfigSchemaMinSupported,
+				dc::cfg::kRuntimeConfigSchemaMaxSupported);
+		}
+
+		// 5) AOI/섹터 sanity
+		dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);
 
 
 		spdlog::info("INI loaded (UTF-8): acc='{}', worldset_num={}, recv_buf={}",
@@ -272,6 +351,12 @@ namespace svr {
 			spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
 				flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
 			spdlog::info("INI(SESSION): reconnect_grace_close_delay_ms={}", reconnect_grace_close_delay_ms_);
+			spdlog::info("INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={} supported_schema_range=[{},{}]",
+				config_fail_fast,
+				config_schema_version,
+				dc::cfg::kRuntimeConfigSchemaVersion,
+				dc::cfg::kRuntimeConfigSchemaMinSupported,
+				dc::cfg::kRuntimeConfigSchemaMaxSupported);
 			spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
 				redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
 		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",
@@ -574,7 +659,7 @@ namespace svr {
 		account_serial_.store(0, std::memory_order_relaxed);
 
 		spdlog::warn("[{}] sid={} serial={} account route disconnected",
-			c::logevt::world::kAccountRouteDown, sid, serial);
+			dc::logevt::world::kAccountRouteDown, sid, serial);
 	}
 
 	bool WorldRuntime::NotifyAccountWorldEnterSuccess(

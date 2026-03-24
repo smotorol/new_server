@@ -1,6 +1,7 @@
 #pragma once
 #include <cstdint>
 #include <memory>
+#include <string_view>
 #include "net/packet/msg_header.h"
 
 namespace net {
@@ -11,6 +12,16 @@ struct INetHandler {
 
     virtual void on_connected(std::uint32_t session_index, std::uint32_t session_serial) {}
     virtual void on_disconnected(std::uint32_t session_index, std::uint32_t session_serial) {}
+    virtual void on_connected_with_endpoint(std::uint32_t session_index, std::uint32_t session_serial, std::string_view remote_endpoint)
+    {
+        (void)remote_endpoint;
+        on_connected(session_index, session_serial);
+    }
+    virtual void on_disconnected_with_endpoint(std::uint32_t session_index, std::uint32_t session_serial, std::string_view remote_endpoint)
+    {
+        (void)remote_endpoint;
+        on_disconnected(session_index, session_serial);
+    }
 
     // body: 헤더 다음부터 시작 (길이 = header->m_wSize - MSG_HEADER_SIZE)
     // 리턴 false면 세션 종료 같은 정책을 적용할 수 있음

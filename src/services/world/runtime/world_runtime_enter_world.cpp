@@ -371,7 +371,7 @@ namespace svr {
 		}
 
 		if (!IsEnterWorldSessionPending(pending.sid, pending.serial, pending.char_id)) {
-			const auto latest_serial = handler->GetLatestSerial(pending.sid);
+				const auto latest_serial = handler->GetLatestSerialForRuntime(pending.sid);
 			if (latest_serial != pending.serial) {
 				spdlog::warn(
 					"[{}] stale enter pending ignored. request_id={} sid={} serial={} latest_serial={} account_id={} char_id={}",

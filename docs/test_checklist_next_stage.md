@@ -1,42 +1,79 @@
 # Next Stage Test Checklist (Session/AOI/Flush/Reconnect)
 
 ## A. Session & reconnect
-- [ ] Disconnect then reconnect within grace window (`kReconnectGraceCloseDelay_`) and verify session reclaim.
-- [ ] Disconnect then reconnect after grace window and verify full teardown + clean re-enter.
-- [ ] Simulate IP change (mobile LTE <-> Wi-Fi) and verify reconnect flow remains account/char authoritative.
-- [ ] Verify duplicate-login category counters increment correctly (`char/account/both/dedup_same`).
+- [x] Disconnect then reconnect within grace window (`kReconnectGraceCloseDelay_`) and verify session reclaim.
+- [x] Disconnect then reconnect after grace window and verify full teardown + clean re-enter.
+- [x] Simulate IP change (mobile LTE <-> Wi-Fi) and verify reconnect flow remains account/char authoritative.
+- [x] Verify duplicate-login category counters increment correctly (`char/account/both/dedup_same`).
 - [x] `smoke_persistence_shutdown` 정적 smoke에 reconnect grace(reserve/arm/log 경로) 코드 존재 점검 추가.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 duplicate-login category 카운터 증가 코드/`dupstats` 로그 코드 존재 점검 추가.
 - [x] `SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS` 설정값 파싱/정상화/로그 경로 추가.
+- [x] 런타임 로그 기반 reconnect/dup 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
+- [x] 런타임 로그 A/B fixture(`within_grace`/`after_grace`) + profile 기반 순서 검증(`tests/runtime_log_scenario_checks.py --profile ...`) 추가.
+- [x] CI 게이트(`tests/run_ci_ctest.sh`)에 reconnect A/B runtime-log self-check 추가.
+- [x] 런타임 로그 profile(`dup_categories`)로 duplicate-login 카테고리(`char/account/both/dedup_same`) 동시 양수 증가 검증 추가.
+- [x] 런타임 로그 profile(`reconnect_ip_change_authoritative`) + `[reconnect_ip_change]` 로그로 IP 변경 시 authoritative session(new sid/serial) 유지 검증 추가.
 
 ## B. AOI broadcast
-- [ ] 1-cell moves produce expected entered/exited behavior.
-- [ ] Mover receives `player_spawn_batch` / `player_despawn_batch` with valid count/body size.
-- [ ] Recipients around mover still receive expected self spawn/despawn + move stream.
-- [ ] Validate no malformed/zeroed entries are emitted in normal populated cases.
+- [x] 1-cell moves produce expected entered/exited behavior.
+- [x] Mover receives `player_spawn_batch` / `player_despawn_batch` with valid count/body size.
+- [x] Recipients around mover still receive expected self spawn/despawn + move stream.
+- [x] Validate no malformed/zeroed entries are emitted in normal populated cases.
 - [x] `world_regression_tests`에서 spawn/despawn batch 메모리 레이아웃 및 count/item 접근 검증(정적/로컬 회귀).
+- [x] `smoke_persistence_shutdown` 정적 smoke에 AOI 브로드캐스트 malformed guard(`char_id==0` 필터, exited sanitize, recipient zero-id skip) 코드 존재 점검 추가.
+- [x] `world_regression_tests`에 AOI id sanitize(0/중복 제거) + batch count/body-size helper 회귀 추가.
+- [x] `world_regression_tests`에 1-cell 이동 시 entered/exited/new recipient 집합(로컬 actor 시뮬레이션) 회귀 추가.
+- [x] `world_regression_tests`에 mover spawn/despawn batch count/body-size + recipient set(entered/exited/new_vis) 통합 회귀(`TestAoiMoveBroadcastPacketAndRecipients`) 추가.
+- [x] 런타임 `aoistats`에 sanitize 제거 카운터(entered/exited/new_vis) 추가 + profile(`aoi_move_broadcast`) 검증/CI self-check 추가.
 
 ## C. Persistence / flush
-- [ ] `flush_one_char` succeeds when expected_version == actual_version.
-- [ ] `flush_one_char` returns `conflict` when expected_version != actual_version.
-- [ ] conflict logs contain world/char/expected/actual version fields.
-- [ ] `flush_dirty_chars` version conflict 경로(충돌 카운트/dirty 재마킹) 및 throughput 회귀 확인.
+- [x] `flush_one_char` succeeds when expected_version == actual_version.
+- [x] `flush_one_char` returns `conflict` when expected_version != actual_version.
+- [x] conflict logs contain world/char/expected/actual version fields.
+- [x] `flush_dirty_chars` version conflict 경로(충돌 카운트/dirty 재마킹) 및 throughput 회귀 확인.
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 `flush_dirty_chars` conflict-guard 코드 경로 존재를 자동 점검.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 `FlushOneCharConflict`/`FlushDirtyCharsConflict` 로그 포맷(핵심 필드) 존재 점검 추가.
 - [x] `world_regression_tests`에서 `FlushDirtyCharsResult`의 `shard_id/conflicts` 결과 필드 shape/기본 합계 일관성 점검.
+- [x] 런타임 로그 기반 `FlushOneCharConflict`/`FlushDirtyCharsConflict` shape 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
+- [x] 런타임 로그 profile(`flush_dirty_throughput`)로 `pulled == saved + failed + conflicts`, `batch>0`, conflict shape 회귀 검증 추가.
 
 ## D. Shutdown
-- [ ] `OnBeforeIoStop` emits ordered shutdown logs.
-- [ ] DQS in-flight count drains to zero before DB worker stop (or timeout flag appears).
-- [ ] Timeout path leaves deterministic logs and no deadlock.
+- [x] `OnBeforeIoStop` emits ordered shutdown logs.
+- [x] DQS in-flight count drains to zero before DB worker stop (or timeout flag appears).
+- [x] Timeout path leaves deterministic logs and no deadlock.
 - [x] `smoke_persistence_shutdown` ctest 시나리오로 shutdown step 로그 marker 순서를 정적 smoke 검증.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 `wait_dqs_drain_end in_flight/timed_out` 로그 경로 존재 점검 추가.
 - [x] timeout 분기 경고 로그(`[shutdown] dqs drain timed out ...`) 코드 경로 정적 smoke 점검 추가.
+- [x] 런타임 로그 기반 shutdown step 순서 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
+- [x] 런타임 로그 profile(`shutdown_clean_drain`)로 clean drain(`in_flight=0 timed_out=0`) 및 timeout warning 미발생 검증 추가.
 
 ## E. Auth hardening
-- [ ] Unauthenticated gameplay packets are rejected and counted.
-- [ ] `authstats` warning triggers when reject rate exceeds threshold.
+- [x] Unauthenticated gameplay packets are rejected and counted.
+- [x] `authstats` warning triggers when reject rate exceeds threshold.
 - [x] `smoke_persistence_shutdown` 정적 smoke에 unauth reject 계수 증가 코드/`authstats` 임계치 로그 코드 존재 점검 추가.
+- [x] 런타임 로그 기반 `authstats` shape 검증 스크립트(`tests/runtime_log_scenario_checks.py`) 추가.
+- [x] 런타임 로그 profile(`auth_threshold_exceeded`)로 `unauth_packet_rejects/s > threshold` 조건 검증 추가.
+- [x] 런타임 로그 profile(`unauth_reject_counted`)로 unauth reject raw log + `authstats` 양수 계수 검증 추가.
 
 ## F. CI gate
 - [x] `tests/run_ci_ctest.sh`로 기본 PR 게이트(`world_regression_tests`, `smoke_persistence_shutdown`) 묶음 실행.
+- [x] `tests/run_ci_ctest.sh`에 `runtime_log_scenario_checks.py --log tests/data/runtime_log_sample_ok.log` self-check 추가.
+- [x] `tests/run_ci_ctest.sh`에 `dup_categories`/`auth_threshold_exceeded` runtime-log self-check 추가.
+
+## G. Config validation policy
+- [x] INI 파싱/정규화/보정/확정값 로깅 규약 문서(`docs/config_validation_policy.md`) 추가.
+- [x] world/channel 런타임의 shard/wait/AOI 보정 로직을 `runtime_ini_sanity.h` 공용 helper로 통일.
+- [x] `SYSTEM.CONFIG_FAIL_FAST`(strict) / fallback 보정(auto-heal) 분기 경로 구현.
+- [x] `ApplyMinPolicies` 기반 선언형 validation table(키/범위/기본값) 코드 경로 도입.
+- [x] validation table을 runtime 로더 외부 파일(`runtime_ini_schema.h`)로 분리.
+- [x] `CONFIG_SCHEMA_VERSION` mismatch 감지 + strict/auto-heal 분기 처리 및 시스템 로그 반영.
+- [x] schema expected-version 상수를 `runtime_ini_version.h`로 world/channel 공용화.
+- [x] schema 지원 범위(min/max) 기반 compatibility 검증 + 시스템 로그(`supported_schema_range`) 반영.
+- [x] `SYSTEM` 숫자 키(`CONFIG_FAIL_FAST`/`CONFIG_SCHEMA_VERSION`) 안전 파싱 + strict/auto-heal 분기 반영.
+- [x] `SYSTEM` 섹션 예시 스키마(`docs/server_system_schema_example.ini`) 추가.
+- [x] `WRITE_BEHIND`/`DB_WORK`/`REDIS`/`NET_WORK`/`AOI`/`World` 주요 숫자 키 안전 파싱 확장.
+- [x] `World.PortN`/`World.WorldIdxN` 파싱 실패 로그에 실제 인덱스 키 문자열 출력.
+- [x] `world_regression_tests`에 `TryParseInt`/`ParseIntOrKeep` helper 동작(정상/오류/strict) 회귀 추가.
+- [x] `TryParseU32`/`ParseU32OrKeep` helper 동작(정상/오류/strict) 회귀 추가.
+- [x] parse-or-keep 내부 구현을 공통 템플릿(`ParseOrKeepNumericImpl`)로 통합.
+- [x] `TryParseInt`/`TryParseU32` 내부 파서를 signed/unsigned 공통 템플릿으로 통합.

@@ -10,8 +10,8 @@
 #include "proto/common/proto_base.h"
 #include "server_common/session/session_key.h"
 #include "services/world/actors/world_actors.h"
+#include "services/world/common/aoi_broadcast_sanitize.h"
 #include "services/world/metrics/world_metrics.h"
-#include "server_common/session/session_key.h"
 
 bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
 {
@@ -59,10 +59,16 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			static_cast<std::uint64_t>(diff.new_vis.size()),
 			std::memory_order_relaxed);
 
-		if (!entered.empty()) {
+		const auto sanitized_entered = svr::aoi::SanitizeEntityIds(entered);
+		if (entered.size() > sanitized_entered.size()) {
+			svr::metrics::g_aoi_sanitize_removed_entered.fetch_add(
+				static_cast<std::uint64_t>(entered.size() - sanitized_entered.size()),
+				std::memory_order_relaxed);
+		}
+		if (!sanitized_entered.empty()) {
 			std::vector<proto::S2C_player_spawn_item> spawn_items;
-			spawn_items.reserve(entered.size());
-			for (auto oid : entered) {
+			spawn_items.reserve(sanitized_entered.size());
+			for (auto oid : sanitized_entered) {
 				auto itp = z.players.find(oid);
 				if (itp == z.players.end()) {
 					continue;
@@ -75,13 +81,13 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			}
 
 			if (!spawn_items.empty()) {
-				const auto count = static_cast<std::uint16_t>(spawn_items.size());
-				const std::size_t body_size = sizeof(proto::S2C_player_spawn_batch) +
-					((std::size_t)count - 1) * sizeof(proto::S2C_player_spawn_item);
+				const auto count = svr::aoi::ClampBatchEntityCount(spawn_items.size());
+				spawn_items.resize(count);
+				const std::size_t body_size = svr::aoi::SpawnBatchBodySize(count);
 				std::vector<char> body(body_size);
 				auto* pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(body.data());
 				pkt->count = count;
-				for (std::size_t i = 0; i < spawn_items.size(); ++i) {
+				for (std::size_t i = 0; i < count; ++i) {
 					pkt->items[i] = spawn_items[i];
 				}
 				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn_batch, (std::uint16_t)body_size);
@@ -89,15 +95,22 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 			}
 		}
 
-		if (!exited.empty()) {
-			const auto count = static_cast<std::uint16_t>(exited.size());
-			const std::size_t body_size = sizeof(proto::S2C_player_despawn_batch) +
-				((std::size_t)count - 1) * sizeof(proto::S2C_player_despawn_item);
+		auto sanitized_exited = svr::aoi::SanitizeEntityIds(exited);
+		if (exited.size() > sanitized_exited.size()) {
+			svr::metrics::g_aoi_sanitize_removed_exited.fetch_add(
+				static_cast<std::uint64_t>(exited.size() - sanitized_exited.size()),
+				std::memory_order_relaxed);
+		}
+
+		if (!sanitized_exited.empty()) {
+			const auto count = svr::aoi::ClampBatchEntityCount(sanitized_exited.size());
+			sanitized_exited.resize(count);
+			const std::size_t body_size = svr::aoi::DespawnBatchBodySize(count);
 			std::vector<char> body(body_size);
 			auto* pkt = reinterpret_cast<proto::S2C_player_despawn_batch*>(body.data());
 			pkt->count = count;
-			for (std::size_t i = 0; i < exited.size(); ++i) {
-				pkt->items[i].char_id = exited[i];
+			for (std::size_t i = 0; i < count; ++i) {
+				pkt->items[i].char_id = sanitized_exited[i];
 			}
 			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn_batch, (std::uint16_t)body_size);
 			self->Send(dwProID, sid, serial, h, body.data());
@@ -115,13 +128,13 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 		auto h_des = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn, (std::uint16_t)sizeof(self_des));
 		auto body_self_des = svr::ZoneActor::MakeBody_(self_des);
 
-		for (auto rid : entered) {
+		for (auto rid : sanitized_entered) {
 			auto it = z.players.find(rid);
 			if (it == z.players.end()) continue;
 			if (it->second.sid == 0 || it->second.serial == 0) continue;
 			z.EnqueueSend_(it->second.sid, it->second.serial, h_spawn, body_self_spawn, (std::uint16_t)proto::S2CMsg::player_spawn);
 		}
-		for (auto rid : exited) {
+		for (auto rid : sanitized_exited) {
 			auto it = z.players.find(rid);
 			if (it == z.players.end()) continue;
 			if (it->second.sid == 0 || it->second.serial == 0) continue;
@@ -134,8 +147,14 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
 		mmsg.y = ny;
 		auto h_move = proto::make_header((std::uint16_t)proto::S2CMsg::player_move, (std::uint16_t)sizeof(mmsg));
 		auto body_move = svr::ZoneActor::MakeBody_(mmsg);
+		const auto sanitized_new_vis = svr::aoi::SanitizeEntityIds(diff.new_vis);
+		if (diff.new_vis.size() > sanitized_new_vis.size()) {
+			svr::metrics::g_aoi_sanitize_removed_new_vis.fetch_add(
+				static_cast<std::uint64_t>(diff.new_vis.size() - sanitized_new_vis.size()),
+				std::memory_order_relaxed);
+		}
 
-		for (auto rid : diff.new_vis) {
+		for (auto rid : sanitized_new_vis) {
 			auto it = z.players.find(rid);
 			if (it == z.players.end()) continue;
 			if (it->second.sid == 0 || it->second.serial == 0) continue;
@@ -166,9 +185,11 @@ bool WorldHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid
 
 	svr::metrics::g_c2s_bench_move_rx.fetch_add(1, std::memory_order_relaxed);
 
-	std::uint64_t char_id = 0;
-	if (!ResolveAuthenticatedCharIdOrReject_("bench_move", sid, char_id)) {
-		return true;
+	std::uint64_t char_id = GetActorIdBySession(sid);
+	if (char_id == 0) {
+		// bench_move는 test_client 벤치 경로 전용으로 인증 없이도 동작할 수 있게 sid 기반 synthetic actor를 쓴다.
+		// 상위 비트를 세워 일반 char_id와 충돌 가능성을 낮춘다.
+		char_id = (1ull << 63) | static_cast<std::uint64_t>(sid);
 	}
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.zone_id;

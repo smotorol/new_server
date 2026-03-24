@@ -89,6 +89,7 @@ int main()
 		<< "  bench_multi <conns> <msgs_per_conn> <work_us>\n"
 		<< "  bench_same  <conns> <total_msgs_per_conn> <work_us>   (모든 세션이 첫번째 Actor로 forward)\n"
 		<< "  bench_walk  <conns> <seconds> <moves_per_sec> <radius> [work_us]\n"
+		<< "    * bench_multi/bench_same은 actor_bound 필요(로그인/enterworld 선행)\n"
 		<< "\n"
 		<< "  // ✅ 동접 셋업 + 부하 측정(2단계)\n"
 		<< "  bench_setup <conns> [host] [port]          (연결만 미리 생성)\n"
@@ -437,8 +438,25 @@ int main()
 
 			auto bench = spawn_bench_clients(io, actors, "127.0.0.1", 27787, conns);
 
-			// wait ready
-			for (auto& c : bench) c.handler->wait_ready();
+			// enterworld/auth 없이 actor_bound는 오지 않으므로 ready 대기는 timeout + 안내 후 즉시 실패
+			constexpr auto kReadyTimeout = std::chrono::seconds(3);
+			bool all_ready = true;
+			for (auto& c : bench) {
+				if (!c.handler->wait_ready_for(kReadyTimeout)) {
+					all_ready = false;
+					break;
+				}
+			}
+			if (!all_ready) {
+				std::cout << "[bench_multi] failed: world actor not bound within "
+					<< kReadyTimeout.count()
+					<< "s. run login + enterworld first.\n";
+				for (auto& c : bench) {
+					if (auto s = c.client->session()) s->close();
+				}
+				actors.stop();
+				continue;
+			}
 
 			std::cout << "[bench_multi] start conns=" << conns << " msgs=" << msgs << " work_us=" << work_us << "\n";
 
@@ -482,7 +500,24 @@ int main()
 			};
 
 			auto bench = spawn_bench_clients(io, actors, "127.0.0.1", 27787, conns);
-			for (auto& c : bench) c.handler->wait_ready();
+			constexpr auto kReadyTimeout = std::chrono::seconds(3);
+			bool all_ready = true;
+			for (auto& c : bench) {
+				if (!c.handler->wait_ready_for(kReadyTimeout)) {
+					all_ready = false;
+					break;
+				}
+			}
+			if (!all_ready) {
+				std::cout << "[bench_same] failed: world actor not bound within "
+					<< kReadyTimeout.count()
+					<< "s. run login + enterworld first.\n";
+				for (auto& c : bench) {
+					if (auto s = c.client->session()) s->close();
+				}
+				actors.stop();
+				continue;
+			}
 
 			const std::uint64_t target = bench.front().handler->actor_id();
 			if (target == 0) { std::cout << "target actor_id is 0 (not ready?)\n"; continue; }
@@ -539,7 +574,24 @@ int main()
 			}
 
 			auto bench = spawn_bench_clients(io, actors, "127.0.0.1", 27787, conns);
-			for (auto& c : bench) c.handler->wait_ready();
+			constexpr auto kConnectTimeout = std::chrono::seconds(3);
+			bool all_connected = true;
+			for (auto& c : bench) {
+				if (!c.handler->wait_connected_for(kConnectTimeout)) {
+					all_connected = false;
+					break;
+				}
+			}
+			if (!all_connected) {
+				std::cout << "[bench_walk] failed: world connect timeout within "
+					<< kConnectTimeout.count()
+					<< "s.\n";
+				for (auto& c : bench) {
+					if (auto s = c.client->session()) s->close();
+				}
+				actors.stop();
+				continue;
+			}
 
 			// noisy 출력 끄고, 카운터 초기화
 			CNetworkEX::SetBenchQuiet(true);

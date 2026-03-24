@@ -77,6 +77,20 @@ void CNetworkEX::wait_ready()
 	ready_cv_.wait(lk, [&] { return ready_.load(std::memory_order_relaxed); });
 }
 
+bool CNetworkEX::wait_ready_for(std::chrono::milliseconds timeout)
+{
+	if (is_ready()) return true;
+	std::unique_lock lk(ready_mtx_);
+	return ready_cv_.wait_for(lk, timeout, [&] { return ready_.load(std::memory_order_relaxed); });
+}
+
+bool CNetworkEX::wait_connected_for(std::chrono::milliseconds timeout)
+{
+	if (connected_.load(std::memory_order_relaxed)) return true;
+	std::unique_lock lk(connected_mtx_);
+	return connected_cv_.wait_for(lk, timeout, [&] { return connected_.load(std::memory_order_relaxed); });
+}
+
 bool CNetworkEX::has_login_result() const
 {
 	std::lock_guard lk(login_result_mtx_);
@@ -126,11 +140,19 @@ void CNetworkEX::AcceptClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex,
 	}
 
 	spdlog::info("CNetworkEX::AcceptClientCheck pro={} index={} serial={}", dwProID, dwIndex, dwSerial);
+	connected_.store(true, std::memory_order_relaxed);
+	connected_cv_.notify_all();
 }
 
 void CNetworkEX::CloseClientCheck(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
 	spdlog::info("CNetworkEX::CloseClientCheck pro={} index={} serial={}", dwProID, dwIndex, dwSerial);
+	connected_.store(false, std::memory_order_relaxed);
+	{
+		std::lock_guard lk(ready_mtx_);
+		ready_.store(false, std::memory_order_relaxed);
+	}
+	actor_id_.store(0, std::memory_order_relaxed);
 }
 
 bool CNetworkEX::LineAnalysis(std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)

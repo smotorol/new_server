@@ -7,6 +7,7 @@
 #include <vector>
 #include <cstring>
 #include <mutex>
+#include <string>
 
 #include <spdlog/spdlog.h>
 
@@ -123,16 +124,26 @@ namespace dc {
 		// ========== net::INetHandler ==========
 		void on_connected(std::uint32_t idx, std::uint32_t serial) override
 		{
+			on_connected_with_endpoint(idx, serial, "unknown");
+		}
+
+		void on_connected_with_endpoint(std::uint32_t idx, std::uint32_t serial, std::string_view remote_endpoint) override
+		{
 			if (!post_) {
 				spdlog::critical("[NET] Dispatcher NOT set! on_connected denied. pro={}, idx={}, serial={}", pro_id_, idx, serial);
 				return;
 			}
 			const std::uint64_t actor = ResolveActorId(idx);
-			dispatch_(actor, [self = shared_from_this(), idx, serial] {
-				self->HandleConnected_(idx, serial); });
+			dispatch_(actor, [self = shared_from_this(), idx, serial, remote = std::string(remote_endpoint)] {
+				self->HandleConnected_(idx, serial, remote); });
 		}
 
 		void on_disconnected(std::uint32_t idx, std::uint32_t serial) override
+		{
+			on_disconnected_with_endpoint(idx, serial, "unknown");
+		}
+
+		void on_disconnected_with_endpoint(std::uint32_t idx, std::uint32_t serial, std::string_view remote_endpoint) override
 		{
 			if (!post_) {
 				spdlog::critical("[NET] Dispatcher NOT set! on_disconnected ignored. pro={}, idx={}, serial={}", pro_id_, idx, serial);
@@ -140,8 +151,8 @@ namespace dc {
 			}
 
 			const std::uint64_t actor = ResolveActorId(idx);
-			dispatch_(actor, [self = shared_from_this(), idx, serial] {
-				self->HandleDisconnected_(idx, serial); });
+			dispatch_(actor, [self = shared_from_this(), idx, serial, remote = std::string(remote_endpoint)] {
+				self->HandleDisconnected_(idx, serial, remote); });
 		}
 
 		bool on_packet(std::uint32_t idx, std::uint32_t serial, const _MSG_HEADER* header, const char* body) override
@@ -171,6 +182,13 @@ namespace dc {
 			std::lock_guard<std::mutex> lk(session_mtx_);
 			auto it = session_serials_.find(idx);
 			return (it != session_serials_.end()) ? it->second : 0;
+		}
+
+		std::string GetLatestRemoteEndpoint(std::uint32_t idx) const
+		{
+			std::lock_guard<std::mutex> lk(session_mtx_);
+			auto it = session_remote_endpoints_.find(idx);
+			return (it != session_remote_endpoints_.end()) ? it->second : std::string{};
 		}
 
 		// ✅ ActorId 라우팅 키
@@ -239,20 +257,26 @@ namespace dc {
 			return true;
 		}
 
-		void HandleConnected_(std::uint32_t idx, std::uint32_t serial)
+		void HandleConnected_(std::uint32_t idx, std::uint32_t serial, const std::string& remote_endpoint)
 		{
-			{ std::lock_guard<std::mutex> lk(session_mtx_); session_serials_[idx] = serial; }
+			{
+				std::lock_guard<std::mutex> lk(session_mtx_);
+				session_serials_[idx] = serial;
+				session_remote_endpoints_[idx] = remote_endpoint;
+			}
 			AcceptClientCheck(pro_id_, idx, serial);
 		}
 
-		void HandleDisconnected_(std::uint32_t idx, std::uint32_t serial)
+		void HandleDisconnected_(std::uint32_t idx, std::uint32_t serial, const std::string& remote_endpoint)
 		{
+			(void)remote_endpoint;
 			CloseClientCheck(pro_id_, idx, serial);
 			// disconnect는 "최신 serial"만 정리 (stale disconnect 방지)
 			std::lock_guard<std::mutex> lk(session_mtx_);
 			auto it = session_serials_.find(idx);
 			if (it != session_serials_.end() && it->second == serial) {
 				session_serials_.erase(it);
+				session_remote_endpoints_.erase(idx);
 			}
 		}
 
@@ -272,5 +296,6 @@ namespace dc {
 		std::weak_ptr<net::TcpClient> client_;          // client 모드
 		mutable std::mutex session_mtx_;
 		std::unordered_map<std::uint32_t, std::uint32_t> session_serials_;
+		std::unordered_map<std::uint32_t, std::string> session_remote_endpoints_;
 	};
 } // namespace dc

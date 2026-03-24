@@ -7,6 +7,7 @@
 #include <mutex>
 #include <condition_variable>
 #include <string>
+#include <chrono>
 
 #include "app/runtime/networkex_base.h"
 
@@ -46,6 +47,8 @@ public:
 	std::uint64_t actor_id() const noexcept { return actor_id_.load(std::memory_order_relaxed); }
 	bool is_ready() const noexcept { return ready_.load(std::memory_order_relaxed); }
 	void wait_ready();
+	bool wait_ready_for(std::chrono::milliseconds timeout);
+	bool wait_connected_for(std::chrono::milliseconds timeout);
 	bool has_login_result() const;
 	LoginResultState login_result() const;
 	void clear_login_result();
@@ -57,8 +60,11 @@ public:
 private:
 	std::atomic<std::uint64_t> actor_id_{ 0 };
 	std::atomic<bool> ready_{ false };
+	std::atomic<bool> connected_{ false };
 	mutable std::mutex ready_mtx_;
 	std::condition_variable ready_cv_;
+	mutable std::mutex connected_mtx_;
+	std::condition_variable connected_cv_;
 
 	mutable std::mutex login_result_mtx_;
 	LoginResultState login_result_{};

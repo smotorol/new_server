@@ -26,6 +26,7 @@
 #include "db/core/dqs_results.h"
 #include "db/core/db_utils.h"
 #include "db/odbc/odbc_wrapper.h"
+#include "server_common/log/flow_event_codes.h"
 #include "server_common/runtime/line_start_helper.h"
 #include "services/world/common/demo_char_state.h"
 

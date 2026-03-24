@@ -5,6 +5,7 @@
 #include <memory>
 #include <vector>
 #include <cstring>
+#include <string>
 #include <spdlog/spdlog.h>
 
 #include "server_common/handler/service_line_handler_base.h"
@@ -20,6 +21,8 @@ public:
 
 	// ✅ (sid -> char_id) 바인딩이 완료되면 char_id Actor로 라우팅
 	std::uint64_t GetActorIdBySession(std::uint32_t sid) const;
+	std::uint32_t GetLatestSerialForRuntime(std::uint32_t sid) const { return GetLatestSerial(sid); }
+	std::string GetLatestRemoteEndpointForRuntime(std::uint32_t sid) const { return GetLatestRemoteEndpoint(sid); }
 protected:
 	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
 		_MSG_HEADER* pMsgHeader, char* pMsg) override;

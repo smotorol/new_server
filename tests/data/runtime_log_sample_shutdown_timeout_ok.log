@@ -1,0 +1,19 @@
+[auth] rejected unauthenticated world packet. op=44 sid=500
+[session_close] reconnect grace close armed. char_id=1001 sid=12 serial=99 delay_ms=5000
+[dupstats] char/s=1 account/s=2 both/s=1 dedup_same/s=1
+[authstats] unauth_packet_rejects/s=11 threshold=10 sampled_sid=500
+[FlushOneChar] world=7 char_id=98 saved=1 result=0 expected_ver=77 actual_ver=77
+[FlushOneCharConflict] world=7 char_id=99 expected_ver=42 actual_ver=41
+[FlushDirtyChars] world=7 shard=3 pulled=10 saved=7 failed=1 conflicts=2 batch=64 result=0
+[FlushDirtyCharsConflict] world=7 shard=3 char_id=99 expected_ver=42 actual_ver=41
+[aoistats] moves/s=3 fanout/s=8 avg_fanout=2.67 entered/s=2 exited/s=2 sanitize_removed/s(entered=0,exited=0,new_vis=0)
+[shutdown] step=1 stop_accept_and_block_new_sessions
+[shutdown] step=2 stop_periodic_flush_scheduler
+[shutdown] step=3 enqueue_final_dirty_flush
+[shutdown] step=3.1 wait_dqs_drain_begin
+[shutdown] step=3.2 wait_dqs_drain_end in_flight=3 timed_out=1
+[shutdown] dqs drain timed out. in_flight=3 (continuing shutdown with forced worker stop)
+[shutdown] step=4 cancel_delayed_close_timers
+[shutdown] step=5 stop_db_workers
+[shutdown] step=6 stop_actor_workers
+[shutdown] step=7 io_stopped_cleanup_complete

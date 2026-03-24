@@ -20,21 +20,35 @@ def main() -> int:
     repo_root = Path(__file__).resolve().parents[1]
     core_cpp = repo_root / "src/services/world/runtime/world_runtime_core.cpp"
     runtime_network_cpp = repo_root / "src/services/world/runtime/world_runtime_network.cpp"
+    channel_runtime_cpp = repo_root / "src/services/channel/runtime/channel_runtime.cpp"
     runtime_h = repo_root / "src/services/world/runtime/world_runtime.h"
+    runtime_ini_sanity_h = repo_root / "src/server_common/config/runtime_ini_sanity.h"
     persistence_cpp = repo_root / "src/services/world/runtime/world_runtime_persistence.cpp"
     enter_world_cpp = repo_root / "src/services/world/runtime/world_runtime_enter_world.cpp"
     handler_core_cpp = repo_root / "src/services/world/handler/world_handler_core.cpp"
+    handler_zone_cpp = repo_root / "src/services/world/handler/world_handler_zone.cpp"
     session_cpp = repo_root / "src/services/world/runtime/world_runtime_session.cpp"
     login_runtime_cpp = repo_root / "src/services/login/runtime/login_line_runtime.cpp"
+    world_regression_cpp = repo_root / "tests/world_regression_tests.cpp"
+    runtime_log_check_py = repo_root / "tests/runtime_log_scenario_checks.py"
+    ci_gate_sh = repo_root / "tests/run_ci_ctest.sh"
+    runtime_log_sample = repo_root / "tests/data/runtime_log_sample_ok.log"
 
     core_text = core_cpp.read_text(encoding="utf-8")
     runtime_network_text = runtime_network_cpp.read_text(encoding="utf-8")
+    channel_runtime_text = channel_runtime_cpp.read_text(encoding="utf-8")
     runtime_h_text = runtime_h.read_text(encoding="utf-8")
+    runtime_ini_sanity_text = runtime_ini_sanity_h.read_text(encoding="utf-8")
     persist_text = persistence_cpp.read_text(encoding="utf-8")
     enter_world_text = enter_world_cpp.read_text(encoding="utf-8")
     handler_text = handler_core_cpp.read_text(encoding="utf-8")
+    handler_zone_text = handler_zone_cpp.read_text(encoding="utf-8")
     session_text = session_cpp.read_text(encoding="utf-8")
     login_runtime_text = login_runtime_cpp.read_text(encoding="utf-8")
+    world_regression_text = world_regression_cpp.read_text(encoding="utf-8")
+    runtime_log_check_text = runtime_log_check_py.read_text(encoding="utf-8")
+    ci_gate_text = ci_gate_sh.read_text(encoding="utf-8")
+    runtime_log_sample_text = runtime_log_sample.read_text(encoding="utf-8")
 
     ok = True
 
@@ -82,6 +96,17 @@ def main() -> int:
             print(f"[FAIL] authstats-threshold: missing '{needle}'")
             ok = False
 
+    aoi_stats_needles = [
+        "g_aoi_sanitize_removed_entered",
+        "g_aoi_sanitize_removed_exited",
+        "g_aoi_sanitize_removed_new_vis",
+        "sanitize_removed/s(entered={},exited={},new_vis={})",
+    ]
+    for needle in aoi_stats_needles:
+        if needle not in core_text and needle not in handler_zone_text:
+            print(f"[FAIL] aoistats-sanitize: missing '{needle}'")
+            ok = False
+
     shutdown_drain_needles = [
         "std::size_t last_in_flight = CountInFlightDqs_();",
         "last_in_flight = CountInFlightDqs_();",
@@ -108,11 +133,176 @@ def main() -> int:
         "TryReserveDelayedWorldClose_(sid, serial)",
         "ArmReservedDelayedWorldClose_(",
         "[session_close] reconnect grace close armed. char_id={} sid={} serial={} delay_ms={}",
+        "[reconnect_ip_change] account_id={} char_id={} old_sid={} old_serial={} old_remote={} new_sid={} new_serial={} new_remote={} authoritative_sid={} authoritative_serial={}",
     ]
     reconnect_sources = [runtime_h_text, runtime_network_text, session_text]
     for needle in reconnect_needles:
         if not any(needle in src for src in reconnect_sources):
             print(f"[FAIL] reconnect-grace: missing '{needle}'")
+            ok = False
+
+    config_sanity_needles = [
+        "dc::cfg::NormalizeShardAndRedisWait(",
+        "dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);",
+    ]
+    for needle in config_sanity_needles:
+        if needle not in runtime_network_text:
+            print(f"[FAIL] config-sanity-world: missing '{needle}'")
+            ok = False
+        if needle not in channel_runtime_text:
+            print(f"[FAIL] config-sanity-channel: missing '{needle}'")
+            ok = False
+
+    world_config_fail_fast_needles = [
+        "CONFIG_FAIL_FAST",
+        "CONFIG_SCHEMA_VERSION",
+        "dc::cfg::kRuntimeConfigSchemaVersion",
+        "dc::cfg::kRuntimeConfigSchemaMinSupported",
+        "dc::cfg::kRuntimeConfigSchemaMaxSupported",
+        "dc::cfg::BuildWorldRuntimeMinPolicyTable(",
+        "dc::cfg::ApplyMinPolicies(",
+        "ValidateSchemaCompatibility(",
+        "INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={} supported_schema_range=[{},{}]",
+    ]
+    for needle in world_config_fail_fast_needles:
+        if needle not in runtime_network_text:
+            print(f"[FAIL] config-fail-fast-world: missing '{needle}'")
+            ok = False
+
+    channel_config_fail_fast_needles = [
+        "CONFIG_FAIL_FAST",
+        "CONFIG_SCHEMA_VERSION",
+        "dc::cfg::kRuntimeConfigSchemaVersion",
+        "dc::cfg::kRuntimeConfigSchemaMinSupported",
+        "dc::cfg::kRuntimeConfigSchemaMaxSupported",
+        "dc::cfg::BuildChannelRuntimeMinPolicyTable(",
+        "dc::cfg::ApplyMinPolicies(",
+        "ValidateSchemaCompatibility(",
+        "INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={} supported_schema_range=[{},{}]",
+    ]
+    for needle in channel_config_fail_fast_needles:
+        if needle not in channel_runtime_text:
+            print(f"[FAIL] config-fail-fast-channel: missing '{needle}'")
+            ok = False
+
+    parse_guard_header_needles = [
+        "ParseOrKeepNumericImpl(",
+        "TryParseSignedImpl(",
+        "TryParseUnsignedImpl(",
+        "TryParseInt(const std::string& s, int& out)",
+        "TryParseU32(const std::string& s, std::uint32_t& out)",
+        "ParseIntOrKeep(",
+        "ParseU32OrKeep(",
+        "invalid numeric config:",
+    ]
+    if not all(needle in runtime_ini_sanity_text for needle in parse_guard_header_needles):
+        print(f"[FAIL] config-parse-guard: missing parse helper(s)")
+        ok = False
+    parse_guard_runtime_needles = [
+        "WRITE_BEHIND.FLUSH_INTERVAL_SEC",
+        "invalid SYSTEM.CONFIG_FAIL_FAST",
+        "SYSTEM.CONFIG_SCHEMA_VERSION",
+        "std::string(\"World.\") + key(\"Port\")",
+        "std::string(\"World.\") + key(\"WorldIdx\")",
+    ]
+    for needle in parse_guard_runtime_needles:
+        if needle not in runtime_network_text:
+            print(f"[FAIL] config-parse-guard-world: missing '{needle}'")
+            ok = False
+        if needle not in channel_runtime_text:
+            print(f"[FAIL] config-parse-guard-channel: missing '{needle}'")
+            ok = False
+
+    config_parse_test_needles = [
+        "bool TestConfigParseHelpers()",
+        "dc::cfg::TryParseInt(\"123\", parsed)",
+        "dc::cfg::TryParseU32(\"429\", parsed_u32)",
+        "dc::cfg::ParseIntOrKeep(\"X.KEY\", \"bad\", value, false",
+        "dc::cfg::ParseIntOrKeep(\"X.KEY\", \"bad\", value, true",
+        "dc::cfg::ParseU32OrKeep(\"X.U32\", \"bad\", u32_value, false",
+        "dc::cfg::ParseU32OrKeep(\"X.U32\", \"bad\", u32_value, true",
+        "config_parse_helpers=",
+    ]
+    for needle in config_parse_test_needles:
+        if needle not in world_regression_text:
+            print(f"[FAIL] config-parse-regression: missing '{needle}'")
+            ok = False
+
+    runtime_log_check_needles = [
+        "reconnect-grace-armed",
+        "dupstats-shape",
+        "dupstats-positive-signal",
+        "dupstats-all-categories-positive",
+        "authstats-shape",
+        "authstats-threshold-exceeded",
+        "auth-unauth-reject-log",
+        "auth-unauth-reject-count-positive",
+        "flush-one-shape",
+        "flush-one-conflict-shape",
+        "flush-dirty-summary-shape",
+        "flush-dirty-conflict-shape",
+        "flush-dirty-throughput-balance",
+        "shutdown-order-runtime",
+        "shutdown-clean-drain",
+        "reconnect-within-grace-order",
+        "reconnect-after-grace-order",
+        "reconnect-ip-change-shape",
+        "reconnect-ip-change-authoritative-sid",
+        "reconnect-ip-change-authoritative-serial",
+        "flush-one-success",
+        "shutdown-clean-no-timeout-warning",
+        "shutdown-timeout-flag",
+        "shutdown-timeout-order",
+        "aoistats-shape",
+        "aoi-move-broadcast-shape",
+        "aoi-sanitize-removed-zero",
+        "runtime_log_scenario_checks passed (profile=",
+    ]
+    for needle in runtime_log_check_needles:
+        if needle not in runtime_log_check_text:
+            print(f"[FAIL] runtime-log-checker: missing '{needle}'")
+            ok = False
+
+    runtime_log_sample_needles = [
+        "[auth] rejected unauthenticated world packet.",
+        "[session_close] reconnect grace close armed.",
+        "[dupstats] char/s=",
+        "[authstats] unauth_packet_rejects/s=",
+        "[FlushOneChar] world=",
+        "[FlushOneCharConflict]",
+        "[FlushDirtyChars] world=",
+        "[FlushDirtyCharsConflict]",
+        "[aoistats] moves/s=",
+        "[shutdown] step=7 io_stopped_cleanup_complete",
+    ]
+    for needle in runtime_log_sample_needles:
+        if needle not in runtime_log_sample_text:
+            print(f"[FAIL] runtime-log-sample: missing '{needle}'")
+            ok = False
+
+    ci_gate_needles = [
+        "runtime_log_scenario_checks.py",
+        "runtime_log_sample_ok.log",
+        "runtime_log_sample_reconnect_within_grace_ok.log",
+        "runtime_log_sample_reconnect_after_grace_ok.log",
+        "runtime_log_sample_reconnect_ip_change_ok.log",
+        "runtime_log_sample_dup_categories_ok.log",
+        "runtime_log_sample_shutdown_timeout_ok.log",
+        "--profile reconnect_within_grace",
+        "--profile reconnect_after_grace",
+        "--profile reconnect_ip_change_authoritative",
+        "--profile dup_categories",
+        "--profile auth_threshold_exceeded",
+        "--profile unauth_reject_counted",
+        "--profile flush_success_conflict",
+        "--profile flush_dirty_throughput",
+        "--profile shutdown_clean_drain",
+        "--profile shutdown_timeout",
+        "--profile aoi_move_broadcast",
+    ]
+    for needle in ci_gate_needles:
+        if needle not in ci_gate_text:
+            print(f"[FAIL] ci-gate-runtime-log-check: missing '{needle}'")
             ok = False
 
     dup_needles_session = [
@@ -150,6 +340,27 @@ def main() -> int:
                 print(f"[FAIL] aoi-runtime: missing '{needle}'")
                 ok = False
 
+    aoi_malformed_guard_needles = [
+        "const auto sanitized_entered = svr::aoi::SanitizeEntityIds(entered);",
+        "auto sanitized_exited = svr::aoi::SanitizeEntityIds(exited);",
+        "const auto sanitized_new_vis = svr::aoi::SanitizeEntityIds(diff.new_vis);",
+        "svr::aoi::ClampBatchEntityCount(",
+        "for (auto rid : sanitized_new_vis) {",
+    ]
+    for needle in aoi_malformed_guard_needles:
+        if needle not in handler_zone_text:
+            print(f"[FAIL] aoi-malformed-guard: missing '{needle}'")
+            ok = False
+
+    aoi_regression_needles = [
+        "bool TestAoiMoveBroadcastPacketAndRecipients()",
+        "aoi_move_broadcast=",
+    ]
+    for needle in aoi_regression_needles:
+        if needle not in world_regression_text:
+            print(f"[FAIL] aoi-broadcast-regression: missing '{needle}'")
+            ok = False
+
     flush_one_needles = [
         "slot.result = svr::dqs::ResultCode::success;",
         "slot.result = svr::dqs::ResultCode::conflict;",
@@ -174,7 +385,7 @@ def main() -> int:
             ok = False
 
     consume_resp_needles = [
-        "const auto latest_serial = handler->GetLatestSerial(pending.sid);",
+        "const auto latest_serial = handler->GetLatestSerialForRuntime(pending.sid);",
         "latest_serial != pending.serial",
         "enter pending state missing but transport is still alive",
     ]

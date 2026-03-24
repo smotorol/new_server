@@ -178,6 +178,8 @@ namespace dc {
 		std::unordered_map<std::uint64_t, SessionRef> char_session_index_;
 		std::unordered_map<std::string, SessionRef> login_session_index_;
 		std::unordered_map<std::string, SessionRef> world_token_index_;
+		std::unordered_map<std::string, LoginSessionAuthState> detached_world_enter_by_token_;
+		std::unordered_map<std::string, std::string> detached_world_enter_token_by_login_session_;
 		std::unordered_map<std::uint64_t, PendingLoginRequest> pending_login_requests_;
 
 		HostedLineEntry client_line_{};
