@@ -1,10 +1,31 @@
-#include "services/world/runtime/world_runtime_private.h"
+﻿#include "services/world/runtime/world_runtime_private.h"
+#include "services/world/db/item_template_repository.h"
+#include <fmt/format.h>
+#include "server_common/log/enter_flow_log.h"
 #include "server_common/log/flow_event_codes.h"
 #include "services/world/common/string_utils.h"
 
 namespace svr {
 
 	using namespace svr::detail;
+
+	namespace {
+		proto::world::EnterWorldResultCode MapBeginEnterFailReason_(
+			BeginEnterWorldSessionResultKind kind) noexcept
+		{
+			switch (kind) {
+			case BeginEnterWorldSessionResultKind::AlreadyPending:
+				return pt_w::EnterWorldResultCode::enter_already_pending;
+			case BeginEnterWorldSessionResultKind::AlreadyInWorld:
+				return pt_w::EnterWorldResultCode::already_in_world;
+			case BeginEnterWorldSessionResultKind::Closing:
+				return pt_w::EnterWorldResultCode::session_closing;
+			case BeginEnterWorldSessionResultKind::InvalidInput:
+			default:
+				return pt_w::EnterWorldResultCode::internal_error;
+			}
+		}
+	}
 
 	proto::world::EnterWorldResultCode WorldRuntime::MapZoneAssignRejectCodeToEnterWorldReason_(
 		std::uint16_t zone_result_code) noexcept
@@ -88,6 +109,11 @@ namespace svr {
 			pending.account_id,
 			pending.char_id,
 			pending.world_token);
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::warn,
+			dc::enterlog::EnterStage::EnterFlowAborted,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+			log_text);
 	}
 
 
@@ -122,6 +148,11 @@ namespace svr {
 			pending.serial,
 			pending.account_id,
 			pending.char_id);
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::warn,
+			dc::enterlog::EnterStage::EnterFlowAborted,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+			reason_log);
 	}
 
 
@@ -135,7 +166,7 @@ namespace svr {
 		std::uint16_t assigned_zone_id,
 		std::uint32_t map_template_id,
 		std::uint32_t instance_id,
-		std::string_view cached_state_blob)
+		const CharacterCoreState& core_state)
 	{
 		auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
 		if (!handler) {
@@ -145,12 +176,14 @@ namespace svr {
 
 		const auto request_id = next_zone_player_enter_request_id_++;
 		PendingZonePlayerEnterRequest pending_enter{};
+		pending_enter.trace_id = pending.trace_id;
 		pending_enter.request_id = request_id;
 		pending_enter.enter_pending = pending;
 		pending_enter.target_zone_id = assigned_zone_id;
 		pending_enter.map_template_id = map_template_id;
 		pending_enter.instance_id = instance_id;
-		pending_enter.cached_state_blob.assign(cached_state_blob.begin(), cached_state_blob.end());
+		pending_enter.core_state = core_state;
+		pending_enter.cached_state_blob = svr::demo::SerializeDemo(core_state);
 		pending_enter.issued_at = std::chrono::steady_clock::now();
 
 		if (auto route = FindZoneRouteByZoneId_(assigned_zone_id); route.has_value()) {
@@ -160,8 +193,14 @@ namespace svr {
 		}
 
 		pending_zone_player_enter_requests_[request_id] = pending_enter;
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::WorldZoneAssignResult,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+			{},
+			"zone_route_resolved_player_enter_pending");
 
-		if (!SendZonePlayerEnter_(assigned_zone_id, request_id, char_id, map_template_id, instance_id)) {
+		if (!SendZonePlayerEnter_(pending.trace_id, assigned_zone_id, request_id, char_id, map_template_id, instance_id)) {
 			pending_zone_player_enter_requests_.erase(request_id);
 			RollbackBoundEnterWorld_(pending, "FinalizeEnterWorldSuccess_ rolled back because zone player enter send failed.");
 			FailPendingEnterWorldConsumeRequest_(
@@ -170,6 +209,12 @@ namespace svr {
 				"FinalizeEnterWorldSuccess_ failed: zone player enter send failed.");
 			return;
 		}
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::ZonePlayerEnterRequestReceived,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+			{},
+			"world_sent_zone_player_enter");
 	}
 
 	void WorldRuntime::CompleteEnterWorldSuccessAfterZoneAck_(
@@ -188,6 +233,11 @@ namespace svr {
 				pending.serial,
 				pending.account_id,
 				pending.char_id);
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				"stale_zone_player_enter_ack");
 			return;
 		}
 
@@ -201,23 +251,16 @@ namespace svr {
 		const auto assigned_zone_id = pending_enter.target_zone_id;
 		const auto map_template_id = pending_enter.map_template_id;
 		const auto instance_id = pending_enter.instance_id;
+		const auto core_state = pending_enter.core_state;
+		const Vec2i start_pos{ core_state.hot.position.x, core_state.hot.position.y };
 
-		PostActor(char_id, [this, char_id, sid = pending.sid, serial = pending.serial, assigned_zone_id, map_template_id, instance_id]() {
+		PostActor(char_id, [this, char_id, sid = pending.sid, serial = pending.serial, assigned_zone_id, map_template_id, instance_id, core_state, start_pos]() {
 			auto& a = GetOrCreatePlayerActor(char_id);
-			a.bind_session(sid, serial);
-			a.combat.hp = 100;
-			a.combat.max_hp = 100;
-			a.combat.atk = 20;
-			a.combat.def = 3;
-			a.combat.gold = 1000;
-			a.zone_id = assigned_zone_id;
-			a.map_template_id = map_template_id;
-			a.map_instance_id = instance_id;
-			a.pos = { 0, 0 };
+			ApplyCharacterCoreStateToActor_(a, core_state, sid, serial, assigned_zone_id, map_template_id, instance_id);
 
-			PostActor(svr::MakeZoneActorId(a.zone_id), [this, char_id, sid, serial, assigned_zone_id]() {
+			PostActor(svr::MakeZoneActorId(a.GetZoneId()), [this, char_id, sid, serial, assigned_zone_id, start_pos]() {
 				auto& z = GetOrCreateZoneActor(assigned_zone_id);
-				z.JoinOrUpdate(char_id, { 0,0 }, sid, serial);
+				z.JoinOrUpdate(char_id, start_pos, sid, serial);
 			});
 		});
 
@@ -236,8 +279,14 @@ namespace svr {
 			const std::uint32_t world_code = 0;
 			CacheCharacterState(world_code, char_id, pending_enter.cached_state_blob);
 		}
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::WorldSessionBound,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+			{},
+			"zone_ack_promoted_session");
 
-		if (!NotifyAccountWorldEnterSuccess(pending.account_id, pending.char_id, pending.login_session, pending.world_token)) {
+		if (!NotifyAccountWorldEnterSuccess(pending.trace_id, pending.account_id, pending.char_id, pending.login_session, pending.world_token)) {
 			const LeaveWorldContext leave_ctx{
 				.char_id = char_id,
 				.sid = pending.sid,
@@ -254,8 +303,17 @@ namespace svr {
 				pending,
 				pt_w::EnterWorldResultCode::account_enter_notify_failed,
 				"CompleteEnterWorldSuccessAfterZoneAck_ failed: account world_enter_success_notify send failed.");
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				"world_notify_relay_failed");
 			return;
 		}
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::WorldEnterSuccessNotifySent,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token });
 
 		proto::S2C_actor_bound bound{};
 		bound.actor_id = char_id;
@@ -274,6 +332,282 @@ namespace svr {
 			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
 			static_cast<std::uint16_t>(sizeof(res)));
 		handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+
+		handler->SendZoneMapState(
+			0,
+			pending.sid,
+			pending.serial,
+			pending.char_id,
+			assigned_zone_id,
+			map_template_id,
+			core_state.hot.position.x,
+			core_state.hot.position.y,
+			proto::ZoneMapStateReason::enter_success);
+	}
+
+	bool WorldRuntime::RequestCharacterEnterSnapshotLoad_(
+		const PendingEnterWorldConsumeRequest& pending)
+	{
+		const std::uint32_t world_code = 0;
+		const auto request_id = next_world_auth_consume_request_id_.fetch_add(1, std::memory_order_relaxed);
+
+		svr::dqs_payload::WorldCharacterEnterSnapshot payload{};
+		payload.world_code = world_code;
+		payload.sid = pending.sid;
+		payload.serial = pending.serial;
+		payload.trace_id = pending.trace_id;
+		payload.request_id = request_id;
+		payload.account_id = pending.account_id;
+		payload.char_id = pending.char_id;
+
+		if (auto blob = TryLoadCharacterState(world_code, pending.char_id); blob.has_value()) {
+			const auto copy_size = static_cast<std::uint16_t>(std::min<std::size_t>(blob->size(), dc::k_character_state_blob_max_len));
+			payload.cached_state_blob_size = copy_size;
+			if (copy_size > 0) {
+				std::memcpy(payload.cached_state_blob, blob->data(), copy_size);
+			}
+		}
+
+		pending_character_enter_snapshot_requests_[request_id] = PendingCharacterEnterSnapshotRequest{
+			pending.trace_id,
+			request_id,
+			pending,
+			std::chrono::steady_clock::now()
+		};
+
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::WorldCharacterSnapshotLoadRequested,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+			{},
+			"snapshot_load_requested");
+
+		if (!PushDQSData(
+			static_cast<std::uint8_t>(svr::dqs::ProcessCode::world),
+			static_cast<std::uint8_t>(svr::dqs::QueryCase::world_character_enter_snapshot),
+			reinterpret_cast<const char*>(&payload),
+			static_cast<int>(sizeof(payload)))) {
+			pending_character_enter_snapshot_requests_.erase(request_id);
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				"snapshot_load_enqueue_failed");
+			return false;
+		}
+
+		return true;
+	}
+
+	void WorldRuntime::ApplyCharacterCoreStateToActor_(
+		PlayerActor& actor,
+		const CharacterCoreState& core_state,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint16_t assigned_zone_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id)
+	{
+		actor.core_state = core_state;
+		actor.MutableCoreState().hot.in_world = true;
+		actor.MutableCoreState().hot.position.zone_id = assigned_zone_id;
+		actor.MutableCoreState().hot.position.map_id = map_template_id;
+		actor.RecomputeCombatRuntimeStats();
+		actor.bind_session(sid, serial);
+		actor.map_instance_id = instance_id;
+		spdlog::debug(
+			"Character combat stats recomputed on enter. char_id={} level={} job={} tribe={} weapon={} armor={} accessory={} costume={} max_hp={} max_mp={} atk={} def={}",
+			actor.char_id,
+			actor.MutableCoreState().identity.level,
+			actor.MutableCoreState().identity.job,
+			actor.MutableCoreState().identity.tribe,
+			actor.MutableCoreState().equip.weapon_template_id,
+			actor.MutableCoreState().equip.armor_template_id,
+			actor.MutableCoreState().equip.accessory_template_id,
+			actor.MutableCoreState().equip.costume_template_id,
+			actor.GetMaxHp(),
+			actor.GetMaxMp(),
+			actor.GetAttack(),
+			actor.GetDefense());
+	}
+
+	void WorldRuntime::OnCharacterEnterSnapshotResult_(
+		const svr::dqs_result::WorldCharacterEnterSnapshotResult& rr)
+	{
+		auto it = pending_character_enter_snapshot_requests_.find(rr.request_id);
+		if (it == pending_character_enter_snapshot_requests_.end()) {
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				{ rr.trace_id, rr.account_id, rr.char_id, rr.sid, rr.serial },
+				"stale_character_snapshot_result");
+			return;
+		}
+
+		auto pending_snapshot = std::move(it->second);
+		pending_character_enter_snapshot_requests_.erase(it);
+		auto pending = pending_snapshot.enter_pending;
+
+		if (!rr.found || rr.result != svr::dqs::ResultCode::success || !rr.core_state.identity.valid()) {
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::WorldCharacterSnapshotLoadResult,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				rr.fail_reason,
+				"snapshot_load_failed");
+			FailPendingEnterWorldConsumeRequest_(
+				pending,
+				pt_w::EnterWorldResultCode::internal_error,
+				"Character enter snapshot load failed.");
+			return;
+		}
+
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::WorldCharacterSnapshotLoadResult,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+			{},
+			rr.cache_blob_applied ? "snapshot_loaded_with_cache_blob" : "snapshot_loaded_db_only");
+
+		auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			return;
+		}
+
+		pt_w::S2C_enter_world_result res{};
+		res.account_id = pending.account_id;
+		res.char_id = pending.char_id;
+
+		const auto begin_result = TryBeginEnterWorldSession(
+			pending.sid,
+			pending.serial,
+			pending.account_id,
+			pending.char_id);
+
+		if (!begin_result.started()) {
+			res.ok = 0;
+			res.reason = static_cast<std::uint16_t>(MapBeginEnterFailReason_(begin_result.kind));
+			const auto h = proto::make_header(
+				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+				static_cast<std::uint16_t>(sizeof(res)));
+			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				fmt::format(
+					"begin_enter_world_rejected_after_snapshot kind={} stage={}",
+					static_cast<int>(begin_result.kind),
+					static_cast<int>(begin_result.stage)));
+			return;
+		}
+
+		const auto bind_result = BindAuthenticatedWorldSessionForLogin(
+			pending.account_id,
+			pending.char_id,
+			pending.sid,
+			pending.serial,
+			static_cast<std::uint16_t>(pt_w::WorldKickReason::duplicate_login));
+
+		if (bind_result.kind == BindAuthedWorldSessionResultKind::InvalidInput) {
+			CancelPendingEnterWorldSession(pending.sid, pending.serial, pending.char_id);
+			res.ok = 0;
+			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::bind_invalid_input);
+			const auto h = proto::make_header(
+				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+				static_cast<std::uint16_t>(sizeof(res)));
+			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				"world_session_bind_failed_after_snapshot");
+			return;
+		}
+
+		auto core_state = rr.core_state;
+		core_state.hot.in_world = true;
+		core_state.hot.dirty_flags |=
+			svr::CharacterDirtyFlags::resources |
+			svr::CharacterDirtyFlags::position;
+		core_state.hot.version += 1;
+
+		const auto map_template_id = core_state.hot.position.map_id != 0 ? core_state.hot.position.map_id : 1001u;
+		const auto instance_id = 0u;
+		const auto map_assignment = AssignMapInstance(map_template_id, instance_id, true, false, pending.trace_id);
+
+		switch (map_assignment.kind) {
+		case AssignMapInstanceResultKind::Ok:
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::info,
+				dc::enterlog::EnterStage::WorldZoneAssignResult,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				{},
+				fmt::format(
+					"zone_assign_immediate_success zone_id={} map_template_id={} instance_id={}",
+					map_assignment.zone_id,
+					map_template_id,
+					instance_id));
+			FinalizeEnterWorldSuccess_(
+				pending,
+				pending.account_id,
+				pending.char_id,
+				pending.login_session,
+				pending.world_token,
+				map_assignment.zone_id,
+				map_template_id,
+				instance_id,
+				core_state);
+			return;
+
+		case AssignMapInstanceResultKind::Pending:
+			{
+				dc::enterlog::LogEnterFlow(
+					spdlog::level::info,
+					dc::enterlog::EnterStage::WorldZoneAssignRequestSent,
+					{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+					{},
+					fmt::format(
+						"zone_assign_pending request_id={} map_template_id={} instance_id={}",
+						map_assignment.request_id,
+						map_template_id,
+						instance_id));
+				PendingEnterWorldFinalize finalize{};
+				finalize.assign_request_id = map_assignment.request_id;
+				finalize.enter_pending = pending;
+				finalize.map_template_id = map_template_id;
+				finalize.instance_id = instance_id;
+				finalize.core_state = std::move(core_state);
+				pending_enter_world_finalize_by_assign_request_[map_assignment.request_id].push_back(std::move(finalize));
+				return;
+			}
+
+		case AssignMapInstanceResultKind::NoZoneAvailable:
+		case AssignMapInstanceResultKind::RequestSendFailed:
+		case AssignMapInstanceResultKind::ResponseTimeout:
+		case AssignMapInstanceResultKind::Rejected:
+		default:
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::WorldZoneAssignResult,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				"world_zone_assign_failed",
+				fmt::format(
+					"kind={} reject_result_code={} map_template_id={} instance_id={}",
+					static_cast<int>(map_assignment.kind),
+					map_assignment.reject_result_code,
+					map_template_id,
+					instance_id));
+			RollbackBoundEnterWorld_(
+				pending,
+				"OnCharacterEnterSnapshotResult_ rolled back because map assignment failed.");
+
+			FailPendingEnterWorldConsumeRequest_(
+				pending,
+				MapAssignFailureToEnterWorldReason_(map_assignment.kind, map_assignment.reject_result_code),
+				"OnCharacterEnterSnapshotResult_ map assignment failed.");
+			return;
+		}
 	}
 
 
@@ -281,34 +615,41 @@ namespace svr {
 	bool WorldRuntime::RequestConsumeWorldAuthTicket(
 		std::uint32_t sid,
 		std::uint32_t serial,
+		std::uint64_t trace_id,
 		std::uint64_t account_id,
-		std::uint64_t char_id,
 		std::string_view login_session,
 		std::string_view token)
 	{
 		if (!account_ready_.load(std::memory_order_acquire)) {
-			spdlog::warn("[{}] skipped: account line not ready. sid={} serial={} account_id={} char_id={}",
+			spdlog::warn("[{}] skipped: account line not ready. sid={} serial={} account_id={}",
 				dc::logevt::world::kTicketConsumeReq,
-				sid, serial, account_id, char_id);
+				sid, serial, account_id);
 			return false;
 		}
 
 		if (!world_account_handler_) {
-			spdlog::warn("[{}] skipped: world_account_handler_ is null. sid={} serial={} account_id={} char_id={}",
+			spdlog::warn("[{}] skipped: world_account_handler_ is null. sid={} serial={} account_id={}",
 				dc::logevt::world::kTicketConsumeReq,
-				sid, serial, account_id, char_id);
+				sid, serial, account_id);
 			return false;
 		}
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::WorldTokenConsumeRequested,
+			{ trace_id, account_id, 0, sid, serial, login_session, token },
+			{},
+			"world_consume_started");
 
 		const auto request_id = next_world_auth_consume_request_id_.fetch_add(1, std::memory_order_relaxed);
 		{
 			std::lock_guard lk(pending_enter_world_consume_mtx_);
 			pending_enter_world_consume_[request_id] = PendingEnterWorldConsumeRequest{
+				trace_id,
 				request_id,
 				sid,
 				serial,
 				account_id,
-				char_id,
+				0,
 				std::string(login_session),
 				std::string(token),
 				std::chrono::steady_clock::now()
@@ -319,20 +660,25 @@ namespace svr {
 			100,
 			account_sid_.load(std::memory_order_relaxed),
 			account_serial_.load(std::memory_order_relaxed),
+			trace_id,
 			request_id,
 			account_id,
-			char_id,
 			login_session,
 			token);
 
 		if (!sent) {
 			std::lock_guard lk(pending_enter_world_consume_mtx_);
 			pending_enter_world_consume_.erase(request_id);
-			spdlog::warn("[{}] send failed request_id={} sid={} serial={} account_id={} char_id={}",
-				dc::logevt::world::kTicketConsumeReq, request_id, sid, serial, account_id, char_id);
+			spdlog::warn("[{}] send failed request_id={} sid={} serial={} account_id={}",
+				dc::logevt::world::kTicketConsumeReq, request_id, sid, serial, account_id);
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				{ trace_id, account_id, 0, sid, serial, login_session, token },
+				"world_token_consume_send_failed");
 		} else {
-			spdlog::info("[{}] sent request_id={} sid={} serial={} account_id={} char_id={} token={}",
-				dc::logevt::world::kTicketConsumeReq, request_id, sid, serial, account_id, char_id, token);
+			spdlog::info("[{}] sent request_id={} sid={} serial={} account_id={} token={}",
+				dc::logevt::world::kTicketConsumeReq, request_id, sid, serial, account_id, token);
 		}
 
 		return sent;
@@ -341,6 +687,7 @@ namespace svr {
 
 
 	void WorldRuntime::OnWorldAuthTicketConsumeResponse(
+		std::uint64_t trace_id,
 		std::uint64_t request_id,
 		ConsumePendingWorldAuthTicketResultKind result_kind,
 		std::uint64_t account_id,
@@ -358,41 +705,26 @@ namespace svr {
 					request_id,
 					account_id,
 					char_id);
+				dc::enterlog::LogEnterFlow(
+					spdlog::level::warn,
+					dc::enterlog::EnterStage::EnterFlowAborted,
+					{ trace_id, account_id, char_id, 0, 0, login_session, world_token },
+					"stale_world_token_consume_response");
 				return;
 			}
 			pending = std::move(it->second);
 			pending_enter_world_consume_.erase(it);
 		}
+		if (pending.trace_id == 0) {
+			pending.trace_id = trace_id;
+		}
+		if (pending.char_id == 0) {
+			pending.char_id = char_id;
+		}
 
 		auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
 		if (!handler) {
-			CancelPendingEnterWorldSession(pending.sid, pending.serial, pending.char_id);
 			return;
-		}
-
-		if (!IsEnterWorldSessionPending(pending.sid, pending.serial, pending.char_id)) {
-				const auto latest_serial = handler->GetLatestSerialForRuntime(pending.sid);
-			if (latest_serial != pending.serial) {
-				spdlog::warn(
-					"[{}] stale enter pending ignored. request_id={} sid={} serial={} latest_serial={} account_id={} char_id={}",
-					dc::logevt::world::kTicketConsumeResp,
-					request_id,
-					pending.sid,
-					pending.serial,
-					latest_serial,
-					pending.account_id,
-					pending.char_id);
-				return;
-			}
-
-			spdlog::warn(
-				"[{}] enter pending state missing but transport is still alive. request_id={} sid={} serial={} account_id={} char_id={}",
-				dc::logevt::world::kTicketConsumeResp,
-				request_id,
-				pending.sid,
-				pending.serial,
-				pending.account_id,
-				pending.char_id);
 		}
 
 		pt_w::S2C_enter_world_result res{};
@@ -400,18 +732,19 @@ namespace svr {
 		res.char_id = pending.char_id;
 
 		if (pending.account_id != account_id ||
-			pending.char_id != char_id ||
 			pending.login_session != login_session ||
 			pending.world_token != world_token)
 		{
 			spdlog::warn(
-				"[{}] mismatch. request_id={} pending_account_id={} resp_account_id={} pending_char_id={} resp_char_id={}",
+				"[{}] mismatch. request_id={} pending_account_id={} resp_account_id={} pending_login_session={} resp_login_session={} pending_token={} resp_token={}",
 				dc::logevt::world::kTicketConsumeResp,
 				request_id,
 				pending.account_id,
 				account_id,
-				pending.char_id,
-				char_id);
+				pending.login_session,
+				login_session,
+				pending.world_token,
+				world_token);
 
 			res.ok = 0;
 			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_mismatch);
@@ -419,6 +752,11 @@ namespace svr {
 				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
 				static_cast<std::uint16_t>(sizeof(res)));
 			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::WorldTokenConsumeResult,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				"consume_response_mismatch");
 			return;
 		}
 
@@ -428,7 +766,6 @@ namespace svr {
 			world_token.empty() ? pending.world_token : std::string(world_token);
 
 		if (result_kind != ConsumePendingWorldAuthTicketResultKind::Ok) {
-			CancelPendingEnterWorldSession(pending.sid, pending.serial, pending.char_id);
 			res.ok = 0;
 			switch (result_kind) {
 			case ConsumePendingWorldAuthTicketResultKind::Expired:
@@ -464,129 +801,33 @@ namespace svr {
 				account_id,
 				char_id,
 				static_cast<int>(result_kind));
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::WorldTokenConsumeResult,
+				{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+				"world_token_consume_failed");
 			return;
 		}
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::WorldTokenConsumeResult,
+			{ pending.trace_id, pending.account_id, pending.char_id, pending.sid, pending.serial, pending.login_session, pending.world_token },
+			{},
+			"world_token_consume_succeeded");
+		pending.login_session = final_login_session;
+		pending.world_token = final_world_token;
 
-		const auto bind_result = BindAuthenticatedWorldSessionForLogin(
-			pending.account_id,
-			pending.char_id,
-			pending.sid,
-			pending.serial,
-			static_cast<std::uint16_t>(pt_w::WorldKickReason::duplicate_login));
-
-		if (bind_result.kind == BindAuthedWorldSessionResultKind::InvalidInput) {
-			CancelPendingEnterWorldSession(pending.sid, pending.serial, pending.char_id);
+		if (!RequestCharacterEnterSnapshotLoad_(pending)) {
 			res.ok = 0;
-			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::bind_invalid_input);
+			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::internal_error);
 			const auto h = proto::make_header(
 				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
 				static_cast<std::uint16_t>(sizeof(res)));
 			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
-			spdlog::warn(
-				"[{}] request_id={} sid={} serial={} account_id={} char_id={} bind_kind={} duplicate_cause={}",
-				dc::logevt::world::kTicketConsumeBindFail,
-				request_id,
-				pending.sid,
-				pending.serial,
-				account_id,
-				char_id,
-				ToString(bind_result.kind),
-				ToString(bind_result.duplicate_cause));
-			return;
 		}
-		else {
-			const std::uint32_t world_code = 0;
-			svr::demo::DemoCharState st{};
-			st.char_id = char_id;
-			st.gold = 1000;
-			st.version = 1;
-
-			if (auto blob = TryLoadCharacterState(world_code, char_id))
-			{
-				svr::demo::DemoCharState loaded{};
-				if (svr::demo::TryDeserializeDemo(*blob, loaded) && loaded.char_id == char_id)
-				{
-					st = loaded;
-					spdlog::info("[Demo] loaded from redis char_id={} gold={} ver={}", st.char_id, st.gold, st.version);
-				}
-				else
-				{
-					spdlog::warn("[Demo] redis blob invalid, recreate char_id={}", char_id);
-				}
-			}
-			else
-			{
-				spdlog::info("[Demo] no redis state, create new char_id={}", char_id);
-			}
-
-			st.gold += 10;
-			st.version += 1;
-			const std::string out_blob = svr::demo::SerializeDemo(st);
-
-			constexpr std::uint32_t kDefaultMapTemplateId = 1001;
-			constexpr std::uint32_t kDefaultInstanceId = 0;
-			const auto map_assignment = AssignMapInstance(kDefaultMapTemplateId, kDefaultInstanceId, true, false);
-
-			switch (map_assignment.kind) {
-			case AssignMapInstanceResultKind::Ok:
-				FinalizeEnterWorldSuccess_(
-					pending,
-					account_id,
-					char_id,
-					pending.login_session,
-					pending.world_token,
-					map_assignment.zone_id,
-					kDefaultMapTemplateId,
-					kDefaultInstanceId,
-					out_blob);
-				return;
-
-			case AssignMapInstanceResultKind::Pending:
-				{
-					PendingEnterWorldFinalize finalize{};
-					finalize.assign_request_id = map_assignment.request_id;
-					finalize.enter_pending = pending;
-					finalize.map_template_id = kDefaultMapTemplateId;
-					finalize.instance_id = kDefaultInstanceId;
-					finalize.cached_state_blob = out_blob;
-
-					pending_enter_world_finalize_by_assign_request_[map_assignment.request_id].push_back(std::move(finalize));
-					return;
-				}
-
-			case AssignMapInstanceResultKind::NoZoneAvailable:
-			case AssignMapInstanceResultKind::RequestSendFailed:
-			case AssignMapInstanceResultKind::ResponseTimeout:
-			case AssignMapInstanceResultKind::Rejected:
-			default:
-				RollbackBoundEnterWorld_(
-					pending,
-					"OnWorldAuthTicketConsumeResponse rolled back because map assignment failed.");
-
-				FailPendingEnterWorldConsumeRequest_(
-					pending,
-					MapAssignFailureToEnterWorldReason_(map_assignment.kind, map_assignment.reject_result_code),
-					"OnWorldAuthTicketConsumeResponse map assignment failed.");
-				return;
-			}
-		}
-
-		//const auto h = proto::make_header(
-		//	static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-		//	static_cast<std::uint16_t>(sizeof(res)));
-		//handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
-
-		//spdlog::info(
-		//	"OnWorldAuthTicketConsumeResponse success. request_id={} sid={} serial={} account_id={} char_id={} bind_kind={} duplicate_cause={}",
-		//	request_id,
-		//	pending.sid,
-		//	pending.serial,
-		//	account_id,
-		//	char_id,
-		//	ToString(bind_result.kind),
-		//	ToString(bind_result.duplicate_cause));
 	}
 
-
-
 } // namespace svr
+
+
+

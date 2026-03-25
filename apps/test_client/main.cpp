@@ -133,7 +133,6 @@ int main()
 			pt_login::C2S_login_request req{};
 			std::snprintf(req.login_id, sizeof(req.login_id), "%s", id.c_str());
 			std::snprintf(req.password, sizeof(req.password), "%s", pw.c_str());
-			req.selected_char_id = selected_char_id;
 
 			auto h = proto::make_header(
 				static_cast<std::uint16_t>(pt_login::LoginC2SMsg::login_request),

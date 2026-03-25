@@ -27,6 +27,9 @@ namespace svr {
 				if (auto* h = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>()) actor_id = h->GetActorIdBySession(rr.sid);
 				else actor_id = rr.sid;
 			}
+			else if constexpr (std::is_same_v<T, svr::dqs_result::WorldCharacterEnterSnapshotResult>) {
+				actor_id = rr.char_id != 0 ? rr.char_id : 0;
+			}
 			else if constexpr (std::is_same_v<T, svr::dqs_result::FlushOneCharResult>) {
 				actor_id = rr.char_id;
 
@@ -95,13 +98,18 @@ namespace svr {
 					spdlog::info(
 						"[FlushOneChar] world={}, char_id={}, saved={}, result={}, expected_ver={}, actual_ver={}",
 						rr.world_code, rr.char_id, rr.saved, (int)rr.result, rr.expected_version, rr.actual_version);
-					if (rr.result == svr::dqs::ResultCode::conflict) {
-						spdlog::warn(
-							"[FlushOneCharConflict] world={} char_id={} expected_ver={} actual_ver={}",
-							rr.world_code, rr.char_id, rr.expected_version, rr.actual_version);
+				if (rr.result == svr::dqs::ResultCode::conflict) {
+					spdlog::warn(
+						"[FlushOneCharConflict] world={} char_id={} expected_ver={} actual_ver={}",
+						rr.world_code, rr.char_id, rr.expected_version, rr.actual_version);
 					}
 					return;
 
+			}
+
+			if constexpr (std::is_same_v<T, svr::dqs_result::WorldCharacterEnterSnapshotResult>) {
+				OnCharacterEnterSnapshotResult_(rr);
+				return;
 			}
 
 		}, r);
@@ -216,6 +224,15 @@ namespace svr {
 				svr::dqs_payload::FlushDirtyChars p{};
 				std::memcpy(&p, data, sizeof(p));
 				return (std::uint32_t)(p.shard_id % shard_count);
+
+			}
+
+		}
+		if (qc == svr::dqs::QueryCase::world_character_enter_snapshot) {
+			if (size >= (int)sizeof(svr::dqs_payload::WorldCharacterEnterSnapshot)) {
+				svr::dqs_payload::WorldCharacterEnterSnapshot p{};
+				std::memcpy(&p, data, sizeof(p));
+				return (std::uint32_t)(p.char_id % shard_count);
 
 			}
 
@@ -457,7 +474,13 @@ namespace svr {
 							try
 							{
 								auto& conn = world_pools_[world_code]->next();
-								db::save_character_blob(conn, char_id, *blob);
+								svr::demo::DemoCharState loaded_demo{};
+								CharacterRuntimeHotState hot_state{};
+								if (svr::demo::TryDeserializeDemo(*blob, loaded_demo) && loaded_demo.char_id == char_id) {
+									hot_state.resources.gold = loaded_demo.gold;
+									hot_state.version = loaded_demo.version;
+								}
+								WorldCharacterRepository::FlushCharacterHotState(conn, world_code, char_id, hot_state, *blob);
 								redis_cache_->remove_dirty(world_code, char_id);
 								saved = true;
 							}
@@ -474,6 +497,73 @@ namespace svr {
 							r.expected_version = expected_version;
 							r.actual_version = actual_version;
 							r.saved = saved;
+							r.result = slot.result;
+							PostDqsResult(std::move(r));
+						}
+						break;
+					case svr::dqs::QueryCase::world_character_enter_snapshot:
+						{
+							if (slot.data_size < sizeof(svr::dqs_payload::WorldCharacterEnterSnapshot))
+							{
+								slot.result = svr::dqs::ResultCode::invalid_data;
+								break;
+							}
+
+							svr::dqs_payload::WorldCharacterEnterSnapshot payload{};
+							std::memcpy(&payload, slot.data.data(), sizeof(payload));
+
+							svr::dqs_result::WorldCharacterEnterSnapshotResult r{};
+							r.world_code = payload.world_code;
+							r.sid = payload.sid;
+							r.serial = payload.serial;
+							r.trace_id = payload.trace_id;
+							r.request_id = payload.request_id;
+							r.account_id = payload.account_id;
+							r.char_id = payload.char_id;
+
+							if (payload.world_code >= world_pools_.size() || !world_pools_[payload.world_code] || world_pools_[payload.world_code]->conns.empty())
+							{
+								slot.result = svr::dqs::ResultCode::db_error;
+								std::memcpy(r.fail_reason, "world_db_not_ready", sizeof("world_db_not_ready"));
+								r.result = slot.result;
+								PostDqsResult(std::move(r));
+								break;
+							}
+
+							std::string cached_blob;
+							if (payload.cached_state_blob_size > 0) {
+								const auto size = static_cast<std::size_t>(std::min<std::uint16_t>(
+									payload.cached_state_blob_size,
+									static_cast<std::uint16_t>(dc::k_character_state_blob_max_len)));
+								cached_blob.assign(payload.cached_state_blob, payload.cached_state_blob + size);
+							}
+
+							try
+							{
+								auto& conn = world_pools_[payload.world_code]->next();
+								auto loaded = WorldCharacterRepository::LoadCharacterEnterSnapshot(
+									conn,
+									payload.account_id,
+									payload.char_id,
+									cached_blob);
+
+								r.found = loaded.found;
+								r.cache_blob_applied = loaded.cache_blob_applied;
+								r.core_state = std::move(loaded.core_state);
+								if (!loaded.fail_reason.empty()) {
+									std::memcpy(
+										r.fail_reason,
+										loaded.fail_reason.c_str(),
+										std::min<std::size_t>(loaded.fail_reason.size() + 1, sizeof(r.fail_reason)));
+								}
+							}
+							catch (const std::exception& e)
+							{
+								spdlog::error("LoadCharacterEnterSnapshot DQS fail char_id={} err={}", payload.char_id, e.what());
+								slot.result = svr::dqs::ResultCode::db_error;
+								std::memcpy(r.fail_reason, "db_error", sizeof("db_error"));
+							}
+
 							r.result = slot.result;
 							PostDqsResult(std::move(r));
 						}
@@ -627,6 +717,18 @@ namespace svr {
 		payload.world_code = world_code;
 		payload.char_id = char_id;
 		payload.expected_version = 0;
+
+		auto& actor = GetOrCreatePlayerActor(char_id);
+		if (const auto* core = actor.CoreState(); core != nullptr) {
+			const auto blob = actor.SerializePersistentState();
+			CacheCharacterState(world_code, char_id, blob);
+			payload.expected_version = core->hot.version;
+			spdlog::debug(
+				"RequestFlushCharacter uses core_state.hot. char_id={} version={} dirty_flags={}",
+				char_id,
+				core->hot.version,
+				static_cast<std::uint32_t>(core->hot.dirty_flags));
+		}
 
 		if (auto blob = TryLoadCharacterState(world_code, char_id)) {
 			svr::demo::DemoCharState st{};

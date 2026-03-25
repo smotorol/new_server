@@ -1,0 +1,18 @@
+﻿source_file,column_name,meaning,certainty,target_field,note
+005_00002.csv,iIndex,item template id,confirmed,ItemTemplate.item_id,ITEMSYSTEM::Search/Return key
+005_00002.csv,iEquipPart,equip slot category,confirmed,ItemTemplate.equip_part,weapon/armor/accessory classification input
+005_00002.csv,iEquipTribe,tribe restriction,confirmed,ItemTemplate.equip_tribe,parsing + future validation hook
+005_00002.csv,iAttackPower,direct attack bonus,confirmed,ItemTemplate.attack,direct stat bonus used now
+005_00002.csv,iDefensePower,direct defense bonus,confirmed,ItemTemplate.defense,direct stat bonus used now
+005_00002.csv,iLife,direct hp bonus,confirmed,ItemTemplate.life,direct stat bonus used now
+005_00002.csv,iMana,direct mp bonus,confirmed,ItemTemplate.mana,direct stat bonus used now
+005_00002.csv,iVitality,indirect hp-related bonus,confirmed,ItemTemplate.vitality,parsed only for future formula
+005_00002.csv,iKi,indirect mp-related bonus,confirmed,ItemTemplate.ki,parsed only for future formula
+005_00002.csv,iType,item category,estimated,not_mapped,requires broader item system context
+005_00002.csv,iSort,item subcategory,estimated,not_mapped,requires broader item system context
+005_00002.csv,iLevel,item tier or equip level hint,estimated,not_mapped,documented only
+005_00002.csv,iAttackSucess,hit bonus,confirmed,not_mapped,out of current stat snapshot scope
+005_00002.csv,iAttackBlock,block bonus,confirmed,not_mapped,out of current stat snapshot scope
+005_00002.csv,iCritical,critical bonus,confirmed,not_mapped,out of current stat snapshot scope
+005_00002.csv,iLife_Up_Per,percent hp bonus,confirmed,not_mapped,requires percent option pipeline
+005_00002.csv,iMana_Up_Per,percent mp bonus,confirmed,not_mapped,requires percent option pipeline

@@ -1,0 +1,78 @@
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+  <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
+  <PropertyGroup>
+    <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
+    <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
+    <ProjectGuid>{B093DB4C-40DE-4A43-99FA-76C650E56D24}</ProjectGuid>
+    <OutputType>WinExe</OutputType>
+    <RootNamespace>DummyClientWinForms</RootNamespace>
+    <AssemblyName>DummyClientWinForms</AssemblyName>
+    <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
+    <FileAlignment>512</FileAlignment>
+    <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
+    <Deterministic>true</Deterministic>
+    <LangVersion>latest</LangVersion>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Debug|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugSymbols>true</DebugSymbols>
+    <DebugType>full</DebugType>
+    <Optimize>false</Optimize>
+    <OutputPath>bin\Debug\</OutputPath>
+    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
+    <PlatformTarget>AnyCPU</PlatformTarget>
+    <DebugType>pdbonly</DebugType>
+    <Optimize>true</Optimize>
+    <OutputPath>bin\Release\</OutputPath>
+    <DefineConstants>TRACE</DefineConstants>
+    <WarningLevel>4</WarningLevel>
+  </PropertyGroup>
+  <ItemGroup>
+    <Reference Include="System" />
+    <Reference Include="System.Core" />
+    <Reference Include="System.Drawing" />
+    <Reference Include="System.Windows.Forms" />
+  </ItemGroup>
+  <ItemGroup>
+    <Compile Include="Program.cs" />
+    <Compile Include="MainForm.cs">
+      <SubType>Form</SubType>
+    </Compile>
+    <Compile Include="MainForm.Designer.cs">
+      <DependentUpon>MainForm.cs</DependentUpon>
+    </Compile>
+    <Compile Include="Network\TcpClientEx.cs" />
+    <Compile Include="Network\PacketReader.cs" />
+    <Compile Include="Network\PacketWriter.cs" />
+    <Compile Include="Network\ClientProtocol.cs" />
+    <Compile Include="Models\CharacterSummary.cs" />
+    <Compile Include="Models\WorldSummary.cs" />
+    <Compile Include="Models\WorldObject.cs" />
+    <Compile Include="Models\PlayerObject.cs" />
+    <Compile Include="Models\MonsterObject.cs" />
+    <Compile Include="Models\NpcObject.cs" />
+    <Compile Include="Models\PortalObject.cs" />
+    <Compile Include="Scenes\LoginPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Scenes\CharacterPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Scenes\WorldPanel.cs">
+      <SubType>UserControl</SubType>
+    </Compile>
+    <Compile Include="Services\DummyClientState.cs" />
+    <Compile Include="Services\WorldRenderService.cs" />
+    <Compile Include="Services\GameDataService.cs" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="MainForm.resx">
+      <DependentUpon>MainForm.cs</DependentUpon>
+    </EmbeddedResource>
+  </ItemGroup>
+  <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
+</Project>
+

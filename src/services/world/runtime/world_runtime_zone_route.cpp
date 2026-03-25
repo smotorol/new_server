@@ -1,5 +1,9 @@
 #include "services/world/runtime/world_runtime_private.h"
 
+#include <fmt/format.h>
+
+#include "server_common/log/enter_flow_log.h"
+
 namespace svr {
 
 	namespace {
@@ -64,6 +68,20 @@ namespace svr {
 				res.instance_id);
 
 			for (auto& finalize : finalize_list) {
+				dc::enterlog::LogEnterFlow(
+					spdlog::level::warn,
+					dc::enterlog::EnterStage::WorldZoneAssignResult,
+					{ finalize.enter_pending.trace_id, finalize.enter_pending.account_id, finalize.enter_pending.char_id, finalize.enter_pending.sid, finalize.enter_pending.serial, finalize.enter_pending.login_session, finalize.enter_pending.world_token },
+					"world_zone_assign_response_mismatch",
+					fmt::format(
+						"request_id={} route_sid={} route_serial={} req_map_template_id={} req_instance_id={} res_map_template_id={} res_instance_id={}",
+						res.request_id,
+						sid,
+						serial,
+						pending_assign.map_template_id,
+						pending_assign.instance_id,
+						res.map_template_id,
+						res.instance_id));
 				RollbackBoundEnterWorld_(
 					finalize.enter_pending,
 					"OnZoneMapAssignResponse rolled back because response map key mismatched.");
@@ -83,6 +101,12 @@ namespace svr {
 					finalize.enter_pending.sid,
 					finalize.enter_pending.serial,
 					finalize.enter_pending.char_id)) {
+					dc::enterlog::LogEnterFlow(
+						spdlog::level::warn,
+						dc::enterlog::EnterStage::EnterFlowAborted,
+						{ finalize.enter_pending.trace_id, finalize.enter_pending.account_id, finalize.enter_pending.char_id, finalize.enter_pending.sid, finalize.enter_pending.serial, finalize.enter_pending.login_session, finalize.enter_pending.world_token },
+						"world_pending_enter_mismatch_after_zone_assign_reject",
+						fmt::format("request_id={} zone_sid={} zone_serial={}", res.request_id, sid, serial));
 					spdlog::warn(
 						"OnZoneMapAssignResponse stale pending finalize dropped after reject. request_id={} world_sid={} world_serial={} char_id={}",
 						res.request_id,
@@ -92,6 +116,19 @@ namespace svr {
 					continue;
 				}
 
+				dc::enterlog::LogEnterFlow(
+					spdlog::level::warn,
+					dc::enterlog::EnterStage::WorldZoneAssignResult,
+					{ finalize.enter_pending.trace_id, finalize.enter_pending.account_id, finalize.enter_pending.char_id, finalize.enter_pending.sid, finalize.enter_pending.serial, finalize.enter_pending.login_session, finalize.enter_pending.world_token },
+					"world_zone_assign_failed",
+					fmt::format(
+						"request_id={} zone_sid={} zone_serial={} result_code={} map_template_id={} instance_id={}",
+						res.request_id,
+						sid,
+						serial,
+						res.result_code,
+						res.map_template_id,
+						res.instance_id));
 				RollbackBoundEnterWorld_(
 					finalize.enter_pending,
 					"OnZoneMapAssignResponse rolled back because zone rejected map assign.");
@@ -117,6 +154,12 @@ namespace svr {
 				finalize.enter_pending.sid,
 				finalize.enter_pending.serial,
 				finalize.enter_pending.char_id)) {
+				dc::enterlog::LogEnterFlow(
+					spdlog::level::warn,
+					dc::enterlog::EnterStage::EnterFlowAborted,
+					{ finalize.enter_pending.trace_id, finalize.enter_pending.account_id, finalize.enter_pending.char_id, finalize.enter_pending.sid, finalize.enter_pending.serial, finalize.enter_pending.login_session, finalize.enter_pending.world_token },
+					"world_pending_enter_mismatch_after_zone_assign_success",
+					fmt::format("request_id={} zone_sid={} zone_serial={}", res.request_id, sid, serial));
 				spdlog::warn(
 					"OnZoneMapAssignResponse stale pending finalize dropped after success. request_id={} world_sid={} world_serial={} char_id={}",
 					res.request_id,
@@ -126,6 +169,19 @@ namespace svr {
 				continue;
 			}
 
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::info,
+				dc::enterlog::EnterStage::WorldZoneAssignResult,
+				{ finalize.enter_pending.trace_id, finalize.enter_pending.account_id, finalize.enter_pending.char_id, finalize.enter_pending.sid, finalize.enter_pending.serial, finalize.enter_pending.login_session, finalize.enter_pending.world_token },
+				{},
+				fmt::format(
+					"zone_assign_succeeded request_id={} zone_sid={} zone_serial={} zone_id={} map_template_id={} instance_id={}",
+					res.request_id,
+					sid,
+					serial,
+					res.zone_id,
+					res.map_template_id,
+					res.instance_id));
 			FinalizeEnterWorldSuccess_(
 				finalize.enter_pending,
 				finalize.enter_pending.account_id,
@@ -135,7 +191,7 @@ namespace svr {
 				res.zone_id,
 				finalize.map_template_id,
 				finalize.instance_id,
-				finalize.cached_state_blob);
+				finalize.core_state);
 		}
 	}
 
@@ -156,6 +212,12 @@ namespace svr {
 			pending_enter.enter_pending.serial,
 			pending_enter.enter_pending.char_id)) {
 			pending_zone_player_enter_requests_.erase(it);
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				{ pending_enter.enter_pending.trace_id, pending_enter.enter_pending.account_id, pending_enter.enter_pending.char_id, pending_enter.enter_pending.sid, pending_enter.enter_pending.serial, pending_enter.enter_pending.login_session, pending_enter.enter_pending.world_token },
+				"world_pending_enter_mismatch_before_zone_player_enter_ack",
+				fmt::format("request_id={} zone_sid={} zone_serial={}", ack.request_id, sid, serial));
 			spdlog::warn(
 				"OnZonePlayerEnterAck stale enter pending dropped. request_id={} sid={} serial={} world_sid={} world_serial={} char_id={}",
 				ack.request_id,
@@ -173,6 +235,22 @@ namespace svr {
 			pending_enter.map_template_id != ack.map_template_id ||
 			pending_enter.instance_id != ack.instance_id ||
 			pending_enter.target_zone_id != ack.zone_id) {
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::ZonePlayerEnterResult,
+				{ pending_enter.enter_pending.trace_id, pending_enter.enter_pending.account_id, pending_enter.enter_pending.char_id, pending_enter.enter_pending.sid, pending_enter.enter_pending.serial, pending_enter.enter_pending.login_session, pending_enter.enter_pending.world_token },
+				"zone_player_enter_ack_mismatch",
+				fmt::format(
+					"request_id={} zone_sid={} zone_serial={} pending_zone_id={} ack_zone_id={} pending_map_template_id={} ack_map_template_id={} pending_instance_id={} ack_instance_id={}",
+					ack.request_id,
+					sid,
+					serial,
+					pending_enter.target_zone_id,
+					ack.zone_id,
+					pending_enter.map_template_id,
+					ack.map_template_id,
+					pending_enter.instance_id,
+					ack.instance_id));
 			spdlog::warn(
 				"OnZonePlayerEnterAck mismatch. request_id={} sid={} serial={} pending_char_id={} ack_char_id={} pending_zone_id={} ack_zone_id={} pending_map_template_id={} ack_map_template_id={} pending_instance_id={} ack_instance_id={}",
 				ack.request_id,
@@ -202,6 +280,12 @@ namespace svr {
 				pending_enter.enter_pending.sid,
 				pending_enter.enter_pending.serial,
 				pending_enter.enter_pending.char_id)) {
+				dc::enterlog::LogEnterFlow(
+					spdlog::level::warn,
+					dc::enterlog::EnterStage::EnterFlowAborted,
+					{ pending_enter.enter_pending.trace_id, pending_enter.enter_pending.account_id, pending_enter.enter_pending.char_id, pending_enter.enter_pending.sid, pending_enter.enter_pending.serial, pending_enter.enter_pending.login_session, pending_enter.enter_pending.world_token },
+					"world_pending_enter_mismatch_after_zone_player_reject",
+					fmt::format("request_id={} zone_sid={} zone_serial={}", ack.request_id, sid, serial));
 				spdlog::warn(
 					"OnZonePlayerEnterAck stale reject dropped. request_id={} world_sid={} world_serial={} char_id={}",
 					ack.request_id,
@@ -211,6 +295,20 @@ namespace svr {
 				return;
 			}
 
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::ZonePlayerEnterResult,
+				{ pending_enter.enter_pending.trace_id, pending_enter.enter_pending.account_id, pending_enter.enter_pending.char_id, pending_enter.enter_pending.sid, pending_enter.enter_pending.serial, pending_enter.enter_pending.login_session, pending_enter.enter_pending.world_token },
+				"zone_player_enter_failed",
+				fmt::format(
+					"request_id={} zone_sid={} zone_serial={} result_code={} zone_id={} map_template_id={} instance_id={}",
+					ack.request_id,
+					sid,
+					serial,
+					ack.result_code,
+					ack.zone_id,
+					ack.map_template_id,
+					ack.instance_id));
 			RollbackBoundEnterWorld_(
 				pending_enter.enter_pending,
 				"OnZonePlayerEnterAck rolled back because zone rejected player enter.");
@@ -221,6 +319,19 @@ namespace svr {
 			return;
 		}
 
+		dc::enterlog::LogEnterFlow(
+			spdlog::level::info,
+			dc::enterlog::EnterStage::ZonePlayerEnterResult,
+			{ pending_enter.enter_pending.trace_id, pending_enter.enter_pending.account_id, pending_enter.enter_pending.char_id, pending_enter.enter_pending.sid, pending_enter.enter_pending.serial, pending_enter.enter_pending.login_session, pending_enter.enter_pending.world_token },
+			{},
+			fmt::format(
+				"zone_player_enter_succeeded request_id={} zone_sid={} zone_serial={} zone_id={} map_template_id={} instance_id={}",
+				ack.request_id,
+				sid,
+				serial,
+				ack.zone_id,
+				ack.map_template_id,
+				ack.instance_id));
 		CompleteEnterWorldSuccessAfterZoneAck_(pending_enter);
 	}
 
@@ -288,7 +399,7 @@ namespace svr {
 		return std::nullopt;
 	}
 
-	bool WorldRuntime::SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
+	bool WorldRuntime::SendZonePlayerEnter_(std::uint64_t trace_id, std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
 	{
 		auto route = FindZoneRouteByZoneId_(zone_id);
 		if (!route.has_value()) {
@@ -298,7 +409,7 @@ namespace svr {
 		if (!handler) {
 			return false;
 		}
-		return handler->SendPlayerEnter(0, route->sid, route->serial, request_id, char_id, map_template_id, instance_id, zone_id);
+		return handler->SendPlayerEnter(0, route->sid, route->serial, trace_id, request_id, char_id, map_template_id, instance_id, zone_id);
 	}
 
 	bool WorldRuntime::SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
@@ -320,7 +431,8 @@ namespace svr {
 		std::uint32_t map_template_id,
 		std::uint32_t instance_id,
 		bool create_if_missing,
-		bool dungeon_instance)
+		bool dungeon_instance,
+		std::uint64_t trace_id)
 	{
 		AssignMapInstanceResult result{};
 		result.map_template_id = map_template_id;
@@ -354,6 +466,7 @@ namespace svr {
 
 		const std::uint64_t request_id = next_zone_assign_request_id_++;
 		PendingZoneAssignRequest pending{};
+		pending.trace_id = trace_id;
 		pending.request_id = request_id;
 		pending.map_key = key;
 		pending.target_sid = zone->sid;
@@ -366,7 +479,7 @@ namespace svr {
 		pending_zone_assign_requests_[request_id] = pending;
 		pending_zone_assign_request_id_by_map_key_[key] = request_id;
 
-		if (!handler->SendMapAssignRequest(0, zone->sid, zone->serial, request_id, map_template_id, instance_id, create_if_missing, dungeon_instance)) {
+		if (!handler->SendMapAssignRequest(0, zone->sid, zone->serial, trace_id, request_id, map_template_id, instance_id, create_if_missing, dungeon_instance)) {
 			pending_zone_assign_requests_.erase(request_id);
 			pending_zone_assign_request_id_by_map_key_.erase(key);
 			result.kind = AssignMapInstanceResultKind::RequestSendFailed;

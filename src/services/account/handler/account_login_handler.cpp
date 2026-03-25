@@ -1,5 +1,6 @@
 #include "services/account/handler/account_login_handler.h"
 
+#include <algorithm>
 #include <cstdio>
 #include <utility>
 
@@ -13,10 +14,18 @@ namespace pt_la = proto::internal::login_account;
 AccountLoginHandler::AccountLoginHandler(
     RegisterHelloCallback on_register_hello,
     DisconnectCallback on_disconnect,
-    AuthRequestCallback on_auth_request)
+    AuthRequestCallback on_auth_request,
+    WorldListRequestCallback on_world_list_request,
+    WorldSelectRequestCallback on_world_select_request,
+    CharacterListRequestCallback on_character_list_request,
+    CharacterSelectRequestCallback on_character_select_request)
     : on_register_hello_(std::move(on_register_hello))
     , on_disconnect_(std::move(on_disconnect))
     , on_auth_request_(std::move(on_auth_request))
+    , on_world_list_request_(std::move(on_world_list_request))
+    , on_world_select_request_(std::move(on_world_select_request))
+    , on_character_list_request_(std::move(on_character_list_request))
+    , on_character_select_request_(std::move(on_character_select_request))
 {
 }
 
@@ -29,7 +38,7 @@ bool AccountLoginHandler::SendRegisterAck(
     std::string_view server_name,
     std::uint16_t listen_port)
 {
-    proto::internal::login_account::LoginServerRegisterAck pkt{};
+    pt_la::LoginServerRegisterAck pkt{};
     pkt.accepted = accepted;
     pkt.server_id = server_id;
     pkt.listen_port = listen_port;
@@ -47,6 +56,7 @@ bool AccountLoginHandler::SendAccountAuthResult(
     std::uint32_t dwProID,
     std::uint32_t dwIndex,
     std::uint32_t dwSerial,
+    std::uint64_t trace_id,
     std::uint64_t request_id,
     bool ok,
     std::uint64_t account_id,
@@ -58,6 +68,7 @@ bool AccountLoginHandler::SendAccountAuthResult(
     std::uint16_t world_port)
 {
     pt_la::AccountAuthResult pkt{};
+    pkt.trace_id = trace_id;
     pkt.request_id = request_id;
     pkt.ok = ok ? 1 : 0;
     pkt.account_id = account_id;
@@ -80,16 +91,86 @@ bool AccountLoginHandler::SendAccountAuthResult(
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
+bool AccountLoginHandler::SendWorldListResult(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
+    std::uint32_t dwSerial,
+    std::uint64_t trace_id,
+    std::uint64_t request_id,
+    bool ok,
+    std::uint64_t account_id,
+    std::uint16_t count,
+    const pt_la::WorldSummary* worlds,
+    std::string_view fail_reason)
+{
+    pt_la::WorldListResponse pkt{};
+    pkt.trace_id = trace_id;
+    pkt.request_id = request_id;
+    pkt.ok = ok ? 1 : 0;
+    pkt.account_id = account_id;
+    pkt.count = count;
+    if (worlds != nullptr) {
+        for (std::size_t i = 0; i < std::min<std::size_t>(count, dc::k_world_list_max_count); ++i) {
+            pkt.worlds[i] = worlds[i];
+        }
+    }
+    std::snprintf(pkt.fail_reason, sizeof(pkt.fail_reason), "%.*s",
+        static_cast<int>(fail_reason.size()), fail_reason.data());
+
+    const auto h = proto::make_header(
+        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::world_list_response),
+        static_cast<std::uint16_t>(sizeof(pkt)));
+    return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
+bool AccountLoginHandler::SendWorldSelectResult(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
+    std::uint32_t dwSerial,
+    std::uint64_t trace_id,
+    std::uint64_t request_id,
+    bool ok,
+    std::uint64_t account_id,
+    std::uint16_t world_id,
+    std::uint16_t channel_id,
+    std::string_view login_session,
+    std::string_view world_host,
+    std::string_view fail_reason,
+    std::uint16_t world_port)
+{
+    pt_la::WorldSelectResponse pkt{};
+    pkt.trace_id = trace_id;
+    pkt.request_id = request_id;
+    pkt.ok = ok ? 1 : 0;
+    pkt.account_id = account_id;
+    pkt.world_id = world_id;
+    pkt.channel_id = channel_id;
+    pkt.world_port = world_port;
+    std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
+        static_cast<int>(login_session.size()), login_session.data());
+    std::snprintf(pkt.world_host, sizeof(pkt.world_host), "%.*s",
+        static_cast<int>(world_host.size()), world_host.data());
+    std::snprintf(pkt.fail_reason, sizeof(pkt.fail_reason), "%.*s",
+        static_cast<int>(fail_reason.size()), fail_reason.data());
+
+    const auto h = proto::make_header(
+        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::world_select_response),
+        static_cast<std::uint16_t>(sizeof(pkt)));
+    return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
 bool AccountLoginHandler::SendWorldEnterSuccessNotify(
     std::uint32_t dwProID,
     std::uint32_t dwIndex,
     std::uint32_t dwSerial,
+    std::uint64_t trace_id,
     std::uint64_t account_id,
     std::uint64_t char_id,
     std::string_view login_session,
     std::string_view world_token)
 {
     pt_la::WorldEnterSuccessNotify pkt{};
+    pkt.trace_id = trace_id;
     pkt.account_id = account_id;
     pkt.char_id = char_id;
 
@@ -102,6 +183,73 @@ bool AccountLoginHandler::SendWorldEnterSuccessNotify(
         static_cast<std::uint16_t>(pt_la::LoginAccountMsg::world_enter_success_notify),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
+    return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
+bool AccountLoginHandler::SendCharacterListResult(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
+    std::uint32_t dwSerial,
+    std::uint64_t trace_id,
+    std::uint64_t request_id,
+    bool ok,
+    std::uint64_t account_id,
+    std::uint16_t count,
+    const pt_la::CharacterSummary* characters,
+    std::string_view fail_reason)
+{
+    pt_la::CharacterListResponse pkt{};
+    pkt.trace_id = trace_id;
+    pkt.request_id = request_id;
+    pkt.ok = ok ? 1 : 0;
+    pkt.account_id = account_id;
+    pkt.count = count;
+    if (characters != nullptr) {
+        for (std::size_t i = 0; i < std::min<std::size_t>(count, dc::k_character_list_max_count); ++i) {
+            pkt.characters[i] = characters[i];
+        }
+    }
+    std::snprintf(pkt.fail_reason, sizeof(pkt.fail_reason), "%.*s",
+        static_cast<int>(fail_reason.size()), fail_reason.data());
+    const auto h = proto::make_header(
+        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::character_list_response),
+        static_cast<std::uint16_t>(sizeof(pkt)));
+    return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
+bool AccountLoginHandler::SendCharacterSelectResult(
+    std::uint32_t dwProID,
+    std::uint32_t dwIndex,
+    std::uint32_t dwSerial,
+    std::uint64_t trace_id,
+    std::uint64_t request_id,
+    bool ok,
+    std::uint64_t account_id,
+    std::uint64_t char_id,
+    std::string_view login_session,
+    std::string_view world_token,
+    std::string_view world_host,
+    std::string_view fail_reason,
+    std::uint16_t world_port)
+{
+    pt_la::CharacterSelectResponse pkt{};
+    pkt.trace_id = trace_id;
+    pkt.request_id = request_id;
+    pkt.ok = ok ? 1 : 0;
+    pkt.account_id = account_id;
+    pkt.char_id = char_id;
+    pkt.world_port = world_port;
+    std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
+        static_cast<int>(login_session.size()), login_session.data());
+    std::snprintf(pkt.world_token, sizeof(pkt.world_token), "%.*s",
+        static_cast<int>(world_token.size()), world_token.data());
+    std::snprintf(pkt.world_host, sizeof(pkt.world_host), "%.*s",
+        static_cast<int>(world_host.size()), world_host.data());
+    std::snprintf(pkt.fail_reason, sizeof(pkt.fail_reason), "%.*s",
+        static_cast<int>(fail_reason.size()), fail_reason.data());
+    const auto h = proto::make_header(
+        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::character_select_response),
+        static_cast<std::uint16_t>(sizeof(pkt)));
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
@@ -148,10 +296,85 @@ bool AccountLoginHandler::DataAnalysis(
                 on_auth_request_(
                     n,
                     GetLatestSerial(n),
+                    req->trace_id,
                     req->request_id,
                     req->login_id,
-                    req->password,
-                    req->selected_char_id);
+                    req->password);
+            }
+            return true;
+        }
+    case pt_la::LoginAccountMsg::world_list_request:
+        {
+            const auto* req = proto::as<pt_la::WorldListRequest>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("AccountLoginHandler invalid world_list_request sid={}", n);
+                return false;
+            }
+            if (on_world_list_request_) {
+                on_world_list_request_(
+                    n,
+                    GetLatestSerial(n),
+                    req->trace_id,
+                    req->request_id,
+                    req->account_id,
+                    req->login_session);
+            }
+            return true;
+        }
+    case pt_la::LoginAccountMsg::world_select_request:
+        {
+            const auto* req = proto::as<pt_la::WorldSelectRequest>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("AccountLoginHandler invalid world_select_request sid={}", n);
+                return false;
+            }
+            if (on_world_select_request_) {
+                on_world_select_request_(
+                    n,
+                    GetLatestSerial(n),
+                    req->trace_id,
+                    req->request_id,
+                    req->account_id,
+                    req->world_id,
+                    req->channel_id,
+                    req->login_session);
+            }
+            return true;
+        }
+    case pt_la::LoginAccountMsg::character_list_request:
+        {
+            const auto* req = proto::as<pt_la::CharacterListRequest>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("AccountLoginHandler invalid character_list_request sid={}", n);
+                return false;
+            }
+            if (on_character_list_request_) {
+                on_character_list_request_(
+                    n,
+                    GetLatestSerial(n),
+                    req->trace_id,
+                    req->request_id,
+                    req->account_id,
+                    req->login_session);
+            }
+            return true;
+        }
+    case pt_la::LoginAccountMsg::character_select_request:
+        {
+            const auto* req = proto::as<pt_la::CharacterSelectRequest>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("AccountLoginHandler invalid character_select_request sid={}", n);
+                return false;
+            }
+            if (on_character_select_request_) {
+                on_character_select_request_(
+                    n,
+                    GetLatestSerial(n),
+                    req->trace_id,
+                    req->request_id,
+                    req->account_id,
+                    req->char_id,
+                    req->login_session);
             }
             return true;
         }

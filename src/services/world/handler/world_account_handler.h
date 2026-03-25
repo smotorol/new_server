@@ -65,9 +65,9 @@ public:
 		std::uint32_t dwProID,
 		std::uint32_t dwIndex,
 		std::uint32_t dwSerial,
+		std::uint64_t trace_id,
 		std::uint64_t request_id,
 		std::uint64_t account_id,
-		std::uint64_t char_id,
 		std::string_view login_session,
 		std::string_view world_token);
 
@@ -75,6 +75,7 @@ public:
 		std::uint32_t dwProID,
 		std::uint32_t dwIndex,
 		std::uint32_t dwSerial,
+		std::uint64_t trace_id,
 		std::uint64_t account_id,
 		std::uint64_t char_id,
 		std::string_view login_session,

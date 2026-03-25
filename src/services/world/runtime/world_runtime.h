@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <array>
 #include <cstdint>
 #include <string>
@@ -41,6 +41,7 @@
 #include "services/world/runtime/world_runtime_types.h"
 #include "services/world/handler/world_account_handler.h"
 #include "services/world/handler/world_zone_handler.h"
+#include "services/world/common/character_core_state.h"
 
 #include "proto/client/world_proto.h"
 #include "proto/common/packet_util.h"
@@ -87,6 +88,7 @@ namespace svr {
 	using MapAssignmentEntry = svr::MapAssignmentEntry;
 	using PendingZoneAssignRequest = svr::PendingZoneAssignRequest;
 	using PendingEnterWorldFinalize = svr::PendingEnterWorldFinalize;
+	using PendingCharacterEnterSnapshotRequest = svr::PendingCharacterEnterSnapshotRequest;
 
 	class WorldRuntime final : public dc::ServerRuntimeBase, public IWorldRuntime {
 	public:
@@ -118,6 +120,7 @@ namespace svr {
 
 		// account가 검증한 world ticket consume 결과를 받아 world 세션 바인딩을 확정한다.
 		void OnWorldAuthTicketConsumeResponse(
+			std::uint64_t trace_id,
 			std::uint64_t request_id,
 			ConsumePendingWorldAuthTicketResultKind result_kind,
 			std::uint64_t account_id,
@@ -128,8 +131,8 @@ namespace svr {
 		bool RequestConsumeWorldAuthTicket(
 			std::uint32_t sid,
 			std::uint32_t serial,
+			std::uint64_t trace_id,
 			std::uint64_t account_id,
-			std::uint64_t char_id,
 			std::string_view login_session,
 			std::string_view token) override;
 
@@ -160,6 +163,7 @@ namespace svr {
 
 		// world가 최종 enter success를 account에 relay 한다. login pending session 정리는 account/login이 담당한다.
 		bool NotifyAccountWorldEnterSuccess(
+			std::uint64_t trace_id,
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::string_view login_session,
@@ -172,7 +176,8 @@ namespace svr {
 			std::uint32_t map_template_id,
 			std::uint32_t instance_id,
 			bool create_if_missing,
-			bool dungeon_instance) override;
+			bool dungeon_instance,
+			std::uint64_t trace_id = 0) override;
 
 		void OnMapAssignRequest(
 			std::uint32_t sid,
@@ -208,6 +213,7 @@ namespace svr {
 		bool LoadIniFile();
 		bool DatabaseInit();
 		bool NetworkInit();
+		bool PreloadItemTemplateRepository_();
 		bool EnsureAccountHandler_();
 		void InitHostedLineDescriptors_() noexcept;
 
@@ -272,9 +278,21 @@ namespace svr {
 			std::uint16_t assigned_zone_id,
 			std::uint32_t map_template_id,
 			std::uint32_t instance_id,
-			std::string_view cached_state_blob);
+			const CharacterCoreState& core_state);
 		void CompleteEnterWorldSuccessAfterZoneAck_(
 			const PendingZonePlayerEnterRequest& pending_enter);
+		bool RequestCharacterEnterSnapshotLoad_(
+			const PendingEnterWorldConsumeRequest& pending);
+		void OnCharacterEnterSnapshotResult_(
+			const svr::dqs_result::WorldCharacterEnterSnapshotResult& rr);
+		static void ApplyCharacterCoreStateToActor_(
+			PlayerActor& actor,
+			const CharacterCoreState& core_state,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint16_t assigned_zone_id,
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id);
 
 		static ClosedAuthedSessionContext MakeClosedAuthedSessionContext_(
 			const UnbindAuthedWorldSessionResult& unbind_result,
@@ -373,7 +391,7 @@ namespace svr {
 		void OnZonePlayerEnterAck(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack);
 		std::optional<ZoneRouteInfo> TrySelectZoneRoute_(bool dungeon_instance) const;
 		std::optional<ZoneRouteInfo> FindZoneRouteByZoneId_(std::uint16_t zone_id) const;
-		bool SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
+		bool SendZonePlayerEnter_(std::uint64_t trace_id, std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		bool SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		void RemoveMapAssignmentsByZoneSid_(std::uint32_t sid);
 		void FailPendingZoneAssignRequestsByZoneSid_(
@@ -397,6 +415,9 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial);
 		void ErasePendingEnterWorldFinalizeBySession_(
+			std::uint32_t sid,
+			std::uint32_t serial);
+		void ErasePendingCharacterEnterSnapshotRequestsBySession_(
 			std::uint32_t sid,
 			std::uint32_t serial);
 		void ErasePendingZonePlayerEnterRequestsBySession_(
@@ -481,6 +502,7 @@ namespace svr {
 		std::unordered_map<std::uint64_t, MapAssignmentEntry> map_assignments_;
 		std::unordered_map<std::uint64_t, PendingZoneAssignRequest> pending_zone_assign_requests_;
 		std::unordered_map<std::uint64_t, std::uint64_t> pending_zone_assign_request_id_by_map_key_;
+		std::unordered_map<std::uint64_t, PendingCharacterEnterSnapshotRequest> pending_character_enter_snapshot_requests_;
 		std::unordered_map<std::uint64_t, std::vector<PendingEnterWorldFinalize>> pending_enter_world_finalize_by_assign_request_;
 		std::unordered_map<std::uint64_t, PendingZonePlayerEnterRequest> pending_zone_player_enter_requests_;
 		std::uint64_t next_zone_assign_request_id_ = 1;
@@ -587,6 +609,7 @@ namespace svr {
 		std::uint32_t flush_batch_normal_ = 200;
 		int char_ttl_sec_ = 60 * 60 * 24 * 7;
 		int reconnect_grace_close_delay_ms_ = 5000;
+		bool allow_legacy_item_template_fallback_ = true;
 
 		int worldset_num_ = 0;
 		std::vector<WorldInfo> worlds_;
@@ -613,3 +636,5 @@ namespace svr {
 	void ServerProgramExit(const char* call_site, bool save);
 
 } // namespace svr
+
+

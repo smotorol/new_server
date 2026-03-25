@@ -1,6 +1,7 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "services/world/common/string_utils.h"
 #include "services/world/metrics/world_metrics.h"
+#include "server_common/log/enter_flow_log.h"
 #include "server_common/session/session_key.h"
 
 namespace svr {
@@ -87,6 +88,36 @@ namespace svr {
 		}
 	}
 
+	void WorldRuntime::ErasePendingCharacterEnterSnapshotRequestsBySession_(
+		std::uint32_t sid,
+		std::uint32_t serial)
+	{
+		if (!dc::IsValidSessionKey(sid, serial)) {
+			return;
+		}
+
+		std::size_t erased = 0;
+		for (auto it = pending_character_enter_snapshot_requests_.begin();
+			it != pending_character_enter_snapshot_requests_.end();) {
+			if (it->second.enter_pending.sid == sid &&
+				it->second.enter_pending.serial == serial) {
+				it = pending_character_enter_snapshot_requests_.erase(it);
+				++erased;
+			}
+			else {
+				++it;
+			}
+		}
+
+		if (erased != 0) {
+			spdlog::info(
+				"ErasePendingCharacterEnterSnapshotRequestsBySession_ removed pending snapshot requests. sid={} serial={} erased={}",
+				sid,
+				serial,
+				erased);
+		}
+	}
+
 	void WorldRuntime::ErasePendingZonePlayerEnterRequestsBySession_(
 		std::uint32_t sid,
 		std::uint32_t serial)
@@ -126,6 +157,81 @@ namespace svr {
 			return;
 		}
 
+		std::optional<dc::enterlog::EnterTraceContext> log_ctx;
+		{
+			std::lock_guard lk(pending_enter_world_consume_mtx_);
+			for (const auto& [_, pending] : pending_enter_world_consume_) {
+				if (pending.sid == sid && pending.serial == serial) {
+					log_ctx = dc::enterlog::EnterTraceContext{
+						pending.trace_id,
+						pending.account_id,
+						pending.char_id,
+						pending.sid,
+						pending.serial,
+						pending.login_session,
+						pending.world_token
+					};
+					break;
+				}
+			}
+		}
+		if (!log_ctx.has_value()) {
+			for (const auto& [_, list] : pending_enter_world_finalize_by_assign_request_) {
+				for (const auto& finalize : list) {
+					const auto& pending = finalize.enter_pending;
+					if (pending.sid == sid && pending.serial == serial) {
+						log_ctx = dc::enterlog::EnterTraceContext{
+							pending.trace_id,
+							pending.account_id,
+							pending.char_id,
+							pending.sid,
+							pending.serial,
+							pending.login_session,
+							pending.world_token
+						};
+						break;
+					}
+				}
+				if (log_ctx.has_value()) {
+					break;
+				}
+			}
+		}
+		if (!log_ctx.has_value()) {
+			for (const auto& [_, pending_snapshot] : pending_character_enter_snapshot_requests_) {
+				const auto& pending = pending_snapshot.enter_pending;
+				if (pending.sid == sid && pending.serial == serial) {
+					log_ctx = dc::enterlog::EnterTraceContext{
+						pending.trace_id,
+						pending.account_id,
+						pending.char_id,
+						pending.sid,
+						pending.serial,
+						pending.login_session,
+						pending.world_token
+					};
+					break;
+				}
+			}
+		}
+		if (!log_ctx.has_value()) {
+			for (const auto& [_, pending_enter] : pending_zone_player_enter_requests_) {
+				const auto& pending = pending_enter.enter_pending;
+				if (pending.sid == sid && pending.serial == serial) {
+					log_ctx = dc::enterlog::EnterTraceContext{
+						pending.trace_id,
+						pending.account_id,
+						pending.char_id,
+						pending.sid,
+						pending.serial,
+						pending.login_session,
+						pending.world_token
+					};
+					break;
+				}
+			}
+		}
+
 		{
 			std::lock_guard lk(world_session_mtx_);
 			world_enter_stage_by_sid_[sid] = WorldEnterStage::Closing;
@@ -143,6 +249,7 @@ namespace svr {
 
 		ErasePendingEnterWorldConsumeRequestsBySession_(sid, serial);
 		ErasePendingEnterWorldFinalizeBySession_(sid, serial);
+		ErasePendingCharacterEnterSnapshotRequestsBySession_(sid, serial);
 		ErasePendingZonePlayerEnterRequestsBySession_(sid, serial);
 
 		spdlog::info(
@@ -150,6 +257,13 @@ namespace svr {
 			log_text,
 			sid,
 			serial);
+		if (log_ctx.has_value()) {
+			dc::enterlog::LogEnterFlow(
+				spdlog::level::warn,
+				dc::enterlog::EnterStage::EnterFlowAborted,
+				*log_ctx,
+				log_text);
+		}
 	}
 
 	BeginEnterWorldSessionResult WorldRuntime::TryBeginEnterWorldSession(
@@ -596,13 +710,10 @@ namespace svr {
 				});
 			}
 
-			if (static_cast<std::uint16_t>(a.zone_id) == ctx.zone_id &&
-				a.map_template_id == ctx.map_template_id &&
-				a.map_instance_id == ctx.instance_id) {
-				a.zone_id = 0;
-				a.map_template_id = 0;
-				a.map_instance_id = 0;
-				a.pos = {};
+			if (static_cast<std::uint16_t>(a.GetZoneId()) == ctx.zone_id &&
+				a.GetMapId() == ctx.map_template_id &&
+				a.GetMapInstanceId() == ctx.instance_id) {
+				a.ClearWorldPosition();
 			}
 
 			spdlog::info(
@@ -635,9 +746,9 @@ namespace svr {
 				.char_id = close_char_id,
 				.sid = close_sid,
 				.serial = close_serial,
-				.zone_id = static_cast<std::uint16_t>(a.zone_id),
-				.map_template_id = a.map_template_id,
-				.instance_id = a.map_instance_id,
+				.zone_id = static_cast<std::uint16_t>(a.GetZoneId()),
+				.map_template_id = a.GetMapId(),
+				.instance_id = a.GetMapInstanceId(),
 			};
 			BeginLeaveWorld_(leave_ctx, "CleanupClosedWorldSessionActors_ started leave cleanup.");
 		});

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include "types.h"
 #include "shared/constants.h"
 
@@ -18,8 +18,6 @@ namespace proto {
 		move = 40,
 
 		// internal/test: actor ordering
-
-
 		actor_seq_test = 100,
 		actor_forward = 101,
 		bench_move = 102,
@@ -33,6 +31,7 @@ namespace proto {
 
 		// ---- Basic combat test ----
 		stats = 10,
+		zone_map_state = 12,
 		spawn_monster_ok = 20,
 		attack_result = 21,
 
@@ -42,7 +41,6 @@ namespace proto {
 		player_move_batch = 43,
 		player_spawn_batch = 44,
 		player_despawn_batch = 45,
-
 
 		actor_bound = 100,
 		actor_seq_ack = 101,
@@ -56,23 +54,21 @@ namespace proto {
 	};
 
 	struct S2C_open_world_success {
-		u32 ok; // 1=ok
+		u32 ok;
 		S2C_open_world_success() : ok(1) {}
 	};
 
-	// ---- Demo: gold 증가 요청/응답 ----
 	struct C2S_add_gold {
-		u32 add; // 증가량
+		u32 add;
 		C2S_add_gold() : add(0) {}
 	};
 
 	struct S2C_add_gold_ok {
-		u32 ok;    // 1=ok
-		u32 gold;  // 적용 후 골드
+		u32 ok;
+		u32 gold;
 		S2C_add_gold_ok() : ok(1), gold(0) {}
 	};
 
-	// ---- Basic combat test: stats/monster/combat ----
 	struct C2S_get_stats {
 		u32 reserved;
 		C2S_get_stats() : reserved(0) {}
@@ -88,13 +84,30 @@ namespace proto {
 		S2C_stats() : char_id(0), hp(0), max_hp(0), atk(0), def(0), gold(0) {}
 	};
 
+	enum class ZoneMapStateReason : u16 {
+		enter_success = 0,
+		position_update = 1,
+		zone_changed = 2,
+		portal_moved = 3,
+	};
+
+	struct S2C_zone_map_state {
+		u64 char_id;
+		u32 zone_id;
+		u32 map_id;
+		i32 x;
+		i32 y;
+		u16 reason;
+		S2C_zone_map_state() : char_id(0), zone_id(0), map_id(0), x(0), y(0), reason((u16)ZoneMapStateReason::enter_success) {}
+	};
+
 	struct C2S_heal_self {
-		u32 amount; // 회복량(0이면 full)
+		u32 amount;
 		C2S_heal_self() : amount(0) {}
 	};
 
 	struct C2S_spawn_monster {
-		u32 template_id; // 0이면 기본
+		u32 template_id;
 		C2S_spawn_monster() : template_id(0) {}
 	};
 
@@ -112,11 +125,10 @@ namespace proto {
 	};
 
 	struct C2S_attack_player {
-		u64 target_char_id; // 맞을 캐릭터(char_id)
+		u64 target_char_id;
 		C2S_attack_player() : target_char_id(0) {}
 	};
 
-	// ---- Zone/AOI test ----
 	struct C2S_move {
 		i32 x;
 		i32 y;
@@ -166,8 +178,6 @@ namespace proto {
 		S2C_player_move() : char_id(0), x(0), y(0) {}
 	};
 
-	// ✅ Move batch (tick broadcast)
-	// - body layout: u16 count; S2C_player_move_item[count]
 	struct S2C_player_move_item {
 		u64 char_id;
 		i32 x;
@@ -175,79 +185,67 @@ namespace proto {
 		S2C_player_move_item() : char_id(0), x(0), y(0) {}
 	};
 
-	// ✅ Flexible array style (legacy MMO pattern)
-	// - 실제 전송 크기: sizeof(S2C_player_move_batch) + (count-1)*sizeof(S2C_player_move_item)
-	// - count==0인 패킷은 전송하지 않는 것을 권장
 	struct S2C_player_move_batch {
 		u16 count;
-		S2C_player_move_item items[1]; // flexible array (MSVC/GCC extension)
+		S2C_player_move_item items[1];
 		S2C_player_move_batch() : count(0) {}
  	};
 
-	// 공통 전투 결과(몬스터/플레이어)
 	struct S2C_attack_result {
 		u64 attacker_id;
-		u64 target_id;     // monster_id 또는 char_id
+		u64 target_id;
 		u32 damage;
 		u32 target_hp;
-		u32 killed;        // 1이면 사망/처치
-		u32 drop_item_id;  // 처치 시 드랍(없으면 0)
+		u32 killed;
+		u32 drop_item_id;
 		u32 drop_count;
-		u32 attacker_gold; // 적용 후 골드(샘플)
+		u32 attacker_gold;
 		S2C_attack_result() : attacker_id(0), target_id(0), damage(0), target_hp(0), killed(0),
 			drop_item_id(0), drop_count(0), attacker_gold(0) {}
 	};
 
-	// ---- Actor/멀티 로직 테스트 ----
 	struct C2S_actor_seq_test {
-		u32 seq;      // 단일 연결에서 증가시키는 seq
-		u32 work_us;  // 서버에서 작업(바쁜일/슬립) 시뮬레이션
+		u32 seq;
+		u32 work_us;
 		C2S_actor_seq_test() : seq(0), work_us(0) {}
 	};
 
-	// 여러 세션이 "같은 Actor"로 몰아넣는 테스트(ResolveActorIdForPacket 사용)
 	struct C2S_actor_forward {
-		u64 target_actor_id; // 보낼 대상 ActorId (char_id)
+		u64 target_actor_id;
 		u32 work_us;
-		u32 tag;             // 디버깅용
+		u32 tag;
 		C2S_actor_forward() : target_actor_id(0), work_us(0), tag(0) {}
 	};
 
 	struct S2C_actor_bound {
-		u64 actor_id; // 서버가 바인딩한 char_id
+		u64 actor_id;
 		S2C_actor_bound() : actor_id(0) {}
 	};
 
 	struct S2C_actor_seq_ack {
-		u32 ok;      // 1=ok
+		u32 ok;
 		u32 seq;
-		u32 shard;   // 서버 Actor shard index(디버그)
-		u32 errors;  // 서버 측 감지 에러 누적(디버그)
+		u32 shard;
+		u32 errors;
 		S2C_actor_seq_ack() : ok(1), seq(0), shard(0), errors(0) {}
 	};
 
-	// ---- Load test: move + RTT 측정 ----
-	// - client_ts_ns: 클라 monotonic time(ns)를 그대로 echo해서 RTT 계산
 	struct C2S_bench_move {
 		u32 seq;
-		u32 work_us;        // 서버에서 추가 작업 시뮬레이션(0이면 없음)
+		u32 work_us;
 		i32 x;
 		i32 y;
 		u64 client_ts_ns;
 		C2S_bench_move() : seq(0), work_us(0), x(0), y(0), client_ts_ns(0) {}
 	};
 
-	// ---- Bench control (client -> server)
-	// - bench_reset : server-side bench counters reset
-	// - bench_measure : server-side windowed sampling/logging
-	//   * server should reset counters at start and measure for given seconds.
 	struct C2S_bench_reset {
 		u32 reserved;
 		C2S_bench_reset() : reserved(0) {}
 	};
 
 	struct C2S_bench_measure {
-		u32 seconds; // measure window in seconds
+		u32 seconds;
 		C2S_bench_measure() : seconds(0) {}
 	};
 
@@ -255,39 +253,10 @@ namespace proto {
 		u32 ok;
 		u32 seq;
 		u64 client_ts_ns;
-		u32 zone;   // 디버그
-		u32 shard;  // 디버그
+		u32 zone;
+		u32 shard;
 		S2C_bench_move_ack() : ok(1), seq(0), client_ts_ns(0), zone(0), shard(0) {}
 	};
 #pragma pack(pop)
-
-	static_assert(sizeof(C2S_open_world_notice) == (dc::k_max_world_name_len + 1) * sizeof(char));
-	static_assert(sizeof(S2C_open_world_success) == 4);
-	static_assert(sizeof(C2S_add_gold) == 4);
-	static_assert(sizeof(S2C_add_gold_ok) == 8);
-	static_assert(sizeof(C2S_get_stats) == 4);
-	static_assert(sizeof(S2C_stats) == 28);
-	static_assert(sizeof(C2S_heal_self) == 4);
-	static_assert(sizeof(C2S_spawn_monster) == 4);
-	static_assert(sizeof(S2C_spawn_monster_ok) == 20);
-	static_assert(sizeof(C2S_attack_monster) == 8);
-	static_assert(sizeof(C2S_attack_player) == 8);
-	static_assert(sizeof(C2S_move) == 8);
-	static_assert(sizeof(S2C_player_spawn) == 16);
-	static_assert(sizeof(S2C_player_spawn_item) == 16);
-	static_assert(sizeof(S2C_player_spawn_batch) == 18);
-	static_assert(sizeof(S2C_player_despawn) == 8);
-	static_assert(sizeof(S2C_player_despawn_item) == 8);
-	static_assert(sizeof(S2C_player_despawn_batch) == 10);
-	static_assert(sizeof(S2C_player_move) == 16);
-	static_assert(sizeof(S2C_attack_result) == 40);
-	static_assert(sizeof(C2S_actor_seq_test) == 8);
-	static_assert(sizeof(C2S_actor_forward) == 16);
-	static_assert(sizeof(S2C_actor_bound) == 8);
-	static_assert(sizeof(S2C_actor_seq_ack) == 16);
-	static_assert(sizeof(C2S_bench_move) == 24);
-	static_assert(sizeof(C2S_bench_reset) == 4);
-	static_assert(sizeof(C2S_bench_measure) == 4);
-	static_assert(sizeof(S2C_bench_move_ack) == 24);
 
 } // namespace proto

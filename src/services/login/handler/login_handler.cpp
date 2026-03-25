@@ -39,8 +39,7 @@ bool LoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
                 n,
                 GetLatestSerial(n),
                 req->login_id,
-                req->password,
-                req->selected_char_id))
+                req->password))
             {
                 pt_l::S2C_login_result res{};
                 res.ok = 0;
@@ -53,6 +52,44 @@ bool LoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
             }
 
             return true;
+        }
+    case pt_l::LoginC2SMsg::world_list_request:
+        {
+            const auto* req = proto::as<pt_l::C2S_world_list_request>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("LoginHandler invalid world_list_request packet sid={}", n);
+                return false;
+            }
+            (void)req;
+            return runtime_.IssueWorldListRequest(n, GetLatestSerial(n));
+        }
+    case pt_l::LoginC2SMsg::world_select_request:
+        {
+            const auto* req = proto::as<pt_l::C2S_world_select_request>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("LoginHandler invalid world_select_request packet sid={}", n);
+                return false;
+            }
+            return runtime_.IssueWorldSelectRequest(n, GetLatestSerial(n), req->world_id, req->channel_id);
+        }
+    case pt_l::LoginC2SMsg::character_list_request:
+        {
+            const auto* req = proto::as<pt_l::C2S_character_list_request>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("LoginHandler invalid character_list_request packet sid={}", n);
+                return false;
+            }
+            (void)req;
+            return runtime_.IssueCharacterListRequest(n, GetLatestSerial(n));
+        }
+    case pt_l::LoginC2SMsg::character_select_request:
+        {
+            const auto* req = proto::as<pt_l::C2S_character_select_request>(pMsg, body_len);
+            if (!req) {
+                spdlog::error("LoginHandler invalid character_select_request packet sid={}", n);
+                return false;
+            }
+            return runtime_.IssueCharacterSelectRequest(n, GetLatestSerial(n), req->char_id);
         }
 
     default:

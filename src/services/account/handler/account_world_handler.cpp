@@ -65,6 +65,7 @@ bool AccountWorldHandler::SendWorldAuthTicketConsumeResponse(
 	std::uint32_t dwProID,
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial,
+	std::uint64_t trace_id,
 	std::uint64_t request_id,
 	std::uint16_t result_code,
 	std::uint64_t account_id,
@@ -73,6 +74,7 @@ bool AccountWorldHandler::SendWorldAuthTicketConsumeResponse(
 	std::string_view world_token)
 {
 	pt_aw::WorldAuthTicketConsumeResponse pkt{};
+	pkt.trace_id = trace_id;
 	pkt.request_id = request_id;
 	pkt.result_code = result_code;
 	pkt.account_id = account_id;
@@ -166,9 +168,9 @@ bool AccountWorldHandler::DataAnalysis(
 				on_consume_request_(
 					n,
 					GetLatestSerial(n),
+					req->trace_id,
 					req->request_id,
 					req->account_id,
-					req->char_id,
 					req->login_session,
 					req->world_token);
 			}
@@ -187,6 +189,7 @@ bool AccountWorldHandler::DataAnalysis(
 				on_enter_world_success_(
                     n,
                     GetLatestSerial(n),
+					req->trace_id,
 					req->account_id,
 					req->char_id,
 					req->login_session,

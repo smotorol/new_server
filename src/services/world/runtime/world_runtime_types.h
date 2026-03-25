@@ -4,6 +4,7 @@
 #include <string>
 #include <chrono>
 
+#include "services/world/common/character_core_state.h"
 #include "services/world/runtime/world_session_types.h"
 
 namespace svr {
@@ -59,6 +60,7 @@ namespace svr {
 
 	struct PendingZoneAssignRequest
 	{
+		std::uint64_t trace_id = 0;
 		std::uint64_t request_id = 0;
 		std::uint64_t map_key = 0;
 		std::uint32_t target_sid = 0;
@@ -76,11 +78,12 @@ namespace svr {
 		PendingEnterWorldConsumeRequest enter_pending{};
 		std::uint32_t map_template_id = 0;
 		std::uint32_t instance_id = 0;
-		std::string cached_state_blob;
+		CharacterCoreState core_state{};
 	};
 
 	struct PendingZonePlayerEnterRequest
 	{
+		std::uint64_t trace_id = 0;
 		std::uint64_t request_id = 0;
 		std::uint32_t target_sid = 0;
 		std::uint32_t target_serial = 0;
@@ -89,7 +92,16 @@ namespace svr {
 		PendingEnterWorldConsumeRequest enter_pending{};
 		std::uint32_t map_template_id = 0;
 		std::uint32_t instance_id = 0;
+		CharacterCoreState core_state{};
 		std::string cached_state_blob;
+		std::chrono::steady_clock::time_point issued_at{};
+	};
+
+	struct PendingCharacterEnterSnapshotRequest
+	{
+		std::uint64_t trace_id = 0;
+		std::uint64_t request_id = 0;
+		PendingEnterWorldConsumeRequest enter_pending{};
 		std::chrono::steady_clock::time_point issued_at{};
 	};
 

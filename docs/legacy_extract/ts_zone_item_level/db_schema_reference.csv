@@ -1,0 +1,7 @@
+﻿source,target,meaning,certainty,note
+G:\Programing\Work\new_server\db\nfx_server_db_utf8_varchar_final.sql,[game].[character].[job],modernized job source,confirmed,used by world/account snapshot queries
+G:\Programing\Work\new_server\db\nfx_server_db_utf8_varchar_final.sql,[game].[character].[tribe],modernized tribe source,confirmed,maps to CharacterIdentity.tribe
+G:\Programing\Work\new_server\db\nfx_server_db_utf8_varchar_final.sql,[game].[character].[appearance_code],appearance summary source,confirmed,maps to AppearanceSummary.appearance_code
+G:\Programing\Work\new_server\db\nfx_server_db_utf8_varchar_final.sql,[game].[character_item].[item_id],equip template id source,confirmed,maps to EquipSummary template ids
+G:\Programing\Work\new_server\db\nfx_server_db_utf8_varchar_final.sql,[game].[character_item].[slot_type],equip inventory partition,confirmed,slot_type=2 used for equipped items
+G:\Programing\Work\new_server\db\nfx_server_db_utf8_varchar_final.sql,[game].[character_item].[slot_no],equip slot index,confirmed,0=weapon 1..5 armor 6..7 accessory representative mapping

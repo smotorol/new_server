@@ -6,6 +6,7 @@
 #include <optional>
 #include <string>
 #include <string_view>
+#include <ctime>
 #include <vector>
 
 #include <spdlog/spdlog.h>
@@ -27,6 +28,12 @@ namespace dc::account {
 		struct CharacterRow final {
 			std::uint64_t char_id = 0;
 			std::uint64_t account_id = 0;
+			std::string char_name;
+			std::uint32_t level = 0;
+			std::uint16_t job = 0;
+			std::uint16_t tribe = 0;
+			std::uint32_t appearance_code = 0;
+			std::uint64_t last_login_at_epoch_sec = 0;
 		};
 
 		std::optional<AccountRow> QueryAccountRow_(
@@ -70,7 +77,7 @@ namespace dc::account {
 			db::OdbcStatement stmt(conn);
 
 			stmt.prepare(
-				"SELECT TOP (1) [char_id], [account_id] "
+				"SELECT TOP (1) [char_id], [account_id], [char_name], [level], [job], [tribe], [appearance_code], [last_login_at_utc] "
 				"FROM [NFX_GAME].[game].[character] "
 				"WHERE [char_id] = ? "
 				"  AND [char_state] = 1");
@@ -85,33 +92,43 @@ namespace dc::account {
 			CharacterRow row{};
 			row.char_id = stmt.get_uint64(1);
 			row.account_id = stmt.get_uint64(2);
+			row.char_name = stmt.get_string(3);
+			row.level = static_cast<std::uint32_t>(stmt.get_int(4));
+			row.job = static_cast<std::uint16_t>(stmt.get_int(5));
+			row.tribe = static_cast<std::uint16_t>(stmt.get_int(6));
+			row.appearance_code = static_cast<std::uint32_t>(stmt.get_int(7));
 			return row;
 		}
 
-		std::optional<CharacterRow> QueryDefaultCharacterByAccountId_(
+		std::vector<CharacterRow> QueryCharactersByAccountId_(
 			db::OdbcConnection& conn,
 			std::uint64_t account_id)
 		{
+			std::vector<CharacterRow> rows;
 			db::OdbcStatement stmt(conn);
 
 			stmt.prepare(
-				"SELECT TOP (1) [char_id], [account_id] "
+				"SELECT TOP (8) [char_id], [account_id], [char_name], [level], [job], [tribe], [appearance_code], [last_login_at_utc] "
 				"FROM [NFX_GAME].[game].[character] "
 				"WHERE [account_id] = ? "
 				"  AND [char_state] = 1 "
-				"ORDER BY [char_id] ASC");
+				"ORDER BY [slot_no] ASC, [char_id] ASC");
 
 			stmt.bind_input_uint64(1, account_id);
 			stmt.execute();
 
-			if (!stmt.fetch()) {
-				return std::nullopt;
+			while (stmt.fetch()) {
+				CharacterRow row{};
+				row.char_id = stmt.get_uint64(1);
+				row.account_id = stmt.get_uint64(2);
+				row.char_name = stmt.get_string(3);
+				row.level = static_cast<std::uint32_t>(stmt.get_int(4));
+				row.job = static_cast<std::uint16_t>(stmt.get_int(5));
+				row.tribe = static_cast<std::uint16_t>(stmt.get_int(6));
+				row.appearance_code = static_cast<std::uint32_t>(stmt.get_int(7));
+				rows.push_back(std::move(row));
 			}
-
-			CharacterRow row{};
-			row.char_id = stmt.get_uint64(1);
-			row.account_id = stmt.get_uint64(2);
-			return row;
+			return rows;
 		}
 
 		int HexNibble_(char ch)
@@ -260,34 +277,8 @@ namespace dc::account {
 				return out;
 			}
 
-			std::optional<CharacterRow> ch;
-
-			if (job.selected_char_id != 0) {
-				ch = QueryCharacterById_(conn, job.selected_char_id);
-				if (!ch.has_value()) {
-					out.ok = false;
-					out.fail_reason = "character_not_found";
-					return out;
-				}
-
-				if (ch->account_id != account->account_id) {
-					out.ok = false;
-					out.fail_reason = "character_account_mismatch";
-					return out;
-				}
-			}
-			else {
-				ch = QueryDefaultCharacterByAccountId_(conn, account->account_id);
-				if (!ch.has_value()) {
-					out.ok = false;
-					out.fail_reason = "character_not_found";
-					return out;
-				}
-			}
-
 			out.ok = true;
 			out.account_id = account->account_id;
-			out.char_id = ch->char_id;
 			out.should_update_last_login_at_utc = true;
 			out.fail_reason.clear();
 			return out;
@@ -315,5 +306,40 @@ WHERE account_id = ?
 		stmt.bind_input_uint64(1, account_id);
 
 		return stmt.execute();
+	}
+
+	AccountCharacterListRequestResult AccountAuthDbRepository::ExecuteCharacterList(
+		db::OdbcConnection& conn,
+		const AccountCharacterListRequestJob& job)
+	{
+		AccountCharacterListRequestResult out{};
+		out.sid = job.sid;
+		out.serial = job.serial;
+		out.trace_id = job.trace_id;
+		out.request_id = job.request_id;
+		out.account_id = job.account_id;
+
+		try {
+			const auto rows = QueryCharactersByAccountId_(conn, job.account_id);
+			out.ok = true;
+			out.characters.reserve(rows.size());
+			for (const auto& row : rows) {
+				AccountCharacterSummary summary{};
+				summary.char_id = row.char_id;
+				summary.char_name = row.char_name;
+				summary.level = row.level;
+				summary.job = row.job;
+				summary.appearance_code = row.appearance_code;
+				summary.last_login_at_epoch_sec = row.last_login_at_epoch_sec;
+				out.characters.push_back(std::move(summary));
+			}
+			return out;
+		}
+		catch (const std::exception& e) {
+			spdlog::error("AccountAuth ExecuteCharacterList exception: {}", e.what());
+			out.ok = false;
+			out.fail_reason = "db_error";
+			return out;
+		}
 	}
 } // namespace dc::account

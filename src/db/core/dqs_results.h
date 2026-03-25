@@ -5,6 +5,7 @@
 
 #include "db/core/dqs_types.h"
 #include "proto/internal/login_account_proto.h"
+#include "services/world/common/character_core_state.h"
 
 namespace pt_la = proto::internal::login_account;
 
@@ -44,7 +45,23 @@ namespace svr::dqs_result {
 
 	};
 
+	struct WorldCharacterEnterSnapshotResult final {
+		std::uint32_t world_code = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t trace_id = 0;
+		std::uint64_t request_id = 0;
+		std::uint64_t account_id = 0;
+		std::uint64_t char_id = 0;
+		bool found = false;
+		bool cache_blob_applied = false;
+		svr::CharacterCoreState core_state{};
+		char fail_reason[dc::k_auth_fail_reason_max_len + 1]{};
+		svr::dqs::ResultCode result = svr::dqs::ResultCode::success;
+	};
+
 	struct AccountAuthResult final {
+		std::uint64_t trace_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
 		std::uint64_t request_id = 0;
@@ -56,11 +73,35 @@ namespace svr::dqs_result {
 		svr::dqs::ResultCode result = svr::dqs::ResultCode::success;
 	};
 
+	struct AccountCharacterSummary final {
+		std::uint64_t char_id = 0;
+		char char_name[dc::k_character_name_max_len + 1]{};
+		std::uint32_t level = 0;
+		std::uint16_t job = 0;
+		std::uint32_t appearance_code = 0;
+		std::uint64_t last_login_at_epoch_sec = 0;
+	};
+
+	struct AccountCharacterListResult final {
+		std::uint64_t trace_id = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t request_id = 0;
+		std::uint64_t account_id = 0;
+		std::uint8_t ok = 0;
+		std::uint16_t count = 0;
+		char fail_reason[dc::k_auth_fail_reason_max_len + 1]{};
+		AccountCharacterSummary characters[dc::k_character_list_max_count]{};
+		svr::dqs::ResultCode result = svr::dqs::ResultCode::success;
+	};
+
 	using Result = std::variant<
 		OpenWorldNoticeResult,
 		FlushDirtyCharsResult,
 		FlushOneCharResult,
-		AccountAuthResult>;
+		WorldCharacterEnterSnapshotResult,
+		AccountAuthResult,
+		AccountCharacterListResult>;
 
 
 } // namespace svr::dqs_result

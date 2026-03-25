@@ -24,3 +24,7 @@
 /Testing/Temporary/LastTest.log
 /tests/Testing/Temporary/CTestCostData.txt
 /tests/Testing/Temporary/LastTest.log
+/resources
+/tools/DummyClientWinForms/obj/Debug
+/tools/DummyClientWinForms/obj/Release
+/tools/DummyClientWinForms/obj

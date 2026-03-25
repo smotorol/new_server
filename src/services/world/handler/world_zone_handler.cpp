@@ -56,6 +56,7 @@ bool WorldZoneHandler::SendMapAssignRequest(
 	std::uint32_t dwProID,
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial,
+	std::uint64_t trace_id,
 	std::uint64_t request_id,
 	std::uint32_t map_template_id,
 	std::uint32_t instance_id,
@@ -63,6 +64,7 @@ bool WorldZoneHandler::SendMapAssignRequest(
 	bool dungeon_instance)
 {
 	pt_wz::WorldZoneMapAssignRequest pkt{};
+	pkt.trace_id = trace_id;
 	pkt.request_id = request_id;
 	pkt.map_template_id = map_template_id;
 	pkt.instance_id = instance_id;
@@ -80,6 +82,7 @@ bool WorldZoneHandler::SendPlayerEnter(
 	std::uint32_t dwProID,
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial,
+	std::uint64_t trace_id,
 	std::uint64_t request_id,
 	std::uint64_t char_id,
 	std::uint32_t map_template_id,
@@ -87,6 +90,7 @@ bool WorldZoneHandler::SendPlayerEnter(
 	std::uint16_t zone_id)
 {
 	pt_wz::WorldZonePlayerEnter pkt{};
+	pkt.trace_id = trace_id;
 	pkt.request_id = request_id;
 	pkt.char_id = char_id;
 	pkt.map_template_id = map_template_id;

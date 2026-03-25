@@ -56,7 +56,7 @@ namespace proto::world {
     struct C2S_enter_world_with_token
     {
         std::uint64_t account_id = 0;
-        std::uint64_t char_id = 0;
+        std::uint64_t char_id = 0; // deprecated: server ignores client-provided char_id
         char login_session[dc::k_login_session_max_len + 1]{};
         char world_token[dc::k_world_token_max_len + 1]{};
     };

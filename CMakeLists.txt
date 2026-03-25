@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.24)
+﻿cmake_minimum_required(VERSION 3.24)
 
 project(new_server LANGUAGES CXX)
 
@@ -15,6 +15,7 @@ option(BUILD_COMMUNITY_SERVER "Build community server" ON)
 option(BUILD_ACCOUNT_SERVER "Build account server" ON)
 option(BUILD_ZONE_SERVER "Build zone server" ON)
 option(BUILD_TESTS "Build lightweight regression tests" ON)
+option(BUILD_MAINTENANCE_TOOLS "Build maintenance tools" ON)
 
 # Debug일 때만 postfix 붙이기 (Release는 postfix 없음)
 set(CMAKE_DEBUG_POSTFIX "_d")
@@ -39,6 +40,11 @@ if(BUILD_CHANNEL_SERVER_LEGACY)
 endif()
 
 add_subdirectory(apps/test_client)
+
+if(BUILD_MAINTENANCE_TOOLS)
+    add_subdirectory(apps/item_template_import)
+    add_subdirectory(apps/zone_data_builder)
+endif()
 
 if(BUILD_LOGIN_SERVER)
     add_subdirectory(apps/login_server)
@@ -76,3 +82,6 @@ endif()
 
 message(STATUS "VCPKG_ROOT ENV = $ENV{MY_VCPKG_ROOT}")
 message(STATUS "CMAKE_TOOLCHAIN_FILE = ${CMAKE_TOOLCHAIN_FILE}")
+
+
+

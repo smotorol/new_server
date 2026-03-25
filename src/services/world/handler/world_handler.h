@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include <functional>
@@ -22,7 +22,17 @@ public:
 	// ✅ (sid -> char_id) 바인딩이 완료되면 char_id Actor로 라우팅
 	std::uint64_t GetActorIdBySession(std::uint32_t sid) const;
 	std::uint32_t GetLatestSerialForRuntime(std::uint32_t sid) const { return GetLatestSerial(sid); }
-	std::string GetLatestRemoteEndpointForRuntime(std::uint32_t sid) const { return GetLatestRemoteEndpoint(sid); }
+    std::string GetLatestRemoteEndpointForRuntime(std::uint32_t sid) const { return GetLatestRemoteEndpoint(sid); }
+    void SendZoneMapState(
+        std::uint32_t dwProID,
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint64_t char_id,
+        std::uint32_t zone_id,
+        std::uint32_t map_id,
+        std::int32_t x,
+        std::int32_t y,
+        proto::ZoneMapStateReason reason);
 protected:
 	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
 		_MSG_HEADER* pMsgHeader, char* pMsg) override;
@@ -72,3 +82,4 @@ private:
 private:
 	svr::IWorldRuntime& runtime_;
 };
+

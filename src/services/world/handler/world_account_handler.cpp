@@ -91,16 +91,16 @@ bool WorldAccountHandler::SendWorldAuthTicketConsumeRequest(
 	std::uint32_t dwProID,
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial,
+	std::uint64_t trace_id,
 	std::uint64_t request_id,
 	std::uint64_t account_id,
-	std::uint64_t char_id,
 	std::string_view login_session,
 	std::string_view world_token)
 {
 	pt_aw::WorldAuthTicketConsumeRequest pkt{};
+	pkt.trace_id = trace_id;
 	pkt.request_id = request_id;
 	pkt.account_id = account_id;
-	pkt.char_id = char_id;
 	std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
 		static_cast<int>(login_session.size()), login_session.data());
 	std::snprintf(pkt.world_token, sizeof(pkt.world_token), "%.*s",
@@ -117,12 +117,14 @@ bool WorldAccountHandler::SendWorldEnterSuccessNotify(
 	std::uint32_t dwProID,
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial,
+	std::uint64_t trace_id,
 	std::uint64_t account_id,
 	std::uint64_t char_id,
 	std::string_view login_session,
 	std::string_view world_token)
 {
 	pt_aw::WorldEnterSuccessNotify pkt{};
+	pkt.trace_id = trace_id;
 	pkt.account_id = account_id;
 	pkt.char_id = char_id;
 
@@ -193,6 +195,7 @@ bool WorldAccountHandler::DataAnalysis(
 			}
 
 			runtime_.OnWorldAuthTicketConsumeResponse(
+				req->trace_id,
 				req->request_id,
 				static_cast<svr::ConsumePendingWorldAuthTicketResultKind>(req->result_code),
 				req->account_id,

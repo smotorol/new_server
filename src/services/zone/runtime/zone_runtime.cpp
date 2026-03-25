@@ -1,6 +1,8 @@
-#include "services/zone/runtime/zone_runtime.h"
+﻿#include "services/zone/runtime/zone_runtime.h"
 
 #include <spdlog/spdlog.h>
+
+#include "server_common/data/zone_runtime_data.h"
 
 #include "services/zone/handler/zone_world_handler.h"
 #include "server_common/session/session_key.h"
@@ -38,6 +40,19 @@ namespace svr {
 
 	bool ZoneRuntime::OnRuntimeInit()
 	{
+		if (!dc::zone::ZoneRuntimeDataStore::LoadFromBinary(dc::zone::DefaultZoneRuntimeBinaryPath())) {
+			auto status = dc::zone::ZoneRuntimeDataStore::SnapshotStatus();
+			spdlog::warn("ZoneRuntime binary load failed. source={} reason={}", status.source, status.last_error_reason);
+		}
+		else {
+			auto status = dc::zone::ZoneRuntimeDataStore::SnapshotStatus();
+			std::size_t prewarmed = 0;
+			for (const auto& map : dc::zone::ZoneRuntimeDataStore::GetMapRecords(zone_id_)) {
+				EnsureMapInstance_(map.map_id, 0, true, false);
+				++prewarmed;
+			}
+			spdlog::info("ZoneRuntime binary ready. source={} version={} maps={} portals={} prewarmed_maps={} zone_id={}", status.source, status.version, status.preload_count, status.portal_count, prewarmed, zone_id_);
+		}
 		return NetworkInit_();
 	}
 
@@ -164,6 +179,7 @@ namespace svr {
 				0,
 				sid,
 				serial,
+				req.trace_id,
 				req.request_id,
 				static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::not_found),
 				zone_id_,
@@ -179,6 +195,7 @@ namespace svr {
 				0,
 				sid,
 				serial,
+				req.trace_id,
 				req.request_id,
 				static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::capacity_full),
 				zone_id_,
@@ -193,6 +210,7 @@ namespace svr {
 			0,
 			sid,
 			serial,
+			req.trace_id,
 			req.request_id,
 			static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::ok),
 			zone_id_,
@@ -242,6 +260,7 @@ namespace svr {
 				0,
 				sid,
 				serial,
+				req.trace_id,
 				req.request_id,
 				static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::map_not_found),
 				zone_id_,
@@ -256,7 +275,7 @@ namespace svr {
 			if (bind_it->second.map_key == key) {
 				it->second.last_access_at = std::chrono::steady_clock::now();
 				handler->SendPlayerEnterAck(
-					0, sid, serial, req.request_id,
+					0, sid, serial, req.trace_id, req.request_id,
 					static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok),
 					zone_id_, req.char_id, req.map_template_id, req.instance_id);
 				return;
@@ -277,6 +296,7 @@ namespace svr {
 			0,
 			sid,
 			serial,
+			req.trace_id,
 			req.request_id,
 			static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok),
 			zone_id_,
@@ -345,3 +365,5 @@ namespace svr {
 	}
 
 } // namespace svr
+
+

@@ -29,15 +29,16 @@ public:
     using ConsumeRequestCallback = std::function<void(
         std::uint32_t sid,
         std::uint32_t serial,
+        std::uint64_t trace_id,
         std::uint64_t request_id,
         std::uint64_t account_id,
-        std::uint64_t char_id,
         std::string_view login_session,
         std::string_view world_token)>;
 
     using EnterWorldSuccessCallback = std::function<void(
         std::uint32_t sid,
         std::uint32_t serial,
+        std::uint64_t trace_id,
         std::uint64_t account_id,
         std::uint64_t char_id,
         std::string_view login_session,
@@ -82,6 +83,7 @@ public:
         std::uint32_t dwProID,
         std::uint32_t dwIndex,
         std::uint32_t dwSerial,
+        std::uint64_t trace_id,
         std::uint64_t request_id,
         std::uint16_t result_code,
         std::uint64_t account_id,

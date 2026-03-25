@@ -29,6 +29,8 @@
 #include "server_common/log/flow_event_codes.h"
 #include "server_common/runtime/line_start_helper.h"
 #include "services/world/common/demo_char_state.h"
+#include "services/world/db/world_character_repository.h"
+#include "services/world/db/item_template_repository.h"
 
 namespace pt_w = proto::world;
 
@@ -82,3 +84,4 @@ namespace svr::detail {
         benchio::AppendCsvRow("bench_server.csv", fields);
     }
 } // namespace svr::detail
+

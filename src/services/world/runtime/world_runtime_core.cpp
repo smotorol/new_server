@@ -1,4 +1,6 @@
-#include "services/world/runtime/world_runtime_private.h"
+﻿#include "services/world/runtime/world_runtime_private.h"
+#include <cstdlib>
+#include "server_common/data/zone_runtime_data.h"
 #include "server_common/config/aoi_config.h"
 #include <thread>
 
@@ -34,9 +36,27 @@ namespace svr {
 			spdlog::warn("LoadIniFile() failed (stub). Continue with defaults.");
 		}
 
+		const char* legacyFallbackEnv = std::getenv("DC_ALLOW_LEGACY_ITEM_TEMPLATE_FALLBACK");
+		if (legacyFallbackEnv != nullptr) {
+			allow_legacy_item_template_fallback_ = !(legacyFallbackEnv[0] == '0' || legacyFallbackEnv[0] == 'f' || legacyFallbackEnv[0] == 'F');
+		}
+
 		if (!DatabaseInit()) {
 			spdlog::warn("DatabaseInit() failed (stub). Continue without DB.");
 		}
+
+		if (!PreloadItemTemplateRepository_()) {
+			spdlog::warn("PreloadItemTemplateRepository_() failed. Runtime will continue with fallback item bonuses.");
+		}
+
+        if (!dc::zone::ZoneRuntimeDataStore::LoadFromBinary(dc::zone::DefaultZoneRuntimeBinaryPath())) {
+            auto zone_status = dc::zone::ZoneRuntimeDataStore::SnapshotStatus();
+            spdlog::warn("Zone runtime binary load failed. source={} reason={}", zone_status.source, zone_status.last_error_reason);
+        }
+        else {
+            auto zone_status = dc::zone::ZoneRuntimeDataStore::SnapshotStatus();
+            spdlog::info("Zone runtime binary ready. source={} version={} maps={} portals={} npcs={} monsters={} ready={} empty={}", zone_status.source, zone_status.version, zone_status.preload_count, zone_status.portal_count, zone_status.npc_count, zone_status.monster_count, zone_status.ready ? 1 : 0, zone_status.empty ? 1 : 0);
+        }
 
 		if (!InitRedis()) {
 			spdlog::warn("InitRedis() failed. Continue without Redis (write-behind disabled).");
@@ -160,6 +180,10 @@ namespace svr {
 			std::lock_guard lk(pending_enter_world_consume_mtx_);
 			pending_enter_world_consume_.clear();
 		}
+
+		pending_character_enter_snapshot_requests_.clear();
+		pending_enter_world_finalize_by_assign_request_.clear();
+		pending_zone_player_enter_requests_.clear();
 
 		{
 			std::lock_guard lk(delayed_world_close_mtx_);
@@ -397,3 +421,7 @@ namespace svr {
 		}
 
 } // namespace svr
+
+
+
+

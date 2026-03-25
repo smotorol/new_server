@@ -208,8 +208,8 @@ namespace svr {
 		virtual bool RequestConsumeWorldAuthTicket(
 			std::uint32_t sid,
 			std::uint32_t serial,
+			std::uint64_t trace_id,
 			std::uint64_t account_id,
-			std::uint64_t char_id,
 			std::string_view login_session,
 			std::string_view token) = 0;
 
@@ -239,6 +239,7 @@ namespace svr {
 			std::uint32_t serial) = 0;
 
 		virtual void OnWorldAuthTicketConsumeResponse(
+			std::uint64_t trace_id,
 			std::uint64_t request_id,
 			svr::ConsumePendingWorldAuthTicketResultKind result_kind,
 			std::uint64_t account_id,
@@ -247,6 +248,7 @@ namespace svr {
 			std::string_view world_token) = 0;
 
 		virtual bool NotifyAccountWorldEnterSuccess(
+			std::uint64_t trace_id,
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::string_view login_session,
@@ -259,7 +261,8 @@ namespace svr {
 			std::uint32_t map_template_id,
 			std::uint32_t instance_id,
 			bool create_if_missing,
-			bool dungeon_instance) = 0;
+			bool dungeon_instance,
+			std::uint64_t trace_id = 0) = 0;
 
 		virtual BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
 			std::uint64_t account_id,

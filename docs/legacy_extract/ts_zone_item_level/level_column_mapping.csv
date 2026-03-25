@@ -1,0 +1,19 @@
+﻿source_file,column_name,meaning,certainty,target_field,note
+005_00001.csv,lIndex,level number lookup key,confirmed,level_table[level],mDATA[level-1] / safe_level lookup
+005_00001.csv,lAttackPowerInfo[0],tribe0 attack growth,confirmed,CharacterCombatRuntimeStats.atk,ReturnLevelFactorAttackPower(tTribe=0)
+005_00001.csv,lAttackPowerInfo[1],tribe1 attack growth,confirmed,CharacterCombatRuntimeStats.atk,ReturnLevelFactorAttackPower(tTribe=1)
+005_00001.csv,lAttackPowerInfo[2],tribe2 attack growth,confirmed,CharacterCombatRuntimeStats.atk,ReturnLevelFactorAttackPower(tTribe=2)
+005_00001.csv,lDefensePowerInfo[0],tribe0 defense growth,confirmed,CharacterCombatRuntimeStats.def,ReturnLevelFactorDefensePower(tTribe=0)
+005_00001.csv,lDefensePowerInfo[1],tribe1 defense growth,confirmed,CharacterCombatRuntimeStats.def,ReturnLevelFactorDefensePower(tTribe=1)
+005_00001.csv,lDefensePowerInfo[2],tribe2 defense growth,confirmed,CharacterCombatRuntimeStats.def,ReturnLevelFactorDefensePower(tTribe=2)
+005_00001.csv,lLifeInfo[0],tribe0 hp growth,confirmed,CharacterCombatRuntimeStats.max_hp,ReturnLevelFactorLife(tTribe=0)
+005_00001.csv,lLifeInfo[1],tribe1 hp growth,confirmed,CharacterCombatRuntimeStats.max_hp,ReturnLevelFactorLife(tTribe=1)
+005_00001.csv,lLifeInfo[2],tribe2 hp growth,confirmed,CharacterCombatRuntimeStats.max_hp,ReturnLevelFactorLife(tTribe=2)
+005_00001.csv,lManaInfo[0],tribe0 mp growth,confirmed,CharacterCombatRuntimeStats.max_mp,ReturnLevelFactorMana(tTribe=0)
+005_00001.csv,lManaInfo[1],tribe1 mp growth,confirmed,CharacterCombatRuntimeStats.max_mp,ReturnLevelFactorMana(tTribe=1)
+005_00001.csv,lManaInfo[2],tribe2 mp growth,confirmed,CharacterCombatRuntimeStats.max_mp,ReturnLevelFactorMana(tTribe=2)
+005_00001.csv,lRangeInfo[0],level progression lower bound,estimated,not_mapped,documented only
+005_00001.csv,lRangeInfo[1],level progression upper bound,estimated,not_mapped,documented only
+005_00001.csv,lAttackSuccessInfo[0..2],hit growth factors,confirmed,not_mapped,out of current combat stat scope
+005_00001.csv,lAttackBlockInfo[0..2],block/evasion growth factors,confirmed,not_mapped,out of current combat stat scope
+005_00001.csv,lElementAttackInfo[0..2],element attack growth factors,confirmed,not_mapped,out of current combat stat scope

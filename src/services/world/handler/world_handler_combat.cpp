@@ -17,8 +17,8 @@ bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t
 		return true;
 	}
 	auto& attacker = runtime().GetOrCreatePlayerActor(attacker_id);
-	const std::uint32_t attacker_atk = attacker.combat.atk;
-	const std::uint32_t zone_id = attacker.zone_id;
+	const std::uint32_t attacker_atk = attacker.GetAttack();
+	const std::uint32_t zone_id = attacker.GetZoneId();
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (!dc::IsValidSessionKey(sid, serial)) return true;
 	const std::uint64_t monster_id = req->monster_id;
@@ -78,7 +78,7 @@ bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t
 			res.killed = 1;
 			res.drop_item_id = ok ? drop_item : 0;
 			res.drop_count = ok ? drop_cnt : 0;
-			res.attacker_gold = a.combat.gold;
+			res.attacker_gold = a.GetGold();
 
 			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::attack_result, (std::uint16_t)sizeof(res));
 			self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
@@ -101,17 +101,18 @@ bool WorldHandler::HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t 
 	const std::uint32_t target_sid = target.sid;
 
 	std::uint32_t dmg = 10;
-	const std::uint32_t real_dmg = (dmg > target.combat.def) ? (dmg - target.combat.def) : 1;
+	const std::uint32_t real_dmg = (dmg > target.GetDefense()) ? (dmg - target.GetDefense()) : 1;
 	dmg = real_dmg;
 	bool killed = false;
-	if (real_dmg >= target.combat.hp) {
-		target.combat.hp = 0;
+	const auto target_hp_before = target.GetCurrentHp();
+	if (real_dmg >= target_hp_before) {
+		target.SetCurrentHp(0);
 		killed = true;
 	}
 	else {
-		target.combat.hp -= real_dmg;
+		target.SetCurrentHp(target_hp_before - real_dmg);
 	}
-	const std::uint32_t target_hp = target.combat.hp;
+	const std::uint32_t target_hp = target.GetCurrentHp();
 
 	proto::S2C_attack_result res{};
 	res.attacker_id = attacker_id;

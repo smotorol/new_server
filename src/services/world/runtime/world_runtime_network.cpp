@@ -460,6 +460,64 @@ namespace svr {
 		return true;
 	}
 
+	bool WorldRuntime::PreloadItemTemplateRepository_()
+	{
+		ItemTemplateRepository::SetLegacyFallbackAllowed(allow_legacy_item_template_fallback_);
+		for (const auto& pool_ptr : world_pools_) {
+			if (!pool_ptr || pool_ptr->conns.empty()) {
+				continue;
+			}
+
+			auto result = ItemTemplateRepository::LoadCanonicalTableFromDb(pool_ptr->conns.front());
+			if (result.loaded) {
+				auto status = ItemTemplateRepository::SnapshotStatus();
+				spdlog::info(
+					"Item template preload success. source={} rows={} repository_empty={} fallback_entered={} repository_ready={} miss_count={} last_error_reason={}",
+					status.source,
+					status.preload_count,
+					status.empty ? 1 : 0,
+					status.fallback_entered ? 1 : 0,
+					status.ready ? 1 : 0,
+					status.miss_count,
+					status.last_error_reason.empty() ? "none" : status.last_error_reason);
+				return true;
+			}
+			break;
+		}
+
+		if (allow_legacy_item_template_fallback_) {
+			auto fallback = ItemTemplateRepository::BootstrapCanonicalTableFromLegacyCsv();
+			if (fallback.loaded) {
+				auto status = ItemTemplateRepository::SnapshotStatus();
+				spdlog::warn(
+					"Item template preload fallback. source={} rows={} repository_empty={} fallback_entered={} repository_ready={} reason={} miss_count={}",
+					status.source,
+					status.preload_count,
+					status.empty ? 1 : 0,
+					status.fallback_entered ? 1 : 0,
+					status.ready ? 1 : 0,
+					status.last_error_reason.empty() ? "empty_db" : status.last_error_reason,
+					status.miss_count);
+				return true;
+			}
+		}
+		else {
+			spdlog::warn("Item template preload fallback disabled. reason=allow_legacy_item_template_fallback_false");
+		}
+
+		auto status = ItemTemplateRepository::SnapshotStatus();
+		spdlog::warn(
+			"Item template repository ready. source={} rows={} repository_empty={} fallback_entered={} repository_ready={} miss_count={} last_error_reason={}",
+			status.source,
+			status.preload_count,
+			status.empty ? 1 : 0,
+			status.fallback_entered ? 1 : 0,
+			status.ready ? 1 : 0,
+			status.miss_count,
+			status.last_error_reason.empty() ? "none" : status.last_error_reason);
+		return false;
+	}
+
 	bool WorldRuntime::EnsureAccountHandler_()
 	{
 		if (world_account_handler_) {
@@ -663,6 +721,7 @@ namespace svr {
 	}
 
 	bool WorldRuntime::NotifyAccountWorldEnterSuccess(
+		std::uint64_t trace_id,
 		std::uint64_t account_id,
 		std::uint64_t char_id,
 		std::string_view login_session,
@@ -690,6 +749,7 @@ namespace svr {
 			100,
 			account_sid_.load(std::memory_order_relaxed),
 			account_serial_.load(std::memory_order_relaxed),
+			trace_id,
 			account_id,
 			char_id,
 			login_session,

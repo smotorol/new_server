@@ -9,8 +9,13 @@ namespace dc {
 	inline constexpr std::size_t k_login_pw_max_len = 64;
 	inline constexpr std::size_t k_world_host_max_len = 64;
 	inline constexpr std::size_t k_auth_fail_reason_max_len = 64;
+	inline constexpr std::size_t k_character_name_max_len = 20;
+	inline constexpr std::size_t k_character_list_max_count = 8;
+	inline constexpr std::size_t k_world_list_max_count = 16;
+	inline constexpr std::size_t k_character_state_blob_max_len = 128;
 	inline constexpr std::size_t k_max_world_name_len = 32;
 	inline constexpr std::size_t k_service_name_max_len = 32;
+	inline constexpr std::size_t k_enter_trace_id_max_len = 32;
 
 #ifdef _DEBUG
     inline constexpr std::chrono::seconds k_login_request_timeout{600};

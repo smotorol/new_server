@@ -67,15 +67,16 @@ namespace proto::internal::account_world {
 
     struct WorldAuthTicketConsumeRequest
     {
+        std::uint64_t trace_id = 0;
         std::uint64_t request_id = 0;
         std::uint64_t account_id = 0;
-        std::uint64_t char_id = 0;
         char login_session[dc::k_login_session_max_len + 1]{};
         char world_token[dc::k_world_token_max_len + 1]{};
     };
 
     struct WorldAuthTicketConsumeResponse
     {
+        std::uint64_t trace_id = 0;
         std::uint64_t request_id = 0;
         std::uint16_t result_code = 0;
         std::uint64_t account_id = 0;
@@ -86,6 +87,7 @@ namespace proto::internal::account_world {
 
     struct WorldEnterSuccessNotify
     {
+        std::uint64_t trace_id = 0;
         std::uint64_t account_id = 0;
         std::uint64_t char_id = 0;
         char login_session[dc::k_login_session_max_len + 1]{};
