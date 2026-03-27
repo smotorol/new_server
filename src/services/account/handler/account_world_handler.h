@@ -5,6 +5,9 @@
 #include <string_view>
 
 #include "server_common/handler/service_line_handler_base.h"
+#include "proto/internal/account_world_proto.h"
+
+namespace pt_aw = proto::internal::account_world;
 
 class AccountWorldHandler : public dc::ServiceLineHandlerBase
 {
@@ -44,6 +47,19 @@ public:
         std::string_view login_session,
         std::string_view world_token)>;
 
+    using CharacterListResponseCallback = std::function<void(
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint64_t trace_id,
+        std::uint64_t request_id,
+        std::uint64_t account_id,
+        std::uint16_t world_id,
+        std::uint16_t count,
+        bool ok,
+        std::string_view login_session,
+        const pt_aw::WorldCharacterSummary* characters,
+        std::string_view fail_reason)>;
+
 	using RouteHeartbeatCallback = std::function<void(
 		std::uint32_t sid,
 		std::uint32_t serial,
@@ -59,6 +75,7 @@ public:
         DisconnectCallback on_disconnect,
         ConsumeRequestCallback on_consume_request,
         EnterWorldSuccessCallback on_enter_world_success,
+        CharacterListResponseCallback on_character_list_response,
         RouteHeartbeatCallback on_route_heartbeat);
 
     ~AccountWorldHandler() override = default;
@@ -90,6 +107,16 @@ public:
         std::uint64_t char_id,
         std::string_view login_session,
         std::string_view world_token);
+
+    bool SendWorldCharacterListRequest(
+        std::uint32_t dwProID,
+        std::uint32_t dwIndex,
+        std::uint32_t dwSerial,
+        std::uint64_t trace_id,
+        std::uint64_t request_id,
+        std::uint64_t account_id,
+        std::uint16_t world_id,
+        std::string_view login_session);
 protected:
     bool DataAnalysis(
         std::uint32_t dwProID,
@@ -116,5 +143,6 @@ private:
     DisconnectCallback on_disconnect_;
     ConsumeRequestCallback on_consume_request_;
     EnterWorldSuccessCallback on_enter_world_success_;
+    CharacterListResponseCallback on_character_list_response_;
     RouteHeartbeatCallback on_route_heartbeat_;
 };

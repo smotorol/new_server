@@ -24,13 +24,13 @@ namespace dc {
 	inline constexpr std::chrono::seconds k_consumed_world_enters_awaiting_notify_expire{ 600 };
 	inline constexpr std::chrono::seconds kWorldRouteHeartbeatTimeout_{ 600 };
 	inline constexpr std::chrono::seconds k_login_sessions_pending_client_sid{ 600 };
-	inline constexpr std::chrono::seconds k_next_account_route_heartbeat_tp{ 600 };
+	inline constexpr std::chrono::seconds k_next_account_route_heartbeat_tp{ 3 };
 	inline constexpr std::chrono::seconds k_next_stat_tp_{ 600 };
 	inline constexpr std::chrono::seconds k_ExpireStaleZoneRoutes{ 600 };
 	inline constexpr std::chrono::seconds k_pending_zone_player_enter_requests{ 600 };
-	inline constexpr std::chrono::seconds k_next_world_heartbeat_tp{ 600 };
-	inline constexpr std::chrono::seconds k_next_reap_tp{ 600 };
-	inline constexpr std::chrono::seconds k_ReapEmptyDungeonInstances_{ 600 };
+	inline constexpr std::chrono::seconds k_next_world_heartbeat_tp{ 2 };
+	inline constexpr std::chrono::seconds k_next_reap_tp{ 10 };
+	inline constexpr std::chrono::seconds k_ReapEmptyDungeonInstances_{ 30 };
 #else
 	inline constexpr std::chrono::seconds k_login_request_timeout{ 5 };
 	inline constexpr std::chrono::seconds k_account_world_expire{ 30 };

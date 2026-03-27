@@ -707,63 +707,89 @@ namespace svr {
 
 	void WorldRuntime::ExpireStaleZoneRoutes_(std::chrono::steady_clock::time_point now)
 	{
-		std::lock_guard lk(service_line_mtx_);
-		for (auto it = zone_routes_by_sid_.begin(); it != zone_routes_by_sid_.end();) {
-			if (it->second.last_heartbeat_at != std::chrono::steady_clock::time_point{} &&
-				now - it->second.last_heartbeat_at > dc::k_ExpireStaleZoneRoutes) {
-				const auto expired_sid = it->second.sid;
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> stale_sessions;
+		{
+			std::lock_guard lk(service_line_mtx_);
+			for (auto it = zone_routes_by_sid_.begin(); it != zone_routes_by_sid_.end();) {
+				if (it->second.last_heartbeat_at != std::chrono::steady_clock::time_point{} &&
+					now - it->second.last_heartbeat_at > dc::k_ExpireStaleZoneRoutes) {
+					const auto expired_sid = it->second.sid;
+					const auto expired_serial = it->second.serial;
 
-				spdlog::warn(
-					"WorldRuntime zone route heartbeat expired. sid={} serial={} server_id={} zone_id={}",
-					it->second.sid, it->second.serial, it->second.server_id, it->second.zone_id);
-				RemoveMapAssignmentsByZoneSid_(expired_sid);
-				FailPendingZoneAssignRequestsByZoneSid_(
-					expired_sid,
-					pt_w::EnterWorldResultCode::zone_assign_route_lost,
-					"ExpireStaleZoneRoutes_ zone route expired during map assign.",
-					"ExpireStaleZoneRoutes_ rolled back because zone route expired during map assign.");
-				FailPendingZonePlayerEnterRequestsByZoneSid_(
-					expired_sid,
-					pt_w::EnterWorldResultCode::zone_player_enter_route_lost,
-					"ExpireStaleZoneRoutes_ zone route expired during player enter ack.",
-					"ExpireStaleZoneRoutes_ rolled back because zone route expired during player enter ack.");
-				it = zone_routes_by_sid_.erase(it);
-			}
-			else {
-				++it;
-			}
-		}
-
-		for (auto it = pending_zone_player_enter_requests_.begin(); it != pending_zone_player_enter_requests_.end();) {
-			if (now - it->second.issued_at > dc::k_pending_zone_player_enter_requests) {
-				auto pending_enter = std::move(it->second);
-				it = pending_zone_player_enter_requests_.erase(it);
-
-				if (!IsEnterWorldSessionPending(
-					pending_enter.enter_pending.sid,
-					pending_enter.enter_pending.serial,
-					pending_enter.enter_pending.char_id)) {
 					spdlog::warn(
-						"ExpireStaleZoneRoutes_ stale zone-player-enter timeout dropped. request_id={} world_sid={} world_serial={} char_id={}",
-						pending_enter.request_id,
+						"WorldRuntime zone route heartbeat expired. sid={} serial={} server_id={} zone_id={}",
+						it->second.sid, it->second.serial, it->second.server_id, it->second.zone_id);
+
+					stale_sessions.emplace_back(expired_sid, expired_serial);
+
+					RemoveMapAssignmentsByZoneSid_(expired_sid);
+					FailPendingZoneAssignRequestsByZoneSid_(
+						expired_sid,
+						pt_w::EnterWorldResultCode::zone_assign_route_lost,
+						"ExpireStaleZoneRoutes_ zone route expired during map assign.",
+						"ExpireStaleZoneRoutes_ rolled back because zone route expired during map assign.");
+					FailPendingZonePlayerEnterRequestsByZoneSid_(
+						expired_sid,
+						pt_w::EnterWorldResultCode::zone_player_enter_route_lost,
+						"ExpireStaleZoneRoutes_ zone route expired during player enter ack.",
+						"ExpireStaleZoneRoutes_ rolled back because zone route expired during player enter ack.");
+					it = zone_routes_by_sid_.erase(it);
+				}
+				else {
+					++it;
+				}
+			}
+
+			for (auto it = pending_zone_player_enter_requests_.begin(); it != pending_zone_player_enter_requests_.end();) {
+				if (now - it->second.issued_at > dc::k_pending_zone_player_enter_requests) {
+					auto pending_enter = std::move(it->second);
+					it = pending_zone_player_enter_requests_.erase(it);
+
+					if (!IsEnterWorldSessionPending(
 						pending_enter.enter_pending.sid,
 						pending_enter.enter_pending.serial,
-						pending_enter.enter_pending.char_id);
-					continue;
+						pending_enter.enter_pending.char_id)) {
+						spdlog::warn(
+							"ExpireStaleZoneRoutes_ stale zone-player-enter timeout dropped. request_id={} world_sid={} world_serial={} char_id={}",
+							pending_enter.request_id,
+							pending_enter.enter_pending.sid,
+							pending_enter.enter_pending.serial,
+							pending_enter.enter_pending.char_id);
+						continue;
+					}
+
+					RollbackBoundEnterWorld_(
+						pending_enter.enter_pending,
+						"ExpireStaleZoneRoutes_ rolled back because zone player enter ack timed out.");
+
+					FailPendingEnterWorldConsumeRequest_(
+						pending_enter.enter_pending,
+						pt_w::EnterWorldResultCode::zone_player_enter_timeout,
+						"ExpireStaleZoneRoutes_ zone player enter ack timeout.");
 				}
-
-				RollbackBoundEnterWorld_(
-					pending_enter.enter_pending,
-					"ExpireStaleZoneRoutes_ rolled back because zone player enter ack timed out.");
-
-				FailPendingEnterWorldConsumeRequest_(
-					pending_enter.enter_pending,
-					pt_w::EnterWorldResultCode::zone_player_enter_timeout,
-					"ExpireStaleZoneRoutes_ zone player enter ack timeout.");
+				else {
+					++it;
+				}
 			}
-			else {
-				++it;
- 			}
+		}
+
+		// stale route는 registry에서만 지우면 zone 쪽 reconnect/hello-register가 다시 돌지 않을 수 있다.
+		// 따라서 실제 transport close까지 유도해서 zone client가 재연결하도록 만든다.
+		if (auto* handler = lines_.host(WorldLineId::Zone).handler_as<WorldZoneHandler>()) {
+			for (const auto& [sid, serial] : stale_sessions) {
+				spdlog::warn(
+					"WorldRuntime force closing stale zone session. sid={} serial={} reason=zone_route_heartbeat_expired",
+					sid,
+					serial);
+
+				handler->Close(0, sid, serial, false);
+			}
+		}
+		else if (!stale_sessions.empty()) {
+			spdlog::warn(
+				"WorldRuntime stale zone sessions detected but zone handler is null. count={}",
+				stale_sessions.size());
 		}
 	}
+
 } // namespace svr

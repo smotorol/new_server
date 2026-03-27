@@ -284,6 +284,7 @@ namespace dc {
 		pending.client_sid = sid;
 		pending.client_serial = serial;
 		pending.account_id = session.account_id;
+		//pending.world_id = session.selected_world_id;
 		pending.login_session = session.login_session;
 		pending.issued_at = std::chrono::steady_clock::now();
 
@@ -366,6 +367,7 @@ namespace dc {
 		pending.client_sid = sid;
 		pending.client_serial = serial;
 		pending.account_id = session.account_id;
+		pending.world_id = session.selected_world_id;
 		pending.login_session = session.login_session;
 		pending.issued_at = std::chrono::steady_clock::now();
 
@@ -527,11 +529,12 @@ namespace dc {
 				std::uint64_t account_id,
 				std::uint16_t world_id,
 				std::uint16_t channel_id,
+				std::uint32_t world_server_id,
 				std::string_view login_session,
 				std::string_view world_host,
 				std::uint16_t world_port,
 				std::string_view fail_reason) {
-			OnWorldSelectResult(trace_id, request_id, ok, account_id, world_id, channel_id, login_session, world_host, world_port, fail_reason);
+			OnWorldSelectResult(trace_id, request_id, ok, account_id, world_id, channel_id, world_server_id, login_session, world_host, world_port, fail_reason);
 		},
 			[this](std::uint64_t trace_id,
 				std::uint64_t request_id,
@@ -772,6 +775,7 @@ namespace dc {
 			pending.trace_id,
 			pending.request_id,
 			pending.account_id,
+			pending.world_id,
 			pending.login_session);
 	}
 
@@ -873,6 +877,7 @@ namespace dc {
 		std::uint64_t account_id,
 		std::uint16_t world_id,
 		std::uint16_t channel_id,
+		std::uint32_t world_server_id,
 		std::string_view login_session,
 		std::string_view world_host,
 		std::uint16_t world_port,
@@ -899,7 +904,7 @@ namespace dc {
 				st.world_host.assign(world_host.data(), world_host.size());
 				st.world_port = world_port;
 				st.world_token.clear();
-				st.selected_world_server_id = world_id != 0 ? world_id : 1;
+				st.selected_world_server_id = world_server_id;
 			}
 		}
 

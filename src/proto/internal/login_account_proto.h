@@ -125,6 +125,7 @@ namespace proto::internal::login_account {
         std::uint64_t account_id = 0;
         std::uint16_t world_id = 0;
         std::uint16_t channel_id = 0;
+        std::uint32_t world_server_id = 0;
         std::uint16_t world_port = 0;
         char login_session[dc::k_login_session_max_len + 1]{};
         char world_host[dc::k_world_host_max_len + 1]{};
@@ -136,6 +137,7 @@ namespace proto::internal::login_account {
         std::uint64_t trace_id = 0;
         std::uint64_t request_id = 0;
         std::uint64_t account_id = 0;
+        std::uint16_t world_id = 0;
         char login_session[dc::k_login_session_max_len + 1]{};
     };
 
@@ -145,6 +147,7 @@ namespace proto::internal::login_account {
         std::uint64_t request_id = 0;
         std::uint8_t ok = 0;
         std::uint64_t account_id = 0;
+        std::uint16_t world_id = 0;
         std::uint16_t count = 0;
         char fail_reason[dc::k_auth_fail_reason_max_len + 1]{};
         CharacterSummary characters[dc::k_character_list_max_count]{};

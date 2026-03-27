@@ -254,6 +254,15 @@ namespace svr {
 			std::string_view login_session,
 			std::string_view world_token) = 0;
 
+		virtual void OnAccountCharacterListRequest(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t trace_id,
+			std::uint64_t request_id,
+			std::uint64_t account_id,
+			std::uint16_t world_id,
+			std::string_view login_session) = 0;
+
 		virtual std::uint32_t GetActiveWorldSessionCount() const = 0;
 		virtual std::uint16_t GetActiveZoneCount() const = 0;
 

@@ -12,8 +12,11 @@
 #include <utility>
 #include <ctime>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
 
 #include <spdlog/spdlog.h>
+#include <inipp/inipp.h>
 
 #include "services/account/db/account_auth_job.h"
 #include "server_common/runtime/line_start_helper.h"
@@ -24,6 +27,7 @@
 #include "proto/internal/account_world_proto.h"
 #include "server_common/log/flow_event_codes.h"
 #include "server_common/log/enter_flow_log.h"
+#include "server_common/config/runtime_ini_sanity.h"
 
 namespace pt_aw = proto::internal::account_world;
 
@@ -417,6 +421,26 @@ namespace dc {
 
 		out_server_id = it->second.server_id;
 		return out_server_id != 0;
+	}
+
+
+	bool AccountLineRuntime::TryResolveWorldRouteSessionByServerId_(
+		std::uint32_t world_server_id,
+		std::uint32_t& out_sid,
+		std::uint32_t& out_serial) const
+	{
+		std::lock_guard lk(world_registry_mtx_);
+		const auto idx = world_sid_by_server_id_.find(world_server_id);
+		if (idx == world_sid_by_server_id_.end()) {
+			return false;
+		}
+		const auto it = worlds_by_sid_.find(idx->second);
+		if (it == worlds_by_sid_.end()) {
+			return false;
+		}
+		out_sid = it->second.sid;
+		out_serial = it->second.serial;
+		return dc::IsValidSessionKey(out_sid, out_serial);
 	}
 
 	void AccountLineRuntime::ErasePendingWorldTicketsForServer_(std::uint32_t world_server_id)
@@ -864,6 +888,87 @@ namespace dc {
 			"");
 	}
 
+
+	void AccountLineRuntime::HandleWorldCharacterListResponse_(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t trace_id,
+		std::uint64_t request_id,
+		std::uint64_t account_id,
+		std::uint16_t world_id,
+		std::uint16_t count,
+		bool ok,
+		std::string_view login_session,
+		const pt_aw::WorldCharacterSummary* characters,
+		std::string_view fail_reason)
+	{
+		if (!login_handler_) {
+			return;
+		}
+
+		std::uint32_t sender_world_server_id = 0;
+		if (!TryResolveRegisteredWorldServerId_(sid, serial, sender_world_server_id)) {
+			return;
+		}
+
+		std::uint32_t login_sid = 0;
+		std::uint32_t login_serial = 0;
+		{
+			std::lock_guard lk(login_character_sessions_mtx_);
+			const auto it = login_character_sessions_.find(std::string(login_session));
+			if (it == login_character_sessions_.end() ||
+				it->second.account_id != account_id ||
+				it->second.selected_world_server_id != sender_world_server_id ||
+				it->second.selected_world_id != world_id) {
+				return;
+			}
+			login_sid = it->second.login_sid;
+			login_serial = it->second.login_serial;
+
+			it->second.cached_characters.clear();
+			if (ok && characters != nullptr) {
+				for (std::size_t i = 0; i < std::min<std::size_t>(count, dc::k_character_list_max_count); ++i) {
+					proto::internal::login_account::CharacterSummary entry{};
+					entry.char_id = characters[i].char_id;
+					std::snprintf(entry.char_name, sizeof(entry.char_name), "%s", characters[i].char_name);
+					entry.level = characters[i].level;
+					entry.job = characters[i].job;
+					entry.appearance_code = characters[i].appearance_code;
+					entry.last_login_at_epoch_sec = characters[i].last_login_at_epoch_sec;
+					it->second.cached_characters.push_back(entry);
+				}
+			}
+			it->second.updated_at = std::chrono::steady_clock::now();
+		}
+
+		if (!ok) {
+			login_handler_->SendCharacterListResult(0, login_sid, login_serial, trace_id, request_id, false, account_id, 0, nullptr, fail_reason);
+			return;
+		}
+
+		pt_la::CharacterSummary out[dc::k_character_list_max_count]{};
+		for (std::size_t i = 0; i < std::min<std::size_t>(count, dc::k_character_list_max_count); ++i) {
+			out[i].char_id = characters[i].char_id;
+			std::snprintf(out[i].char_name, sizeof(out[i].char_name), "%s", characters[i].char_name);
+			out[i].level = characters[i].level;
+			out[i].job = characters[i].job;
+			out[i].appearance_code = characters[i].appearance_code;
+			out[i].last_login_at_epoch_sec = characters[i].last_login_at_epoch_sec;
+		}
+
+		login_handler_->SendCharacterListResult(
+			0,
+			login_sid,
+			login_serial,
+			trace_id,
+			request_id,
+			true,
+			account_id,
+			count,
+			out,
+			"");
+	}
+
 	std::uint16_t AccountLineRuntime::ConsumeIssuedWorldTicket_(std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
@@ -1142,6 +1247,7 @@ namespace dc {
 	void AccountLineRuntime::ExpireStaleWorldRoutes_(std::chrono::steady_clock::time_point now)
 	{
 		std::vector<std::uint32_t> stale_server_ids;
+		std::vector<std::pair<std::uint32_t, std::uint32_t>> stale_sessions;
 		{
 			std::lock_guard lk(world_registry_mtx_);
 			for (auto it = worlds_by_sid_.begin(); it != worlds_by_sid_.end();) {
@@ -1149,6 +1255,9 @@ namespace dc {
 					++it;
 					continue;
 				}
+
+				const auto expired_sid = it->second.sid;
+				const auto expired_serial = it->second.serial;
 
 				spdlog::warn(
 					"[{}] expired stale world route sid={} serial={} server_id={} world_id={} channel_id={} last_load={} zones={}",
@@ -1168,6 +1277,9 @@ namespace dc {
 						world_sid_by_server_id_.erase(idx);
 					}
 				}
+				// stale route는 heartbeat만으로는 다시 살아나지 않으므로
+				// 실제 세션 close를 유도해서 world 쪽 reconnect + hello/register 재수행이 일어나게 한다.
+				stale_sessions.emplace_back(expired_sid, expired_serial);
 
 				it = worlds_by_sid_.erase(it);
 			}
@@ -1175,6 +1287,21 @@ namespace dc {
 
 		for (const auto server_id : stale_server_ids) {
 			ErasePendingWorldTicketsForServer_(server_id);
+		}
+
+		// 주의:
+		// Close()는 disconnect callback -> OnWorldRouteDisconnected_()를 다시 유발할 수 있으므로
+		// 반드시 registry lock 밖에서 호출한다.
+		if (world_handler_) {
+			for (const auto& [sid, serial] : stale_sessions) {
+				spdlog::warn(
+					"[{}] force closing stale world session sid={} serial={} after route expiration",
+					ToString(AccountFlowEvent::WorldRouteExpired),
+					sid,
+					serial);
+
+				world_handler_->Close(0, sid, serial, false);
+			}
 		}
 	}
 
@@ -1324,13 +1451,13 @@ namespace dc {
 			std::lock_guard lk(login_character_sessions_mtx_);
 			const auto it = login_character_sessions_.find(std::string(login_session));
 			if (it == login_character_sessions_.end() || it->second.account_id != account_id) {
-				login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, login_session, "", "invalid_login_session", 0);
+				login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, 0, login_session, "", "invalid_login_session", 0);
 				return;
 			}
 		}
 
 		if (!TryResolveSelectedWorldRoute_(world_id, channel_id, world_host, world_port, world_server_id)) {
-			login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, login_session, "", "world_not_found", 0);
+			login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, 0, login_session, "", "world_not_found", 0);
 			return;
 		}
 
@@ -1338,7 +1465,7 @@ namespace dc {
 			std::lock_guard lk(login_character_sessions_mtx_);
 			auto it = login_character_sessions_.find(std::string(login_session));
 			if (it == login_character_sessions_.end() || it->second.account_id != account_id) {
-				login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, login_session, "", "invalid_login_session", 0);
+				login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, 0, login_session, "", "invalid_login_session", 0);
 				return;
 			}
 			it->second.selected_world_id = world_id;
@@ -1349,7 +1476,7 @@ namespace dc {
 			it->second.updated_at = std::chrono::steady_clock::now();
 		}
 
-		login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, true, account_id, world_id, channel_id, login_session, world_host, "", world_port);
+		login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, true, account_id, world_id, channel_id, world_server_id, login_session, world_host, "", world_port);
 	}
 
 	void AccountLineRuntime::HandleCharacterListRequest_(
@@ -1358,6 +1485,7 @@ namespace dc {
 		std::uint64_t trace_id,
 		std::uint64_t request_id,
 		std::uint64_t account_id,
+		std::uint16_t world_id,
 		std::string_view login_session)
 	{
 		dc::enterlog::LogEnterFlow(
@@ -1372,20 +1500,46 @@ namespace dc {
 				login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "invalid_login_session");
 				return;
 			}
-			if (it->second.selected_world_server_id == 0) {
+			if (it->second.selected_world_server_id == 0 || it->second.selected_world_id == 0) {
 				login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "world_not_selected");
 				return;
 			}
 		}
 
-		svr::dqs_payload::AccountCharacterListRequest payload{};
-		payload.sid = sid;
-		payload.serial = serial;
-		payload.trace_id = trace_id;
-		payload.request_id = request_id;
-		payload.account_id = account_id;
-		if (!PushAccountCharacterListDqs_(payload)) {
-			login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "db_queue_full");
+		std::uint32_t world_sid = 0;
+		std::uint32_t world_serial = 0;
+		std::uint32_t selected_world_server_id = 0;
+		{
+			std::lock_guard lk(login_character_sessions_mtx_);
+			const auto it = login_character_sessions_.find(std::string(login_session));
+			if (it == login_character_sessions_.end() || it->second.account_id != account_id) {
+				login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "invalid_login_session");
+				return;
+			}
+			selected_world_server_id = it->second.selected_world_server_id;
+            if (world_id == 0) {
+                world_id = it->second.selected_world_id;
+            } else if (world_id != it->second.selected_world_id) {
+                login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "world_selection_mismatch");
+                return;
+            }
+		}
+
+		if (!world_handler_ || !TryResolveWorldRouteSessionByServerId_(selected_world_server_id, world_sid, world_serial)) {
+			login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "world_route_not_ready");
+			return;
+		}
+
+		if (!world_handler_->SendWorldCharacterListRequest(
+			0,
+			world_sid,
+			world_serial,
+			trace_id,
+			request_id,
+			account_id,
+			world_id,
+			login_session)) {
+			login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "world_route_send_failed");
 		}
 	}
 
@@ -1486,9 +1640,306 @@ namespace dc {
 			{},
 			"character_select_issued_world_ticket");
 	}
+	bool AccountLineRuntime::LoadIniFile()
+	{
+		namespace fs = std::filesystem;
+		const fs::path ini_path = fs::current_path() / "Initialize" / "AccountSystem.ini";
+
+		std::ifstream is(ini_path, std::ios::in | std::ios::binary);
+		if (!is) {
+			spdlog::error("INI open failed: {}", ini_path.string());
+			return false;
+		}
+
+		inipp::Ini<char> ini;
+		ini.parse(is);
+
+		// ------------------------------------------------------------
+			// 0) local defaults (최종 fallback)
+			// ------------------------------------------------------------
+		bool config_fail_fast = false;
+		std::string parse_error;
+		std::string parse_warn;
+
+		auto parse_int_field = [&](const std::string& key, const std::string& raw, int& target) -> bool {
+			parse_error.clear();
+			parse_warn.clear();
+			if (!dc::cfg::ParseIntOrKeep(key.c_str(), raw, target, config_fail_fast, &parse_error, &parse_warn)) {
+				spdlog::error("[config] {}", parse_error);
+				return false;
+			}
+			if (!parse_warn.empty()) {
+				spdlog::warn("[config] {}", parse_warn);
+			}
+			return true;
+		};
+		auto parse_u32_field = [&](const std::string& key, const std::string& raw, std::uint32_t& target) -> bool {
+			parse_error.clear();
+			parse_warn.clear();
+			if (!dc::cfg::ParseU32OrKeep(key.c_str(), raw, target, config_fail_fast, &parse_error, &parse_warn)) {
+				spdlog::error("[config] {}", parse_error);
+				return false;
+			}
+			if (!parse_warn.empty()) {
+				spdlog::warn("[config] {}", parse_warn);
+			}
+			return true;
+		};
+
+		// inipp는 기본적으로 trim/escape 처리가 있음
+		// ini.default_section(ini.sections[""]);
+
+		// [LOGDB_INFO]
+		db_ip_ = ini.sections["Database"]["Address"];
+		db_dns_ = ini.sections["Database"]["DNS"];
+
+		// [REDIS]
+		{
+			auto v = ini.sections["REDIS"]["Host"];
+			if (!v.empty()) redis_host_ = v;
+		}
+		{
+			auto v = ini.sections["REDIS"]["Port"];
+			if (!parse_int_field("REDIS.Port", v, redis_port_)) return false;
+		}
+		{
+			auto v = ini.sections["REDIS"]["DB"];
+			if (!parse_int_field("REDIS.DB", v, redis_db_)) return false;
+		}
+		redis_password_ = ini.sections["REDIS"]["Password"];
+		{
+			auto v = ini.sections["REDIS"]["Prefix"];
+			if (!v.empty()) redis_prefix_ = v;
+		}
+
+		// ✅ Redis shard + WAIT 옵션
+		{
+			auto v = ini.sections["REDIS"]["SHARD_COUNT"];
+			if (!parse_u32_field("REDIS.SHARD_COUNT", v, redis_shard_count_)) return false;
+		}
+		{
+			auto v = ini.sections["REDIS"]["WAIT_REPLICAS"];
+			if (!parse_int_field("REDIS.WAIT_REPLICAS", v, redis_wait_replicas_)) return false;
+		}
+		{
+			auto v = ini.sections["REDIS"]["WAIT_TIMEOUT_MS"];
+			if (!parse_int_field("REDIS.WAIT_TIMEOUT_MS", v, redis_wait_timeout_ms_)) return false;
+		}
+
+		// ✅ write-behind 튜닝
+		{
+			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_INTERVAL_SEC"];
+			if (!parse_int_field("WRITE_BEHIND.FLUSH_INTERVAL_SEC", v, flush_interval_sec_)) return false;
+		}
+		{
+			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_IMMEDIATE"];
+			if (!parse_u32_field("WRITE_BEHIND.FLUSH_BATCH_IMMEDIATE", v, flush_batch_immediate_)) return false;
+		}
+		{
+			auto v = ini.sections["WRITE_BEHIND"]["FLUSH_BATCH_NORMAL"];
+			if (!parse_u32_field("WRITE_BEHIND.FLUSH_BATCH_NORMAL", v, flush_batch_normal_)) return false;
+		}
+		{
+			auto v = ini.sections["WRITE_BEHIND"]["CHAR_TTL_SEC"];
+			if (!parse_int_field("WRITE_BEHIND.CHAR_TTL_SEC", v, char_ttl_sec_)) return false;
+		}
+		{
+			auto v = ini.sections["SESSION"]["RECONNECT_GRACE_CLOSE_DELAY_MS"];
+			if (!parse_int_field("SESSION.RECONNECT_GRACE_CLOSE_DELAY_MS", v, reconnect_grace_close_delay_ms_)) return false;
+		}
+
+		// ✅ DB/DQS 샤딩 관련
+		{
+			auto v = ini.sections["DB_WORK"]["DB_POOL_SIZE_PER_WORLD"];
+			if (!parse_int_field("DB_WORK.DB_POOL_SIZE_PER_WORLD", v, db_pool_size_per_world_)) return false;
+		}
+		{
+			auto v = ini.sections["DB_WORK"]["DB_SHARD_COUNT"];
+			if (!parse_u32_field("DB_WORK.DB_SHARD_COUNT", v, db_shard_count_)) return false;
+		}
+
+		// [World]
+
+		auto& w = world_info_;
+
+		// Name은 한글 가능 → UTF-8 그대로 std::string에 보관하는 게 베스트
+		w.name_utf8 = ini.sections["World"]["Name"];
+		w.address = ini.sections["World"]["Address"];
+		w.dsn = ini.sections["World"]["DSN")];
+		w.dbname = ini.sections["World"]["DBName"];
+
+		{
+			auto port = ini.sections["World"]["Port"];
+			int parsed_port = 0;
+			if (!parse_int_field(std::string("World.") + "Port", port, parsed_port)) return false;
+			w.port = parsed_port;
+		}
+
+		{
+			auto idx = ini.sections["World"]["WorldIdx"];
+			int parsed_idx = 0;
+			if (!parse_int_field(std::string("World.") + "WorldIdx", idx, parsed_idx)) return false;
+			w.world_idx = parsed_idx;
+		}
+
+		// [NET_WORK]
+		world_to_log_recv_buffer_size_ = 10'000'000;
+		{
+			auto v = ini.sections["NET_WORK"]["WORLD_TO_LOG_RECV_BUFFER_SIZE"];
+			if (!parse_u32_field("NET_WORK.WORLD_TO_LOG_RECV_BUFFER_SIZE", v, world_to_log_recv_buffer_size_)) return false;
+		}
+		// ✅ io_context run() 스레드 개수(기본 1)
+		{
+			auto v = ini.sections["NET_WORK"]["IO_THREAD_COUNT"];
+			if (!parse_int_field("NET_WORK.IO_THREAD_COUNT", v, io_thread_count_)) return false;
+		}
+
+		// ✅ 로직(Actor) 스레드 개수(기본 1)
+		{
+			auto v = ini.sections["NET_WORK"]["LOGIC_THREAD_COUNT"];
+			if (!parse_int_field("NET_WORK.LOGIC_THREAD_COUNT", v, logic_thread_count_)) return false;
+		}
+		{
+			auto v = ini.sections["SYSTEM"]["CONFIG_FAIL_FAST"];
+			if (!v.empty()) {
+				int parsed = 0;
+				if (dc::cfg::TryParseInt(v, parsed)) {
+					config_fail_fast = (parsed != 0);
+				}
+				else {
+					spdlog::warn("[config] invalid SYSTEM.CONFIG_FAIL_FAST='{}' -> default(false)", v);
+				}
+			}
+		}
+		{
+			auto v = ini.sections["SYSTEM"]["CONFIG_SCHEMA_VERSION"];
+			if (!v.empty()) {
+				int parsed = config_schema_version;
+				if (!parse_int_field("SYSTEM.CONFIG_SCHEMA_VERSION", v, parsed)) return false;
+				config_schema_version = parsed;
+			}
+		}
+
+		// [AOI] (선택)
+		// - MAP_W/MAP_H : 임시 맵 크기(월드/존마다 다르면 확장 가능)
+		// - WORLD_SIGHT_UNIT : 셀 단위(레거시 WORLD_SIGHT_UNIT)
+		// - AOI_RADIUS_CELLS : 주변 셀 반경(1이면 3x3)
+		auto g_aoi_ini_cfg = dc::cfg::GetAoiConfig();
+
+		{
+			auto v = ini.sections["AOI"]["MAP_W"];
+			if (!parse_int_field("AOI.MAP_W", v, g_aoi_ini_cfg.map_size.x)) return false;
+		}
+		{
+			auto v = ini.sections["AOI"]["MAP_H"];
+			if (!parse_int_field("AOI.MAP_H", v, g_aoi_ini_cfg.map_size.y)) return false;
+		}
+		{
+			auto v = ini.sections["AOI"]["WORLD_SIGHT_UNIT"];
+			if (!parse_int_field("AOI.WORLD_SIGHT_UNIT", v, g_aoi_ini_cfg.world_sight_unit)) return false;
+		}
+		{
+			auto v = ini.sections["AOI"]["AOI_RADIUS_CELLS"];
+			if (!parse_int_field("AOI.AOI_RADIUS_CELLS", v, g_aoi_ini_cfg.aoi_radius_cells)) return false;
+		}
+
+		// ============================================================
+		// ✅ normalize / default rules (최종 확정값 계산)
+		// ============================================================
+
+		// 1~3) shard/wait sanity
+		dc::cfg::NormalizeShardAndRedisWait(
+			db_shard_count_,
+			redis_shard_count_,
+			redis_wait_replicas_,
+			redis_wait_timeout_ms_);
+
+		// 4) flush interval/batch/ttl sanity
+		std::string policy_error;
+		dc::cfg::WorldRuntimePolicyTargets policy_targets{};
+		policy_targets.flush_interval_sec = &flush_interval_sec_;
+		policy_targets.char_ttl_sec = &char_ttl_sec_;
+		policy_targets.db_pool_size_per_world = &db_pool_size_per_world_;
+		policy_targets.flush_batch_immediate = &flush_batch_immediate_;
+		policy_targets.flush_batch_normal = &flush_batch_normal_;
+		policy_targets.reconnect_grace_close_delay_ms = &reconnect_grace_close_delay_ms_;
+
+		dc::cfg::WorldRuntimePolicyDefaults policy_defaults{};
+		policy_defaults.default_flush_interval_sec = kDefaultFlushIntervalSec;
+		policy_defaults.default_char_ttl_sec = kDefaultCharTtlSec;
+		policy_defaults.default_db_pool_size_per_world = 2;
+		policy_defaults.default_batch_immediate = kDefaultBatchImmediate;
+		policy_defaults.default_batch_normal = kDefaultBatchNormal;
+		policy_defaults.default_reconnect_grace_close_delay_ms = kDefaultReconnectGraceCloseDelayMs;
+
+		const auto policy_table = dc::cfg::BuildWorldRuntimeMinPolicyTable(policy_targets, policy_defaults);
+		if (!dc::cfg::ApplyMinPolicies(policy_table.int_specs, policy_table.u32_specs, config_fail_fast, &policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
+		if (!dc::cfg::ValidateSchemaCompatibility(
+			"SYSTEM.CONFIG_SCHEMA_VERSION",
+			config_schema_version,
+			dc::cfg::kRuntimeConfigSchemaVersion,
+			dc::cfg::kRuntimeConfigSchemaMinSupported,
+			dc::cfg::kRuntimeConfigSchemaMaxSupported,
+			config_fail_fast,
+			&policy_error)) {
+			spdlog::error("{}", policy_error);
+			return false;
+		}
+		if (config_schema_version < dc::cfg::kRuntimeConfigSchemaMinSupported ||
+			config_schema_version > dc::cfg::kRuntimeConfigSchemaMaxSupported) {
+			spdlog::warn(
+				"[config] schema version unsupported (continue with auto-heal mode). loaded={} supported=[{},{}]",
+				config_schema_version,
+				dc::cfg::kRuntimeConfigSchemaMinSupported,
+				dc::cfg::kRuntimeConfigSchemaMaxSupported);
+		}
+		else if (config_schema_version != dc::cfg::kRuntimeConfigSchemaVersion) {
+			spdlog::warn(
+				"[config] schema version mismatch (continue with auto-heal mode). loaded={} expected={} supported=[{},{}]",
+				config_schema_version,
+				dc::cfg::kRuntimeConfigSchemaVersion,
+				dc::cfg::kRuntimeConfigSchemaMinSupported,
+				dc::cfg::kRuntimeConfigSchemaMaxSupported);
+		}
+
+		// 5) AOI/섹터 sanity
+		dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);
+
+
+		spdlog::info("INI loaded (UTF-8): acc='{}', recv_buf={}",
+			db_acc_, world_to_log_recv_buffer_size_);
+
+		spdlog::info("INI(DB_WORK): pool_per_world={}, db_shards={}", db_pool_size_per_world_, db_shard_count_);
+		spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
+			flush_interval_sec_, flush_batch_immediate_, flush_batch_normal_, char_ttl_sec_);
+		spdlog::info("INI(SESSION): reconnect_grace_close_delay_ms={}", reconnect_grace_close_delay_ms_);
+		spdlog::info("INI(SYSTEM): config_fail_fast={} schema_version={} expected_schema_version={} supported_schema_range=[{},{}]",
+			config_fail_fast,
+			config_schema_version,
+			dc::cfg::kRuntimeConfigSchemaVersion,
+			dc::cfg::kRuntimeConfigSchemaMinSupported,
+			dc::cfg::kRuntimeConfigSchemaMaxSupported);
+		spdlog::info("INI(REDIS): shard_count={}, wait_replicas={}, wait_timeout_ms={}",
+			redis_shard_count_, redis_wait_replicas_, redis_wait_timeout_ms_);
+		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",
+			g_aoi_ini_cfg.map_size.x, g_aoi_ini_cfg.map_size.y,
+			g_aoi_ini_cfg.world_sight_unit, g_aoi_ini_cfg.aoi_radius_cells);
+
+		const auto& w = world_info_;
+		spdlog::info("World: name='{}' addr='{}' dsn='{}' db='{}' idx={}",
+			w.name_utf8, w.address, w.dsn, w.dbname, w.world_idx);
+
+		return true;
+	}
 
 	bool AccountLineRuntime::OnRuntimeInit()
 	{
+		if (!LoadIniFile()) {
+			spdlog::warn("LoadIniFile() failed (stub). Continue with defaults.");
+		}
 		if (!InitDqs_()) {
 			spdlog::error("AccountLineRuntime failed to init DQS.");
 			return false;
@@ -1531,8 +1982,8 @@ namespace dc {
 			[this](std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::uint16_t channel_id, std::string_view login_session) {
 			HandleWorldSelectRequest_(sid, serial, trace_id, request_id, account_id, world_id, channel_id, login_session);
 		},
-			[this](std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::string_view login_session) {
-			HandleCharacterListRequest_(sid, serial, trace_id, request_id, account_id, login_session);
+			[this](std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::string_view login_session) {
+			HandleCharacterListRequest_(sid, serial, trace_id, request_id, account_id, world_id, login_session);
 		},
 			[this](std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint64_t char_id, std::string_view login_session) {
 			HandleCharacterSelectRequest_(sid, serial, trace_id, request_id, account_id, char_id, login_session);
@@ -1579,6 +2030,11 @@ namespace dc {
 				std::uint64_t account_id, std::uint64_t char_id,
 				std::string_view login_session, std::string_view world_token) {
 			HandleWorldEnterSuccessNotify_(sid, serial, trace_id, account_id, char_id, login_session, world_token);
+		},
+			[this](std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id,
+				std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::uint16_t count, bool ok,
+				std::string_view login_session, const pt_aw::WorldCharacterSummary* characters, std::string_view fail_reason) {
+			HandleWorldCharacterListResponse_(sid, serial, trace_id, request_id, account_id, world_id, count, ok, login_session, characters, fail_reason);
 		},
 			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
 				std::uint16_t world_id, std::uint16_t channel_id,

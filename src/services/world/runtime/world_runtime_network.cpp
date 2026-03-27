@@ -56,7 +56,7 @@ namespace svr {
 	bool WorldRuntime::LoadIniFile()
 	{
 		namespace fs = std::filesystem;
-		const fs::path ini_path = fs::current_path() / "Initialize" / "ServerSystem.ini";
+		const fs::path ini_path = fs::current_path() / "Initialize" / "WorldSystem.ini";
 
 		std::ifstream is(ini_path, std::ios::in | std::ios::binary);
 		if (!is) {
@@ -178,43 +178,27 @@ namespace svr {
 		}
 
 		// [World]
-		worldset_num_ = 0;
+
+		auto& w = world_info_;
+
+		// Name은 한글 가능 → UTF-8 그대로 std::string에 보관하는 게 베스트
+		w.name_utf8 = ini.sections["World"]["Name"];
+		w.address = ini.sections["World"]["Address"];
+		w.dsn = ini.sections["World"]["DSN")];
+		w.dbname = ini.sections["World"]["DBName"];
+
 		{
-			auto v = ini.sections["World"]["WorldSet_Num"];
-			if (!parse_int_field("World.WorldSet_Num", v, worldset_num_)) return false;
+			auto port = ini.sections["World"]["Port"];
+			int parsed_port = 0;
+			if (!parse_int_field(std::string("World.") + "Port", port, parsed_port)) return false;
+			w.port = parsed_port;
 		}
 
-		worlds_.clear();
-		worlds_.reserve(std::max(0, worldset_num_));
-
-		for (int i = 0; i < worldset_num_; ++i) {
-			WorldInfo w;
-
-			auto key = [&](const char* base) {
-				return std::string(base) + std::to_string(i);
-			};
-
-			// Name은 한글 가능 → UTF-8 그대로 std::string에 보관하는 게 베스트
-			w.name_utf8 = ini.sections["World"][key("Name")];
-			w.address = ini.sections["World"][key("Address")];
-			w.dsn = ini.sections["World"][key("DSN")];
-			w.dbname = ini.sections["World"][key("DBName")];
-
-				{
-					auto port = ini.sections["World"][key("Port")];
-					int parsed_port = 0;
-					if (!parse_int_field(std::string("World.") + key("Port"), port, parsed_port)) return false;
-					w.port = parsed_port;
-				}
-
-				{
-					auto idx = ini.sections["World"][key("WorldIdx")];
-					int parsed_idx = 0;
-					if (!parse_int_field(std::string("World.") + key("WorldIdx"), idx, parsed_idx)) return false;
-					w.world_idx = parsed_idx;
-				}
-
-			worlds_.push_back(std::move(w));
+		{
+			auto idx = ini.sections["World"]["WorldIdx"];
+			int parsed_idx = 0;
+			if (!parse_int_field(std::string("World.") + "WorldIdx", idx, parsed_idx)) return false;
+			w.world_idx = parsed_idx;
 		}
 
 		// [NET_WORK]
@@ -344,8 +328,8 @@ namespace svr {
 		dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);
 
 
-		spdlog::info("INI loaded (UTF-8): acc='{}', worldset_num={}, recv_buf={}",
-			db_acc_, worldset_num_, world_to_log_recv_buffer_size_);
+		spdlog::info("INI loaded (UTF-8): acc='{}', recv_buf={}",
+			db_acc_, world_to_log_recv_buffer_size_);
 
 		spdlog::info("INI(DB_WORK): pool_per_world={}, db_shards={}", db_pool_size_per_world_, db_shard_count_);
 			spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
@@ -363,98 +347,85 @@ namespace svr {
 			g_aoi_ini_cfg.map_size.x, g_aoi_ini_cfg.map_size.y,
 			g_aoi_ini_cfg.world_sight_unit, g_aoi_ini_cfg.aoi_radius_cells);
 
-		for (const auto& w : worlds_) {
-			spdlog::info("World: name='{}' addr='{}' dsn='{}' db='{}' idx={}",
-				w.name_utf8, w.address, w.dsn, w.dbname, w.world_idx);
-		}
+		const auto& w = world_info_;
+		spdlog::info("World: name='{}' addr='{}' dsn='{}' db='{}' idx={}",
+			w.name_utf8, w.address, w.dsn, w.dbname, w.world_idx);
 
 		return true;
 	}
 
 	bool WorldRuntime::DatabaseInit()
 	{
-		world_pools_.clear();
-		if (worldset_num_ <= 0 || worlds_.empty())
-		{
-			spdlog::warn("DatabaseInit: no world settings. skip.");
-			return true;
+		const auto& w = world_info_;
+		if (!world_pool_)
+			world_pool_ = std::make_unique<DbPool>();
+		auto& pool = *world_pool_;
+
+		pool.conns.clear();
+		pool.conns.reserve((size_t)db_pool_size_per_world_);
+
+		// 1) 연결 문자열 조합
+		std::string dsn_conn =
+			"DSN=" + w.dsn +
+			";UID=" + db_acc_ +
+			";PWD=" + db_pw_ + ";";
+
+		if (!w.dbname.empty()) {
+			dsn_conn += "DATABASE=" + w.dbname + ";";
 		}
 
-		world_pools_.resize((size_t)worldset_num_);
+		// 2) DRIVER 기반 fallback 연결 문자열
+		std::string driver_conn =
+			"DRIVER={ODBC Driver 18 for SQL Server};"
+			"SERVER=" + w.address + "," + std::to_string(w.port) + ";"
+			"UID=" + db_acc_ + ";"
+			"PWD=" + db_pw_ + ";"
+			"Encrypt=optional;";
 
-		for (int i = 0; i < worldset_num_; ++i)
-		{
-			const auto& w = worlds_[(size_t)i];
-			if (!world_pools_[(size_t)i])
-				world_pools_[(size_t)i] = std::make_unique<DbPool>();
-			auto& pool = *world_pools_[(size_t)i];
+		if (!w.dbname.empty())
+			driver_conn += "DATABASE=" + w.dbname + ";";
 
-			pool.conns.clear();
-			pool.conns.reserve((size_t)db_pool_size_per_world_);
+		try {
+			for (int k = 0; k < db_pool_size_per_world_; ++k)
+			{
+				db::OdbcConnection conn;
+				bool connected = false;
 
-			// 1) 연결 문자열 조합
-			std::string dsn_conn =
-				"DSN=" + w.dsn +
-				";UID=" + db_acc_ +
-				";PWD=" + db_pw_ + ";";
-
-			if (!w.dbname.empty()) {
-				dsn_conn += "DATABASE=" + w.dbname + ";";
-			}
-
-			// 2) DRIVER 기반 fallback 연결 문자열
-			std::string driver_conn =
-				"DRIVER={ODBC Driver 18 for SQL Server};"
-				"SERVER=" + w.address + "," + std::to_string(w.port) + ";"
-				"UID=" + db_acc_ + ";"
-				"PWD=" + db_pw_ + ";"
-				"Encrypt=optional;";
-
-			if (!w.dbname.empty())
-				driver_conn += "DATABASE=" + w.dbname + ";";
-
-			try {
-				for (int k = 0; k < db_pool_size_per_world_; ++k)
+				// 1️ DSN 먼저 시도
+				try
 				{
-					db::OdbcConnection conn;
-					bool connected = false;
-
-					// 1️ DSN 먼저 시도
-					try
-					{
-						conn.connect(dsn_conn);
-						connected = conn.connected();
-					}
-					catch (...)
-					{
-						spdlog::warn(
-							"DSN not found. fallback to DRIVER mode (world={}, dsn={})",
-							i, w.dsn);
-					}
-
-					// 2️ DRIVER fallback
-					if (!connected)
-					{
-						conn.connect(driver_conn);
-						connected = conn.connected();
-					}
-
-					if (!connected)
-					{
-						spdlog::error("DB not connected (world={})", i);
-						return false;
-					}
-
-					pool.conns.push_back(std::move(conn));
+					conn.connect(dsn_conn);
+					connected = conn.connected();
 				}
-				spdlog::info(
-					"DB connected: world={} dsn={} db={} pool={} (dsn+driver fallback)",
-					i, w.dsn, w.dbname, db_pool_size_per_world_);
+				catch (...)
+				{
+					spdlog::warn(
+						"DSN not found. fallback to DRIVER mode (dsn={})",
+						w.dsn);
+				}
+
+				// 2️ DRIVER fallback
+				if (!connected)
+				{
+					conn.connect(driver_conn);
+					connected = conn.connected();
+				}
+
+				if (!connected)
+				{
+					spdlog::error("DB not connected");
+					return false;
+				}
+
+				pool.conns.push_back(std::move(conn));
 			}
-			catch (const db::OdbcError& e) {
-				spdlog::error("DB connect failed (dsn={}): {}", w.dsn, e.what());
-				return false;
-			}
+			spdlog::info(
+				"DB connected: dsn={} db={} pool={} (dsn+driver fallback)",
+				w.dsn, w.dbname, db_pool_size_per_world_);
+		}
+		catch (const db::OdbcError& e) {
+			spdlog::error("DB connect failed (dsn={}): {}", w.dsn, e.what());
+			return false;
 		}
 
 		return true;
@@ -463,26 +434,24 @@ namespace svr {
 	bool WorldRuntime::PreloadItemTemplateRepository_()
 	{
 		ItemTemplateRepository::SetLegacyFallbackAllowed(allow_legacy_item_template_fallback_);
-		for (const auto& pool_ptr : world_pools_) {
-			if (!pool_ptr || pool_ptr->conns.empty()) {
-				continue;
-			}
 
-			auto result = ItemTemplateRepository::LoadCanonicalTableFromDb(pool_ptr->conns.front());
-			if (result.loaded) {
-				auto status = ItemTemplateRepository::SnapshotStatus();
-				spdlog::info(
-					"Item template preload success. source={} rows={} repository_empty={} fallback_entered={} repository_ready={} miss_count={} last_error_reason={}",
-					status.source,
-					status.preload_count,
-					status.empty ? 1 : 0,
-					status.fallback_entered ? 1 : 0,
-					status.ready ? 1 : 0,
-					status.miss_count,
-					status.last_error_reason.empty() ? "none" : status.last_error_reason);
-				return true;
-			}
-			break;
+		if (!world_pool_ || world_pool_->conns.empty()) {
+			return false;
+		}
+
+		auto result = ItemTemplateRepository::LoadCanonicalTableFromDb(world_pool_->conns.front());
+		if (result.loaded) {
+			auto status = ItemTemplateRepository::SnapshotStatus();
+			spdlog::info(
+				"Item template preload success. source={} rows={} repository_empty={} fallback_entered={} repository_ready={} miss_count={} last_error_reason={}",
+				status.source,
+				status.preload_count,
+				status.empty ? 1 : 0,
+				status.fallback_entered ? 1 : 0,
+				status.ready ? 1 : 0,
+				status.miss_count,
+				status.last_error_reason.empty() ? "none" : status.last_error_reason);
+			return true;
 		}
 
 		if (allow_legacy_item_template_fallback_) {

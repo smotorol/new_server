@@ -52,6 +52,19 @@ namespace svr::dqs_payload {
 		WorldCharacterEnterSnapshot() { std::memset(this, 0, sizeof(*this)); }
 	};
 
+	struct WorldAccountCharacterListRequest final
+	{
+		std::uint32_t world_code = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t trace_id = 0;
+		std::uint64_t request_id = 0;
+		std::uint64_t account_id = 0;
+		char login_session[dc::k_login_session_max_len + 1]{};
+
+		WorldAccountCharacterListRequest() { std::memset(this, 0, sizeof(*this)); }
+	};
+
 	struct AccountAuthRequest final
 	{
 		std::uint32_t sid = 0;

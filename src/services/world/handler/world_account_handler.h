@@ -81,6 +81,20 @@ public:
 		std::string_view login_session,
 		std::string_view world_token);
 
+	bool SendWorldCharacterListResponse(
+		std::uint32_t dwProID,
+		std::uint32_t dwIndex,
+		std::uint32_t dwSerial,
+		std::uint64_t trace_id,
+		std::uint64_t request_id,
+		bool ok,
+		std::uint64_t account_id,
+		std::uint16_t world_id,
+		std::uint16_t count,
+		std::string_view login_session,
+		const pt_aw::WorldCharacterSummary* characters,
+		std::string_view fail_reason);
+
 protected:
 	bool DataAnalysis(
 		std::uint32_t dwProID,

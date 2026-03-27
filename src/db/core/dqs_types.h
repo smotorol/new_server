@@ -28,6 +28,7 @@ namespace svr::dqs {
 		flush_dirty_chars = 110,
 		flush_one_char = 111,
 		world_character_enter_snapshot = 112,
+		world_account_character_list = 113,
 
 		account_auth = 120,
 		account_character_list = 121,

@@ -96,6 +96,7 @@ bool LoginAccountHandler::SendWorldListRequest(
     pkt.trace_id = trace_id;
     pkt.request_id = request_id;
     pkt.account_id = account_id;
+    //pkt.world_id = world_id;
     std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
         static_cast<int>(login_session.size()), login_session.data());
 
@@ -138,12 +139,14 @@ bool LoginAccountHandler::SendCharacterListRequest(
     std::uint64_t trace_id,
     std::uint64_t request_id,
     std::uint64_t account_id,
+    std::uint16_t world_id,
     std::string_view login_session)
 {
     pt_la::CharacterListRequest pkt{};
     pkt.trace_id = trace_id;
     pkt.request_id = request_id;
     pkt.account_id = account_id;
+    pkt.world_id = world_id;
     std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
         static_cast<int>(login_session.size()), login_session.data());
     const auto h = proto::make_header(
@@ -268,6 +271,7 @@ bool LoginAccountHandler::DataAnalysis(
                     res->account_id,
                     res->world_id,
                     res->channel_id,
+                    res->world_server_id,
                     res->login_session,
                     res->world_host,
                     res->world_port,

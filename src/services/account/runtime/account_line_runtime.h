@@ -101,7 +101,17 @@ namespace dc {
             std::chrono::steady_clock::time_point updated_at{};
         };
 
+        struct WorldInfo {
+            std::string name_utf8;
+            std::string address;
+            std::string dsn;
+            std::string dbname;
+            int port = 0;
+            int world_id = 0;
+        };
+
     private:
+        bool LoadIniFile();
         bool OnRuntimeInit() override;
         void OnBeforeIoStop() override;
         void OnAfterIoStop() override;
@@ -150,6 +160,7 @@ namespace dc {
             std::uint64_t trace_id,
             std::uint64_t request_id,
             std::uint64_t account_id,
+            std::uint16_t world_id,
             std::string_view login_session);
 
         void HandleCharacterSelectRequest_(
@@ -210,6 +221,11 @@ namespace dc {
             std::uint32_t serial,
             std::uint32_t& out_server_id) const;
 
+        bool TryResolveWorldRouteSessionByServerId_(
+            std::uint32_t world_server_id,
+            std::uint32_t& out_sid,
+            std::uint32_t& out_serial) const;
+
         static bool IsWorldSelectable_(const RegisteredWorldEndpoint& endpoint);
 
         void ErasePendingWorldTicketsForServer_(std::uint32_t world_server_id);
@@ -242,6 +258,19 @@ namespace dc {
             std::uint64_t char_id,
             std::string_view login_session,
             std::string_view world_token);
+
+        void HandleWorldCharacterListResponse_(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint64_t trace_id,
+            std::uint64_t request_id,
+            std::uint64_t account_id,
+            std::uint16_t world_id,
+            std::uint16_t count,
+            bool ok,
+            std::string_view login_session,
+            const pt_aw::WorldCharacterSummary* characters,
+            std::string_view fail_reason);
 
         bool TryMatchConsumedWorldEnterSuccessNotify_(
             std::uint32_t sid,
@@ -319,6 +348,9 @@ namespace dc {
 
         std::mutex dqs_result_mtx_;
         std::deque<svr::dqs_result::Result> dqs_results_;
+
+        std::string db_ip_;
+        std::string db_dns_;
     };
 
 } // namespace dc

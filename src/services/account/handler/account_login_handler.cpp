@@ -133,6 +133,7 @@ bool AccountLoginHandler::SendWorldSelectResult(
     std::uint64_t account_id,
     std::uint16_t world_id,
     std::uint16_t channel_id,
+    std::uint32_t world_server_id,
     std::string_view login_session,
     std::string_view world_host,
     std::string_view fail_reason,
@@ -145,6 +146,7 @@ bool AccountLoginHandler::SendWorldSelectResult(
     pkt.account_id = account_id;
     pkt.world_id = world_id;
     pkt.channel_id = channel_id;
+    pkt.world_server_id = world_server_id;
     pkt.world_port = world_port;
     std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
         static_cast<int>(login_session.size()), login_session.data());
@@ -355,6 +357,7 @@ bool AccountLoginHandler::DataAnalysis(
                     req->trace_id,
                     req->request_id,
                     req->account_id,
+                    req->world_id,
                     req->login_session);
             }
             return true;

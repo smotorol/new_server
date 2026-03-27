@@ -120,6 +120,7 @@ namespace dc {
             std::uint32_t client_sid = 0;
             std::uint32_t client_serial = 0;
             std::uint64_t account_id = 0;
+            std::uint16_t world_id = 0;
             std::string login_session;
             std::chrono::steady_clock::time_point issued_at{};
         };
@@ -182,6 +183,7 @@ namespace dc {
             std::uint64_t account_id,
             std::uint16_t world_id,
             std::uint16_t channel_id,
+            std::uint32_t world_server_id,
             std::string_view login_session,
             std::string_view world_host,
             std::uint16_t world_port,

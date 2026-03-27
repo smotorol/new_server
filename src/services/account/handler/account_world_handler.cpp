@@ -15,11 +15,13 @@ AccountWorldHandler::AccountWorldHandler(
 	DisconnectCallback on_disconnect,
 	ConsumeRequestCallback on_consume_request,
 	EnterWorldSuccessCallback on_enter_world_success,
+	CharacterListResponseCallback on_character_list_response,
 	RouteHeartbeatCallback on_route_heartbeat)
 	: on_register_hello_(std::move(on_register_hello))
 	, on_disconnect_(std::move(on_disconnect))
 	, on_consume_request_(std::move(on_consume_request))
 	, on_enter_world_success_(std::move(on_enter_world_success))
+	, on_character_list_response_(std::move(on_character_list_response))
 	, on_route_heartbeat_(std::move(on_route_heartbeat))
 {
 }
@@ -87,6 +89,33 @@ bool AccountWorldHandler::SendWorldAuthTicketConsumeResponse(
 
 	const auto h = proto::make_header(
 		static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_auth_ticket_consume_response),
+		static_cast<std::uint16_t>(sizeof(pkt)));
+
+	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
+
+
+bool AccountWorldHandler::SendWorldCharacterListRequest(
+	std::uint32_t dwProID,
+	std::uint32_t dwIndex,
+	std::uint32_t dwSerial,
+	std::uint64_t trace_id,
+	std::uint64_t request_id,
+	std::uint64_t account_id,
+	std::uint16_t world_id,
+	std::string_view login_session)
+{
+	pt_aw::WorldCharacterListRequest pkt{};
+	pkt.trace_id = trace_id;
+	pkt.request_id = request_id;
+	pkt.account_id = account_id;
+	pkt.world_id = world_id;
+	std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
+		static_cast<int>(login_session.size()), login_session.data());
+
+	const auto h = proto::make_header(
+		static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_character_list_request),
 		static_cast<std::uint16_t>(sizeof(pkt)));
 
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -194,6 +223,31 @@ bool AccountWorldHandler::DataAnalysis(
 					req->char_id,
 					req->login_session,
 					req->world_token);
+			}
+			return true;
+		}
+
+	case pt_aw::AccountWorldMsg::world_character_list_response:
+		{
+			const auto* req = proto::as<pt_aw::WorldCharacterListResponse>(pMsg, body_len);
+			if (!req) {
+				spdlog::error("AccountWorldHandler invalid world_character_list_response sid={}", n);
+				return false;
+			}
+
+			if (on_character_list_response_) {
+				on_character_list_response_(
+                    n,
+                    GetLatestSerial(n),
+					req->trace_id,
+					req->request_id,
+					req->account_id,
+					req->world_id,
+					req->count,
+					req->ok != 0,
+					req->login_session,
+					req->characters,
+					req->fail_reason);
 			}
 			return true;
 		}

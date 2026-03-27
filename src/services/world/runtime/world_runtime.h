@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 #include <array>
 #include <cstdint>
 #include <string>
@@ -52,7 +52,7 @@ struct WorldInfo {
 	std::string address;
 	std::string dsn;
 	std::string dbname;
-	int port;
+	int port = 1433;
 	int world_idx = 0;
 };
 
@@ -169,6 +169,15 @@ namespace svr {
 			std::string_view login_session,
 			std::string_view world_token) override;
 
+		void OnAccountCharacterListRequest(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t trace_id,
+			std::uint64_t request_id,
+			std::uint64_t account_id,
+			std::uint16_t world_id,
+			std::string_view login_session) override;
+
 		std::uint32_t GetActiveWorldSessionCount() const override;
 		std::uint16_t GetActiveZoneCount() const override;
 
@@ -283,8 +292,18 @@ namespace svr {
 			const PendingZonePlayerEnterRequest& pending_enter);
 		bool RequestCharacterEnterSnapshotLoad_(
 			const PendingEnterWorldConsumeRequest& pending);
+		bool RequestAccountCharacterListLoad_(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t trace_id,
+			std::uint64_t request_id,
+			std::uint64_t account_id,
+			std::uint16_t world_id,
+			std::string_view login_session);
 		void OnCharacterEnterSnapshotResult_(
 			const svr::dqs_result::WorldCharacterEnterSnapshotResult& rr);
+		void OnAccountCharacterListResult_(
+			const svr::dqs_result::WorldAccountCharacterListResult& rr);
 		static void ApplyCharacterCoreStateToActor_(
 			PlayerActor& actor,
 			const CharacterCoreState& core_state,
@@ -611,12 +630,11 @@ namespace svr {
 		int reconnect_grace_close_delay_ms_ = 5000;
 		bool allow_legacy_item_template_fallback_ = true;
 
-		int worldset_num_ = 0;
-		std::vector<WorldInfo> worlds_;
+		WorldInfo world_info_;
 
 		std::uint32_t world_to_log_recv_buffer_size_ = 10'000'000;
 
-		std::vector<std::unique_ptr<DbPool>> world_pools_;
+		std::unique_ptr<DbPool> world_pool_;
 		int db_pool_size_per_world_ = 2;
 
 		dc::OutboundLineEntry account_line_{};

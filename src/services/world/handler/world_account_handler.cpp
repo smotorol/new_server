@@ -140,6 +140,46 @@ bool WorldAccountHandler::SendWorldEnterSuccessNotify(
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
+
+
+bool WorldAccountHandler::SendWorldCharacterListResponse(
+	std::uint32_t dwProID,
+	std::uint32_t dwIndex,
+	std::uint32_t dwSerial,
+	std::uint64_t trace_id,
+	std::uint64_t request_id,
+	bool ok,
+	std::uint64_t account_id,
+	std::uint16_t world_id,
+	std::uint16_t count,
+	std::string_view login_session,
+	const pt_aw::WorldCharacterSummary* characters,
+	std::string_view fail_reason)
+{
+	pt_aw::WorldCharacterListResponse pkt{};
+	pkt.trace_id = trace_id;
+	pkt.request_id = request_id;
+	pkt.ok = ok ? 1 : 0;
+	pkt.account_id = account_id;
+	pkt.world_id = world_id;
+	pkt.count = count;
+	std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
+		static_cast<int>(login_session.size()), login_session.data());
+	std::snprintf(pkt.fail_reason, sizeof(pkt.fail_reason), "%.*s",
+		static_cast<int>(fail_reason.size()), fail_reason.data());
+	if (characters != nullptr) {
+		for (std::size_t i = 0; i < std::min<std::size_t>(count, dc::k_character_list_max_count); ++i) {
+			pkt.characters[i] = characters[i];
+		}
+	}
+
+	const auto h = proto::make_header(
+		static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_character_list_response),
+		static_cast<std::uint16_t>(sizeof(pkt)));
+
+	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
+}
+
 bool WorldAccountHandler::DataAnalysis(
 	std::uint32_t dwProID,
 	std::uint32_t n,
@@ -202,6 +242,25 @@ bool WorldAccountHandler::DataAnalysis(
 				req->char_id,
 				req->login_session,
 				req->world_token);
+			return true;
+		}
+
+	case pt_aw::AccountWorldMsg::world_character_list_request:
+		{
+			const auto* req = proto::as<pt_aw::WorldCharacterListRequest>(pMsg, body_len);
+			if (!req) {
+				spdlog::error("WorldAccountHandler invalid world_character_list_request sid={}", n);
+				return false;
+			}
+
+			runtime_.OnAccountCharacterListRequest(
+				n,
+				GetLatestSerial(n),
+				req->trace_id,
+				req->request_id,
+				req->account_id,
+				req->world_id,
+				req->login_session);
 			return true;
 		}
 	default:

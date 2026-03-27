@@ -24,6 +24,8 @@ namespace proto::internal::account_world {
         world_auth_ticket_consume_response = 3312,
 
         world_enter_success_notify = 3313,
+        world_character_list_request = 3314,
+        world_character_list_response = 3315,
     };
 
 #pragma pack(push, 1)
@@ -92,6 +94,38 @@ namespace proto::internal::account_world {
         std::uint64_t char_id = 0;
         char login_session[dc::k_login_session_max_len + 1]{};
         char world_token[dc::k_world_token_max_len + 1]{};
+    };
+
+    struct WorldCharacterSummary
+    {
+        std::uint64_t char_id = 0;
+        char char_name[dc::k_character_name_max_len + 1]{};
+        std::uint32_t level = 0;
+        std::uint16_t job = 0;
+        std::uint32_t appearance_code = 0;
+        std::uint64_t last_login_at_epoch_sec = 0;
+    };
+
+    struct WorldCharacterListRequest
+    {
+        std::uint64_t trace_id = 0;
+        std::uint64_t request_id = 0;
+        std::uint64_t account_id = 0;
+        std::uint16_t world_id = 0;
+        char login_session[dc::k_login_session_max_len + 1]{};
+    };
+
+    struct WorldCharacterListResponse
+    {
+        std::uint64_t trace_id = 0;
+        std::uint64_t request_id = 0;
+        std::uint8_t ok = 0;
+        std::uint64_t account_id = 0;
+        std::uint16_t world_id = 0;
+        std::uint16_t count = 0;
+        char login_session[dc::k_login_session_max_len + 1]{};
+        char fail_reason[dc::k_auth_fail_reason_max_len + 1]{};
+        WorldCharacterSummary characters[dc::k_character_list_max_count]{};
     };
 
 #pragma pack(pop)
