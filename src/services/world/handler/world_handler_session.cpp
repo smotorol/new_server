@@ -1,6 +1,7 @@
 #include "services/world/handler/world_handler.h"
 
 #include <cstring>
+#include <algorithm>
 #include <fmt/format.h>
 #include <functional>
 #include <memory>
@@ -19,6 +20,7 @@
 #include "services/world/common/demo_char_state.h"
 #include "services/world/common/string_utils.h"
 #include "services/world/common/character_runtime_hot_state.h"
+#include "services/world/runtime/world_runtime.h"
 #include "services/world/db/item_template_repository.h"
 #include "server_common/session/session_key.h"
 

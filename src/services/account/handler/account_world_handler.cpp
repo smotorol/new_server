@@ -1,28 +1,17 @@
 #include "services/account/handler/account_world_handler.h"
 
 #include <cstdio>
-#include <utility>
 
 #include <spdlog/spdlog.h>
 
 #include "proto/common/packet_util.h"
 #include "proto/internal/account_world_proto.h"
+#include "services/account/runtime/account_line_runtime.h"
 
 namespace pt_aw = proto::internal::account_world;
 
-AccountWorldHandler::AccountWorldHandler(
-	RegisterHelloCallback on_register_hello,
-	DisconnectCallback on_disconnect,
-	ConsumeRequestCallback on_consume_request,
-	EnterWorldSuccessCallback on_enter_world_success,
-	CharacterListResponseCallback on_character_list_response,
-	RouteHeartbeatCallback on_route_heartbeat)
-	: on_register_hello_(std::move(on_register_hello))
-	, on_disconnect_(std::move(on_disconnect))
-	, on_consume_request_(std::move(on_consume_request))
-	, on_enter_world_success_(std::move(on_enter_world_success))
-	, on_character_list_response_(std::move(on_character_list_response))
-	, on_route_heartbeat_(std::move(on_route_heartbeat))
+AccountWorldHandler::AccountWorldHandler(dc::AccountLineRuntime& runtime)
+	: runtime_(runtime)
 {
 }
 
@@ -146,20 +135,18 @@ bool AccountWorldHandler::DataAnalysis(
 				return false;
 			}
 
-			if (on_register_hello_) {
-				on_register_hello_(
-					n,
-					GetLatestSerial(n),
-					hello->server_id,
-					hello->world_id,
-					hello->channel_id,
-					hello->active_zone_count,
-					hello->load_score,
-					hello->flags,
-					hello->server_name,
-					hello->public_host,
-					hello->public_port);
-			}
+			runtime_.OnWorldRouteRegisteredFromHandler(
+				n,
+				GetLatestSerial(n),
+				hello->server_id,
+				hello->world_id,
+				hello->channel_id,
+				hello->active_zone_count,
+				hello->load_score,
+				hello->flags,
+				hello->server_name,
+				hello->public_host,
+				hello->public_port);
 			return true;
 		}
 
@@ -171,17 +158,15 @@ bool AccountWorldHandler::DataAnalysis(
 				return false;
 			}
 
-			if (on_route_heartbeat_) {
-				on_route_heartbeat_(
-					n,
-					GetLatestSerial(n),
-					hb->server_id,
-					hb->world_id,
-					hb->channel_id,
-					hb->active_zone_count,
-					hb->load_score,
-					hb->flags);
-			}
+			runtime_.OnWorldRouteHeartbeatFromHandler(
+				n,
+				GetLatestSerial(n),
+				hb->server_id,
+				hb->world_id,
+				hb->channel_id,
+				hb->active_zone_count,
+				hb->load_score,
+				hb->flags);
 			return true;
 		}
 
@@ -193,16 +178,14 @@ bool AccountWorldHandler::DataAnalysis(
 				return false;
 			}
 
-			if (on_consume_request_) {
-				on_consume_request_(
-					n,
-					GetLatestSerial(n),
-					req->trace_id,
-					req->request_id,
-					req->account_id,
-					req->login_session,
-					req->world_token);
-			}
+			runtime_.OnWorldTicketConsumeRequestFromHandler(
+				n,
+				GetLatestSerial(n),
+				req->trace_id,
+				req->request_id,
+				req->account_id,
+				req->login_session,
+				req->world_token);
 			return true;
 		}
 
@@ -214,16 +197,15 @@ bool AccountWorldHandler::DataAnalysis(
 				return false;
 			}
 
-			if (on_enter_world_success_) {
-				on_enter_world_success_(
-                    n,
-                    GetLatestSerial(n),
-					req->trace_id,
-					req->account_id,
-					req->char_id,
-					req->login_session,
-					req->world_token);
-			}
+			runtime_.OnWorldEnterSuccessNotifyFromHandler(
+				n,
+				GetLatestSerial(n),
+				req->trace_id,
+				req->account_id,
+				req->char_id,
+				req->login_session,
+				req->world_token);
+
 			return true;
 		}
 
@@ -235,20 +217,19 @@ bool AccountWorldHandler::DataAnalysis(
 				return false;
 			}
 
-			if (on_character_list_response_) {
-				on_character_list_response_(
-                    n,
-                    GetLatestSerial(n),
-					req->trace_id,
-					req->request_id,
-					req->account_id,
-					req->world_id,
-					req->count,
-					req->ok != 0,
-					req->login_session,
-					req->characters,
-					req->fail_reason);
-			}
+			runtime_.OnWorldCharacterListResponseFromHandler(
+				n,
+				GetLatestSerial(n),
+				req->trace_id,
+				req->request_id,
+				req->account_id,
+				req->world_id,
+				req->count,
+				req->ok != 0,
+				req->login_session,
+				req->characters,
+				req->fail_reason);
+
 			return true;
 		}
 
@@ -278,7 +259,5 @@ void AccountWorldHandler::OnLineClosed(
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial)
 {
-	if (on_disconnect_) {
-		on_disconnect_(dwIndex, dwSerial);
-	}
+	runtime_.OnWorldRouteDisconnectedFromHandler(dwIndex, dwSerial);
 }

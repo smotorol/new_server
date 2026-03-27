@@ -1,4 +1,4 @@
-﻿#include "services/zone/runtime/zone_runtime.h"
+#include "services/zone/runtime/zone_runtime.h"
 
 #include <spdlog/spdlog.h>
 
@@ -8,6 +8,11 @@
 #include "server_common/session/session_key.h"
 
 namespace svr {
+	void ZoneRuntime::OnWorldRegisterAckFromHandler(std::uint32_t sid, std::uint32_t serial) { MarkWorldRegistered_(sid, serial); }
+	void ZoneRuntime::OnWorldDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { MarkWorldDisconnected_(sid, serial); }
+	void ZoneRuntime::OnMapAssignRequestFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZoneMapAssignRequest& req) { OnMapAssignRequest(sid, serial, req); }
+	void ZoneRuntime::OnPlayerEnterRequestFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZonePlayerEnter& req) { OnPlayerEnterRequest_(sid, serial, req); }
+	void ZoneRuntime::OnPlayerLeaveRequestFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZonePlayerLeave& req) { OnPlayerLeaveRequest_(sid, serial, req); }
 
 	ZoneRuntime g_ZoneMain;
 
@@ -84,43 +89,21 @@ namespace svr {
 	bool ZoneRuntime::NetworkInit_()
 	{
 		zone_world_handler_ = std::make_shared<ZoneWorldHandler>(
+			*this,
 			zone_server_id_,
 			zone_id_,
 			world_id_,
 			channel_id_,
-			server_name_,
-			[this](std::uint32_t sid, std::uint32_t serial) {
-			MarkWorldRegistered_(sid, serial);
-		},
-			[this](std::uint32_t sid, std::uint32_t serial) {
-			MarkWorldDisconnected_(sid, serial);
-		},
-			[this]() { return GetMapInstanceCapacity(); },
-			[this]() { return GetActiveMapInstanceCount(); },
-			[this]() { return GetActivePlayerCount(); },
-			[this]() { return GetLoadScore(); },
-			[this]() { return flags_; },
-			[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZoneMapAssignRequest& req) {
-			OnMapAssignRequest(sid, serial, req);
-		},
-			[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZonePlayerEnter& req) {
-			OnPlayerEnterRequest_(sid, serial, req);
-		},
-			[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZonePlayerLeave& req) {
-			OnPlayerLeaveRequest_(sid, serial, req);
-		});
+			server_name_);
 
-		dc::InitOutboundLineEntry(world_line_, 201, "zone-world", world_host_, world_port_, true, 1000, 5000);
-		if (!dc::StartOutboundLine(world_line_, io_, zone_world_handler_, [this](std::uint64_t, std::function<void()> fn) {
-			boost::asio::post(io_, std::move(fn));
-		})) {
-			spdlog::error("ZoneRuntime failed to start outbound world line. remote={}:{}", world_host_, world_port_);
-			return false;
-		}
-
-		spdlog::info("ZoneRuntime started. zone_id={} world_id={} channel_id={} remote_world={}:{}",
-			zone_id_, world_id_, channel_id_, world_host_, world_port_);
-		return true;
+ 		dc::InitOutboundLineEntry(world_line_, 201, "zone-world", world_host_, world_port_, true, 1000, 5000);
+		if (!dc::StartOutboundLine(world_line_, io_, zone_world_handler_, [this](std::uint64_t, std::function<void()> fn) { boost::asio::post(io_, std::move(fn)); })) {
+ 			spdlog::error("ZoneRuntime failed to start outbound world line. remote={}:{}", world_host_, world_port_);
+ 			return false;
+ 		}
+ 		spdlog::info("ZoneRuntime started. zone_id={} world_id={} channel_id={} remote_world={}:{}",
+ 			zone_id_, world_id_, channel_id_, world_host_, world_port_);
+ 		return true;
 	}
 
 	void ZoneRuntime::MarkWorldRegistered_(std::uint32_t sid, std::uint32_t serial)

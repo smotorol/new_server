@@ -1,26 +1,16 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <string>
 
 #include "server_common/handler/service_line_handler_base.h"
 
+namespace svr { class WorldRuntime; }
+
 class WorldControlHandler : public dc::ServiceLineHandlerBase
 {
 public:
-    using RegisterCallback = std::function<void(
-        std::uint32_t sid,
-        std::uint32_t serial,
-        std::uint32_t server_id,
-        std::string_view server_name,
-        std::uint16_t listen_port)>;
-
-    using UnregisterCallback = std::function<void(
-        std::uint32_t sid,
-        std::uint32_t serial)>;
-
-    WorldControlHandler(RegisterCallback on_register, UnregisterCallback on_unregister);
+    explicit WorldControlHandler(svr::WorldRuntime& runtime);
     ~WorldControlHandler() override = default;
 
 protected:
@@ -44,6 +34,5 @@ private:
         bool accepted);
 
 private:
-    RegisterCallback on_register_;
-    UnregisterCallback on_unregister_;
+    svr::WorldRuntime& runtime_;
 };

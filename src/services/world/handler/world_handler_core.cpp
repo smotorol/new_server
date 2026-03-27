@@ -5,6 +5,7 @@
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
 #include "proto/client/world_proto.h"
+#include "services/world/runtime/world_runtime.h"
 #include "services/world/metrics/world_metrics.h"
 
 namespace pt_w = proto::world;

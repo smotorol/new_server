@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <functional>
@@ -9,12 +9,15 @@
 #include <spdlog/spdlog.h>
 
 #include "server_common/handler/service_line_handler_base.h"
-#include "services/world/runtime/i_world_runtime.h"
+#include "proto/client/world_proto.h"
+#include "proto/common/proto_base.h"
+
+namespace svr { class WorldRuntime; }
 
 class WorldHandler : public dc::ServiceLineHandlerBase
 {
 public:
-	explicit WorldHandler(svr::IWorldRuntime& runtime)
+	explicit WorldHandler(svr::WorldRuntime& runtime)
 		: runtime_(runtime)
 	{}
 	~WorldHandler() override = default;
@@ -51,8 +54,8 @@ protected:
 		const _MSG_HEADER& header, const char* body, std::size_t body_len,
 		std::uint64_t default_actor) const override;
 
-	svr::IWorldRuntime& runtime() noexcept { return runtime_; }
-	const svr::IWorldRuntime& runtime() const noexcept { return runtime_; }
+	svr::WorldRuntime& runtime() noexcept { return runtime_; }
+	const svr::WorldRuntime& runtime() const noexcept { return runtime_; }
 
 private:
 	bool ResolveAuthenticatedCharIdOrReject_(
@@ -80,6 +83,6 @@ private:
 	bool HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 
 private:
-	svr::IWorldRuntime& runtime_;
+	svr::WorldRuntime& runtime_;
 };
 

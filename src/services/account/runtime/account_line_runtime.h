@@ -32,6 +32,21 @@ namespace dc {
     private:
         static constexpr std::uint32_t kMaxDqsSlotCount = 1024;
 
+    public:
+        void OnLoginCoordinatorRegisteredFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::string_view server_name, std::uint16_t listen_port);
+        void OnLoginCoordinatorDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
+        void OnLoginAuthRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::string_view login_id, std::string_view password);
+        void OnWorldListRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::string_view login_session);
+        void OnWorldSelectRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::uint16_t channel_id, std::string_view login_session);
+        void OnCharacterListRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::string_view login_session);
+        void OnCharacterSelectRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint64_t char_id, std::string_view login_session);
+        void OnWorldRouteRegisteredFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags, std::string_view server_name, std::string_view public_host, std::uint16_t public_port);
+        void OnWorldRouteDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
+        void OnWorldRouteHeartbeatFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags);
+        void OnWorldTicketConsumeRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::string_view login_session, std::string_view world_token);
+        void OnWorldEnterSuccessNotifyFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t account_id, std::uint64_t char_id, std::string_view login_session, std::string_view world_token);
+        void OnWorldCharacterListResponseFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::uint16_t count, bool ok, std::string_view login_session, const pt_aw::WorldCharacterSummary* characters, std::string_view fail_reason);
+
     private:
         struct PendingWorldTicketUpsert
         {
@@ -101,17 +116,7 @@ namespace dc {
             std::chrono::steady_clock::time_point updated_at{};
         };
 
-        struct WorldInfo {
-            std::string name_utf8;
-            std::string address;
-            std::string dsn;
-            std::string dbname;
-            int port = 0;
-            int world_id = 0;
-        };
-
     private:
-        bool LoadIniFile();
         bool OnRuntimeInit() override;
         void OnBeforeIoStop() override;
         void OnAfterIoStop() override;
@@ -348,9 +353,6 @@ namespace dc {
 
         std::mutex dqs_result_mtx_;
         std::deque<svr::dqs_result::Result> dqs_results_;
-
-        std::string db_ip_;
-        std::string db_dns_;
     };
 
 } // namespace dc

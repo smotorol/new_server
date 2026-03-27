@@ -2,6 +2,8 @@
 
 #include <memory>
 
+#include "services/world/runtime/world_runtime.h"
+
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
 #include "server_common/session/session_key.h"

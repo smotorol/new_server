@@ -8,6 +8,16 @@
 
 namespace svr {
 
+	void WorldRuntime::OnAccountRegisterAckFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags, std::string_view server_name, std::string_view public_host, std::uint16_t public_port) { MarkAccountRegistered_(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port); }
+	void WorldRuntime::OnAccountDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { MarkAccountDisconnected_(sid, serial); }
+	void WorldRuntime::OnZoneRegisteredFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count, std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags, std::string_view server_name) { RegisterZoneRoute(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags, server_name); }
+	void WorldRuntime::OnZoneHeartbeatFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count, std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags) { OnZoneRouteHeartbeat(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags); }
+	void WorldRuntime::OnZoneDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { UnregisterZoneRoute(sid, serial); }
+	void WorldRuntime::OnZoneMapAssignResponseFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res) { OnZoneMapAssignResponse(sid, serial, res); }
+	void WorldRuntime::OnZonePlayerEnterAckFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack) { OnZonePlayerEnterAck(sid, serial, ack); }
+	void WorldRuntime::OnControlRegisteredFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::string_view server_name, std::uint16_t listen_port) { RegisterControlLine(sid, serial, server_id, server_name, listen_port); }
+	void WorldRuntime::OnControlDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { UnregisterControlLine(sid, serial); }
+
 	void WorldRuntime::CloseWorldServer(std::uint32_t world_socket_index) {
 		if (!lines_.host(svr::WorldLineId::World).server()) return;
 		lines_.host(svr::WorldLineId::World).server()->close(world_socket_index);
@@ -493,17 +503,7 @@ namespace svr {
 			return true;
 		}
 
-		world_account_handler_ = std::make_shared<WorldAccountHandler>(
-			*this,
-			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
-				std::uint16_t world_id, std::uint16_t channel_id,
-				std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags,
-				std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
-			MarkAccountRegistered_(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
-		},
-			[this](std::uint32_t sid, std::uint32_t serial) {
-			MarkAccountDisconnected_(sid, serial);
-		});
+		world_account_handler_ = std::make_shared<WorldAccountHandler>(*this);
 
 		if (!world_account_handler_) {
 			spdlog::debug("[{}] skipped: world_account_handler_ is null", dc::logevt::world::kAccountRouteHeartbeat);
@@ -532,28 +532,7 @@ namespace svr {
 		if (!dc::StartHostedLine(
 			lines_.entry(svr::WorldLineId::Zone),
 			io_,
-			std::make_shared<WorldZoneHandler>(
-				[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
-					std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id,
-					std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count,
-					std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags, std::string_view server_name) {
-			RegisterZoneRoute(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags, server_name);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
-					std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id,
-					std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count,
-					std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags) {
-			OnZoneRouteHeartbeat(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial) {
-			UnregisterZoneRoute(sid, serial);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res) {
-			OnZoneMapAssignResponse(sid, serial, res);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack) {
-			OnZonePlayerEnterAck(sid, serial, ack);
- 		}),
+			std::make_shared<WorldZoneHandler>(*this),
 			dispatch)) {
 			return false;
 		}
@@ -561,15 +540,7 @@ namespace svr {
 		if (!dc::StartHostedLine(
 			lines_.entry(svr::WorldLineId::Control),
 			io_,
-			std::make_shared<WorldControlHandler>(
-				[this](std::uint32_t sid, std::uint32_t serial,
-					std::uint32_t server_id, std::string_view server_name,
-					std::uint16_t listen_port) {
-			RegisterControlLine(sid, serial, server_id, server_name, listen_port);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial) {
-			UnregisterControlLine(sid, serial);
-		}),
+			std::make_shared<WorldControlHandler>(*this),
 			dispatch)) {
 			return false;
 		}

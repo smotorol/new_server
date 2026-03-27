@@ -2,22 +2,17 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <utility>
 
 #include <spdlog/spdlog.h>
 
 #include "proto/common/packet_util.h"
 #include "proto/internal/account_world_proto.h"
+#include "services/world/runtime/world_runtime.h"
 
 namespace pt_aw = proto::internal::account_world;
 
-WorldAccountHandler::WorldAccountHandler(
-	svr::IWorldRuntime& runtime,
-	RegisterAckCallback on_register_ack,
-	DisconnectCallback on_disconnect)
+WorldAccountHandler::WorldAccountHandler(svr::WorldRuntime& runtime)
 	: runtime_(runtime)
-	, on_register_ack_(std::move(on_register_ack))
-	, on_disconnect_(std::move(on_disconnect))
 {
 }
 
@@ -210,20 +205,18 @@ bool WorldAccountHandler::DataAnalysis(
 				return true;
 			}
 
-			if (on_register_ack_) {
-				on_register_ack_(
-					n,
-					GetLatestSerial(n),
-					ack->server_id,
-					ack->world_id,
-					ack->channel_id,
-					ack->active_zone_count,
-					ack->load_score,
-					ack->flags,
-					ack->server_name,
-					ack->public_host,
-					ack->public_port);
-			}
+			runtime_.OnAccountRegisterAckFromHandler(
+				n,
+				GetLatestSerial(n),
+				ack->server_id,
+				ack->world_id,
+				ack->channel_id,
+				ack->active_zone_count,
+				ack->load_score,
+				ack->flags,
+				ack->server_name,
+				ack->public_host,
+				ack->public_port);
 			return true;
 		}
 	case pt_aw::AccountWorldMsg::world_auth_ticket_consume_response:
@@ -291,7 +284,5 @@ void WorldAccountHandler::OnLineClosed(
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial)
 {
-	if (on_disconnect_) {
-		on_disconnect_(dwIndex, dwSerial);
-	}
+	runtime_.OnAccountDisconnectedFromHandler(dwIndex, dwSerial);
 }

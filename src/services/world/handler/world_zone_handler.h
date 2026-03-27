@@ -1,7 +1,6 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <string_view>
 
@@ -10,47 +9,12 @@
 
 namespace pt_wz = proto::internal::world_zone;
 
+namespace svr { class WorldRuntime; }
+
 class WorldZoneHandler : public dc::ServiceLineHandlerBase
 {
 public:
-	using RegisterCallback = std::function<void(
-		std::uint32_t sid,
-		std::uint32_t serial,
-		std::uint32_t server_id,
-		std::uint16_t zone_id,
-		std::uint16_t world_id,
-		std::uint16_t channel_id,
-		std::uint16_t map_instance_capacity,
-		std::uint16_t active_map_instance_count,
-		std::uint16_t active_player_count,
-		std::uint16_t load_score,
-		std::uint32_t flags,
-		std::string_view server_name)>;
-
-	using HeartbeatCallback = std::function<void(
-		std::uint32_t sid,
-		std::uint32_t serial,
-		std::uint32_t server_id,
-		std::uint16_t zone_id,
-		std::uint16_t world_id,
-		std::uint16_t channel_id,
-		std::uint16_t map_instance_capacity,
-		std::uint16_t active_map_instance_count,
-		std::uint16_t active_player_count,
-		std::uint16_t load_score,
-		std::uint32_t flags)>;
-
-	using UnregisterCallback = std::function<void(std::uint32_t sid, std::uint32_t serial)>;
-	using MapAssignResponseCallback = std::function<void(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse&)>;
-	using PlayerEnterAckCallback = std::function<void(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck&)>;
-
-
-	WorldZoneHandler(
-		RegisterCallback on_register,
-		HeartbeatCallback on_heartbeat,
-		UnregisterCallback on_unregister,
-		MapAssignResponseCallback on_map_assign_response,
-		PlayerEnterAckCallback on_player_enter_ack);
+	explicit WorldZoneHandler(svr::WorldRuntime& runtime);
 
 	bool SendMapAssignRequest(
 		std::uint32_t dwProID,
@@ -106,9 +70,5 @@ private:
 		std::string_view server_name,
 		bool accepted);
 
-	RegisterCallback on_register_;
-	HeartbeatCallback on_heartbeat_;
-	UnregisterCallback on_unregister_;
-	MapAssignResponseCallback on_map_assign_response_;
-	PlayerEnterAckCallback on_player_enter_ack_;
+	svr::WorldRuntime& runtime_;
 };

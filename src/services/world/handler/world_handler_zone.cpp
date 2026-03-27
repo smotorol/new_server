@@ -1,4 +1,4 @@
-﻿#include "services/world/handler/world_handler.h"
+#include "services/world/handler/world_handler.h"
 
 #include <algorithm>
 #include <iterator>
@@ -13,6 +13,7 @@
 #include "server_common/session/session_key.h"
 #include "services/world/actors/world_actors.h"
 #include "services/world/common/aoi_broadcast_sanitize.h"
+#include "services/world/runtime/world_runtime.h"
 #include "services/world/metrics/world_metrics.h"
 
 namespace {

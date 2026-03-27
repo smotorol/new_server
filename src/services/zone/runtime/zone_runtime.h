@@ -44,6 +44,12 @@ namespace svr {
 		std::uint16_t GetMapInstanceCapacity() const noexcept;
 		std::uint16_t GetLoadScore() const noexcept;
 		std::uint16_t GetActivePlayerCount() const noexcept;
+		std::uint32_t GetFlagsFromHandler() const noexcept { return flags_; }
+		void OnWorldRegisterAckFromHandler(std::uint32_t sid, std::uint32_t serial);
+		void OnWorldDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
+		void OnMapAssignRequestFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZoneMapAssignRequest& req);
+		void OnPlayerEnterRequestFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZonePlayerEnter& req);
+		void OnPlayerLeaveRequestFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::WorldZonePlayerLeave& req);
 
 	private:
 		bool OnRuntimeInit() override;

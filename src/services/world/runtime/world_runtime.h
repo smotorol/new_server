@@ -90,7 +90,7 @@ namespace svr {
 	using PendingEnterWorldFinalize = svr::PendingEnterWorldFinalize;
 	using PendingCharacterEnterSnapshotRequest = svr::PendingCharacterEnterSnapshotRequest;
 
-	class WorldRuntime final : public dc::ServerRuntimeBase, public IWorldRuntime {
+	class WorldRuntime final : public dc::ServerRuntimeBase {
 	public:
 		WorldRuntime();
 		~WorldRuntime();
@@ -134,32 +134,32 @@ namespace svr {
 			std::uint64_t trace_id,
 			std::uint64_t account_id,
 			std::string_view login_session,
-			std::string_view token) override;
+			std::string_view token);
 
 		BeginEnterWorldSessionResult TryBeginEnterWorldSession(
 			std::uint32_t sid,
 			std::uint32_t serial,
 			std::uint64_t account_id,
-			std::uint64_t char_id) override;
+			std::uint64_t char_id);
 
 		void CancelPendingEnterWorldSession(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint64_t char_id) override;
+			std::uint64_t char_id);
 
 		bool IsEnterWorldSessionPending(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint64_t char_id) const override;
+			std::uint64_t char_id) const;
 
 		bool PromoteEnterWorldSessionToInWorld(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint64_t char_id) override;
+			std::uint64_t char_id);
 
 		void MarkEnterWorldSessionClosing(
 			std::uint32_t sid,
-			std::uint32_t serial) override;
+			std::uint32_t serial);
 
 		// world가 최종 enter success를 account에 relay 한다. login pending session 정리는 account/login이 담당한다.
 		bool NotifyAccountWorldEnterSuccess(
@@ -167,7 +167,7 @@ namespace svr {
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::string_view login_session,
-			std::string_view world_token) override;
+			std::string_view world_token);
 
 		void OnAccountCharacterListRequest(
 			std::uint32_t sid,
@@ -176,41 +176,99 @@ namespace svr {
 			std::uint64_t request_id,
 			std::uint64_t account_id,
 			std::uint16_t world_id,
-			std::string_view login_session) override;
+			std::string_view login_session);
 
-		std::uint32_t GetActiveWorldSessionCount() const override;
-		std::uint16_t GetActiveZoneCount() const override;
+		// handler -> runtime bridge
+		void OnAccountRegisterAckFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::uint16_t world_id,
+			std::uint16_t channel_id,
+			std::uint16_t active_zone_count,
+			std::uint16_t load_score,
+			std::uint32_t flags,
+			std::string_view server_name,
+			std::string_view public_host,
+			std::uint16_t public_port);
+
+		void OnAccountDisconnectedFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial);
+
+		void OnZoneRegisteredFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::uint16_t zone_id,
+			std::uint16_t world_id,
+			std::uint16_t channel_id,
+			std::uint16_t map_instance_capacity,
+			std::uint16_t active_map_instance_count,
+			std::uint16_t active_player_count,
+			std::uint16_t load_score,
+			std::uint32_t flags,
+			std::string_view server_name);
+
+		void OnZoneHeartbeatFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::uint16_t zone_id,
+			std::uint16_t world_id,
+			std::uint16_t channel_id,
+			std::uint16_t map_instance_capacity,
+			std::uint16_t active_map_instance_count,
+			std::uint16_t active_player_count,
+			std::uint16_t load_score,
+			std::uint32_t flags);
+
+		void OnZoneDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
+		void OnZoneMapAssignResponseFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res);
+		void OnZonePlayerEnterAckFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack);
+
+		void OnControlRegisteredFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::string_view server_name,
+			std::uint16_t listen_port);
+
+		void OnControlDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
+
+		std::uint32_t GetActiveWorldSessionCount() const;
+		std::uint16_t GetActiveZoneCount() const;
 
 		AssignMapInstanceResult AssignMapInstance(
 			std::uint32_t map_template_id,
 			std::uint32_t instance_id,
 			bool create_if_missing,
 			bool dungeon_instance,
-			std::uint64_t trace_id = 0) override;
+			std::uint64_t trace_id = 0);
 
 		void OnMapAssignRequest(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			const pt_wz::WorldZoneMapAssignRequest& req) override;
+			const pt_wz::WorldZoneMapAssignRequest& req);
 
 		BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint16_t kick_reason) override;
+			std::uint16_t kick_reason);
 
 		UnbindAuthedWorldSessionResult UnbindAuthenticatedWorldSessionBySid(
 			std::uint32_t sid,
-			std::uint32_t serial) override;
+			std::uint32_t serial);
 
 		void CancelDelayedWorldClose(
 			std::uint32_t sid,
-			std::uint32_t serial) override;
+			std::uint32_t serial);
 
 		void HandleWorldSessionClosed(
 			std::uint32_t sid,
-			std::uint32_t serial) override;
+			std::uint32_t serial);
 
 	private:
 		bool OnRuntimeInit() override;

@@ -1,41 +1,20 @@
 #pragma once
 
 #include <cstdint>
-#include <functional>
 #include <string>
 #include <string_view>
 
 #include "server_common/handler/service_line_handler_base.h"
-#include "services/world/runtime/i_world_runtime.h"
 #include "proto/internal/account_world_proto.h"
 
 namespace pt_aw = proto::internal::account_world;
 
+namespace svr { class WorldRuntime; }
+
 class WorldAccountHandler : public dc::ServiceLineHandlerBase
 {
 public:
-	using RegisterAckCallback = std::function<void(
-		std::uint32_t sid,
-		std::uint32_t serial,
-		std::uint32_t server_id,
-		std::uint16_t world_id,
-		std::uint16_t channel_id,
-		std::uint16_t active_zone_count,
-		std::uint16_t load_score,
-		std::uint32_t flags,
-		std::string_view server_name,
-		std::string_view public_host,
-		std::uint16_t public_port)>;
-
-	using DisconnectCallback = std::function<void(
-		std::uint32_t sid,
-		std::uint32_t serial)>;
-
-public:
-	WorldAccountHandler(
-		svr::IWorldRuntime& runtime,
-		RegisterAckCallback on_register_ack,
-		DisconnectCallback on_disconnect);
+	explicit WorldAccountHandler(svr::WorldRuntime& runtime);
 
 	~WorldAccountHandler() override = default;
 
@@ -117,7 +96,7 @@ protected:
 		std::uint32_t dwSerial) override;
 
 private:
-	svr::IWorldRuntime& runtime_;
+	svr::WorldRuntime& runtime_;
 	std::uint32_t server_id_ = 0;
 	std::uint16_t world_id_ = 0;
 	std::uint16_t channel_id_ = 0;
@@ -128,6 +107,4 @@ private:
 	std::uint16_t load_score_ = 0;
 	std::uint32_t flags_ = pt_aw::k_world_flag_accepting_players | pt_aw::k_world_flag_visible;
 
-	RegisterAckCallback on_register_ack_;
-	DisconnectCallback on_disconnect_;
 };
