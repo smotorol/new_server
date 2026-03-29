@@ -46,7 +46,7 @@ bool LoginWorldHandler::SendHelloRegister(
         server_name_.c_str());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(pt_lw::LoginWorldMsg::login_server_hello),
+        static_cast<std::uint16_t>(pt_lw::Msg::login_server_hello),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     spdlog::info(
@@ -86,7 +86,7 @@ bool LoginWorldHandler::SendAuthTicketUpsert(
         token.data());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(pt_lw::LoginWorldMsg::login_auth_ticket_upsert),
+        static_cast<std::uint16_t>(pt_lw::Msg::login_auth_ticket_upsert),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     spdlog::info(
@@ -112,8 +112,8 @@ bool LoginWorldHandler::DataAnalysis(
     const std::size_t body_len =
         (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
 
-    switch (static_cast<pt_lw::LoginWorldMsg>(msg_type)) {
-    case pt_lw::LoginWorldMsg::login_server_register_ack:
+    switch (static_cast<pt_lw::Msg>(msg_type)) {
+    case pt_lw::Msg::login_server_register_ack:
         {
             const auto* ack = proto::as<pt_lw::LoginServerRegisterAck>(pMsg, body_len);
             if (!ack) {
@@ -138,7 +138,7 @@ bool LoginWorldHandler::DataAnalysis(
             return true;
         }
 
-    case pt_lw::LoginWorldMsg::login_auth_ticket_upsert_ack:
+    case pt_lw::Msg::login_auth_ticket_upsert_ack:
         {
             const auto* ack = proto::as<pt_lw::LoginAuthTicketUpsertAck>(pMsg, body_len);
             if (!ack) {

@@ -7,7 +7,7 @@
 
 namespace proto::internal::world_zone {
 
-	enum class WorldZoneMsg : std::uint16_t
+	enum class Msg : std::uint16_t
 	{
 		zone_server_hello = 3401,
 		zone_server_register_ack = 3402,

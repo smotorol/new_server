@@ -110,7 +110,6 @@ namespace proto::login {
         std::uint8_t ok = 0;
         std::uint16_t fail_reason = static_cast<std::uint16_t>(WorldSelectFailReason::success);
         std::uint16_t world_id = 0;
-        std::uint16_t channel_id = 0;
         std::uint16_t world_port = 0;
         char world_host[dc::k_world_host_max_len + 1]{};
     };

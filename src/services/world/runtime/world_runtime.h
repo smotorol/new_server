@@ -46,16 +46,6 @@
 #include "proto/client/world_proto.h"
 #include "proto/common/packet_util.h"
 
-// World 세팅
-struct WorldInfo {
-	std::string name_utf8;
-	std::string address;
-	std::string dsn;
-	std::string dbname;
-	int port = 1433;
-	int world_idx = 0;
-};
-
 // 월드별 DB Pool(라운드로빈)
 struct DbPool
 {
@@ -182,15 +172,10 @@ namespace svr {
 		void OnAccountRegisterAckFromHandler(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint32_t server_id,
 			std::uint16_t world_id,
-			std::uint16_t channel_id,
-			std::uint16_t active_zone_count,
-			std::uint16_t load_score,
-			std::uint32_t flags,
-			std::string_view server_name,
-			std::string_view public_host,
-			std::uint16_t public_port);
+			std::string_view db_dns,
+			std::string_view db_id,
+			std::string_view db_pw);
 
 		void OnAccountDisconnectedFromHandler(
 			std::uint32_t sid,
@@ -236,8 +221,12 @@ namespace svr {
 
 		void OnControlDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
 
+		std::string_view GetWorldName() { return name_utf8_; };
 		std::uint32_t GetActiveWorldSessionCount() const;
 		std::uint16_t GetActiveZoneCount() const;
+		std::string_view GetGateIP() const { return host_; };
+		std::uint16_t GetGatePort() const { return port_world_; };
+		std::uint16_t GetWorldID() const { return world_id_; };
 
 		AssignMapInstanceResult AssignMapInstance(
 			std::uint32_t map_template_id,
@@ -441,18 +430,8 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial) noexcept;
 
-		void MarkAccountRegistered_(
-			std::uint32_t sid,
-			std::uint32_t serial,
-			std::uint32_t server_id,
-			std::uint16_t world_id,
-			std::uint16_t channel_id,
-			std::uint16_t active_zone_count,
-			std::uint16_t load_score,
-			std::uint32_t flags,
-			std::string_view server_name,
-			std::string_view public_host,
-			std::uint16_t public_port);
+		bool ApplyAccountAssignedConfig_(std::uint16_t world_id, std::string_view db_dns, std::string_view db_id, std::string_view db_pw);
+		void NotifyAccountReady_();
 
 		void MarkAccountDisconnected_(
 			std::uint32_t sid,
@@ -664,13 +643,6 @@ namespace svr {
 		std::uint64_t bench_last_rss_bytes_ = 0;
 		procmetrics::ProcSnapshot bench_proc_prev_{};
 
-		std::uint16_t port_world_ = PORT_WORLD;
-		std::uint16_t port_zone_ = PORT_ZONE;
-		std::uint16_t port_control_ = PORT_CONTROL;
-
-		std::string db_acc_;
-		std::string db_pw_;
-
 		std::string redis_host_ = "127.0.0.1";
 		int redis_port_ = 6379;
 		int redis_db_ = 0;
@@ -688,8 +660,6 @@ namespace svr {
 		int reconnect_grace_close_delay_ms_ = 5000;
 		bool allow_legacy_item_template_fallback_ = true;
 
-		WorldInfo world_info_;
-
 		std::uint32_t world_to_log_recv_buffer_size_ = 10'000'000;
 
 		std::unique_ptr<DbPool> world_pool_;
@@ -703,8 +673,19 @@ namespace svr {
 		std::atomic<std::uint32_t> account_serial_{ 0 };
 		std::chrono::steady_clock::time_point next_account_route_heartbeat_tp_{};
 
+		std::string name_utf8_ = "world";
+		std::string host_ = "127.0.0.1";
 		std::string account_host_ = "127.0.0.1";
 		std::uint16_t account_port_ = 27781;
+		std::uint16_t port_world_ = PORT_WORLD;
+		std::uint16_t port_zone_ = PORT_ZONE;
+		std::uint16_t port_control_ = PORT_CONTROL;
+
+		std::string db_dns_;
+		std::string db_id_;
+		std::string db_pw_;
+
+		uint16_t world_id_ = 0;
 	};
 
 	extern WorldRuntime g_Main;

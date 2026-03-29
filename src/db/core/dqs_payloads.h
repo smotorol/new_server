@@ -22,7 +22,7 @@ namespace svr::dqs_payload {
 	// 주기 flush: world_code의 dirty set에서 최대 batch 개를 DB로 반영
 	struct FlushDirtyChars final
 	{
-		std::uint32_t world_code = 0;
+		std::uint32_t world_id_ = 0;
 		std::uint32_t shard_id = 0; // ✅ shard별 dirty set을 flush
 		std::uint32_t max_batch = 0;
 		FlushDirtyChars() { std::memset(this, 0, sizeof(*this)); }

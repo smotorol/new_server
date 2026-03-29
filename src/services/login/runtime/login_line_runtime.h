@@ -182,8 +182,6 @@ namespace dc {
             bool ok,
             std::uint64_t account_id,
             std::uint16_t world_id,
-            std::uint16_t channel_id,
-            std::uint32_t world_server_id,
             std::string_view login_session,
             std::string_view world_host,
             std::uint16_t world_port,
@@ -255,7 +253,6 @@ namespace dc {
             std::uint32_t serial,
             bool ok,
             std::uint16_t world_id,
-            std::uint16_t channel_id,
             std::string_view world_host,
             std::uint16_t world_port,
             proto::login::WorldSelectFailReason fail_reason);
@@ -288,6 +285,7 @@ namespace dc {
 
     private:
         bool OnRuntimeInit() override;
+        bool LoadIniFile_();
         void OnBeforeIoStop() override;
         void OnAfterIoStop() override;
         void OnMainLoopTick(std::chrono::steady_clock::time_point now) override;

@@ -20,14 +20,6 @@ public:
 
 public:
 	void SetServerIdentity(
- 		std::uint32_t server_id,
-		std::uint16_t world_id,
-		std::uint16_t channel_id,
- 		std::string server_name,
- 		std::string public_host,
-		std::uint16_t public_port,
-		std::uint16_t active_zone_count = 0,
-		std::uint16_t load_score = 0,
 		std::uint32_t flags = pt_aw::k_world_flag_accepting_players | pt_aw::k_world_flag_visible);
 
 	bool SendHelloRegister(
@@ -36,6 +28,12 @@ public:
 		std::uint32_t dwSerial);
 
 	bool SendRouteHeartbeat(
+		std::uint32_t dwProID,
+		std::uint32_t dwIndex,
+		std::uint32_t dwSerial);
+
+
+	bool SendReadyNotify(
 		std::uint32_t dwProID,
 		std::uint32_t dwIndex,
 		std::uint32_t dwSerial);
@@ -97,14 +95,6 @@ protected:
 
 private:
 	svr::WorldRuntime& runtime_;
-	std::uint32_t server_id_ = 0;
-	std::uint16_t world_id_ = 0;
-	std::uint16_t channel_id_ = 0;
-	std::string server_name_;
-	std::string public_host_;
-	std::uint16_t public_port_ = 0;
-	std::uint16_t active_zone_count_ = 0;
-	std::uint16_t load_score_ = 0;
 	std::uint32_t flags_ = pt_aw::k_world_flag_accepting_players | pt_aw::k_world_flag_visible;
 
 };

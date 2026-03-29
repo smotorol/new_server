@@ -12,6 +12,9 @@
 #include <utility>
 #include <ctime>
 #include <iostream>
+#include <filesystem>
+#include <fstream>
+#include <inipp/inipp.h>
 
 #include <spdlog/spdlog.h>
 
@@ -69,6 +72,18 @@ namespace {
  		}
 	}
 
+	
+	std::filesystem::path FindIniPath_(const char* file_name)
+	{
+		namespace fs = std::filesystem;
+		const fs::path cwd = fs::current_path();
+		const fs::path candidates[] = {
+			cwd / "Initialize" / file_name,
+		};
+		for (const auto& p : candidates) { if (fs::exists(p)) return p; }
+		return cwd / "Initialize" / file_name;
+	}
+
 	std::string ToHexToken_(std::uint64_t a, std::uint64_t b)
 	{
 		std::ostringstream oss;
@@ -82,19 +97,16 @@ namespace {
 
 namespace dc {
 
-	void AccountLineRuntime::OnLoginCoordinatorRegisteredFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::string_view server_name, std::uint16_t listen_port) { OnLoginCoordinatorRegistered_(sid, serial, server_id, server_name, listen_port); }
-	void AccountLineRuntime::OnLoginCoordinatorDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { OnLoginCoordinatorDisconnected_(sid, serial); }
-	void AccountLineRuntime::OnLoginAuthRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::string_view login_id, std::string_view password) { HandleLoginAuthRequest_(sid, serial, trace_id, request_id, login_id, password); }
-	void AccountLineRuntime::OnWorldListRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::string_view login_session) { HandleWorldListRequest_(sid, serial, trace_id, request_id, account_id, login_session); }
-	void AccountLineRuntime::OnWorldSelectRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::uint16_t channel_id, std::string_view login_session) { HandleWorldSelectRequest_(sid, serial, trace_id, request_id, account_id, world_id, channel_id, login_session); }
-	void AccountLineRuntime::OnCharacterListRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::string_view login_session) { HandleCharacterListRequest_(sid, serial, trace_id, request_id, account_id, world_id, login_session); }
-	void AccountLineRuntime::OnCharacterSelectRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint64_t char_id, std::string_view login_session) { HandleCharacterSelectRequest_(sid, serial, trace_id, request_id, account_id, char_id, login_session); }
-	void AccountLineRuntime::OnWorldRouteRegisteredFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags, std::string_view server_name, std::string_view public_host, std::uint16_t public_port) { OnWorldRouteRegistered_(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port); }
-	void AccountLineRuntime::OnWorldRouteDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { OnWorldRouteDisconnected_(sid, serial); }
-	void AccountLineRuntime::OnWorldRouteHeartbeatFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags) { OnWorldRouteHeartbeatReceived_(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags); }
-	void AccountLineRuntime::OnWorldTicketConsumeRequestFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::string_view login_session, std::string_view world_token) { HandleWorldTicketConsumeRequest_(sid, serial, trace_id, request_id, account_id, login_session, world_token); }
-	void AccountLineRuntime::OnWorldEnterSuccessNotifyFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t account_id, std::uint64_t char_id, std::string_view login_session, std::string_view world_token) { HandleWorldEnterSuccessNotify_(sid, serial, trace_id, account_id, char_id, login_session, world_token); }
-	void AccountLineRuntime::OnWorldCharacterListResponseFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint64_t trace_id, std::uint64_t request_id, std::uint64_t account_id, std::uint16_t world_id, std::uint16_t count, bool ok, std::string_view login_session, const pt_aw::WorldCharacterSummary* characters, std::string_view fail_reason) { HandleWorldCharacterListResponse_(sid, serial, trace_id, request_id, account_id, world_id, count, ok, login_session, characters, fail_reason); }
+	void AccountLineRuntime::OnWorldReadyNotifyFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint16_t world_id,std::uint32_t flags) {
+		std::lock_guard lk(world_registry_mtx_);
+		auto it = worlds_by_sid_.find(sid);
+		if (it == worlds_by_sid_.end() || !dc::IsSameSessionKey(it->second.sid, it->second.serial, sid, serial)) return;
+		it->second.ready = true;
+		it->second.world_id = world_id;
+		it->second.flags = flags;
+		it->second.last_heartbeat_at = std::chrono::steady_clock::now();
+		spdlog::info("[{}] world route ready sid={} serial={} world_id={} name={}", ToString(AccountFlowEvent::WorldRouteRegistered), sid, serial, world_id, it->second.server_name);
+	}
 
 	AccountLineRuntime::AccountLineRuntime(
 		std::uint16_t login_port,
@@ -104,7 +116,7 @@ namespace dc {
 	{
 	}
 
-	void AccountLineRuntime::OnLoginCoordinatorRegistered_(
+	void AccountLineRuntime::OnLoginCoordinatorRegisteredFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint32_t server_id,
@@ -125,7 +137,7 @@ namespace dc {
 		}
 	}
 
-	void AccountLineRuntime::OnLoginCoordinatorDisconnected_(
+	void AccountLineRuntime::OnLoginCoordinatorDisconnectedFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
@@ -147,90 +159,83 @@ namespace dc {
 			serial);
 	}
 
-	void AccountLineRuntime::OnWorldRouteRegistered_(
+	void AccountLineRuntime::On_world_server_hello(
 		std::uint32_t sid,
 		std::uint32_t serial,
-		std::uint32_t server_id,
-		std::uint16_t world_id,
-		std::uint16_t channel_id,
-		std::uint16_t active_zone_count,
-		std::uint16_t load_score,
-		std::uint32_t flags,
 		std::string_view server_name,
 		std::string_view public_host,
 		std::uint16_t public_port)
 	{
+		ConfiguredWorldEntry cfg{};
+		bool matched = false;
+		{
+			std::lock_guard lk(world_registry_mtx_);
+			auto cit = configured_worlds_by_name_.find(std::string(server_name));
+			if (cit != configured_worlds_by_name_.end()) {
+				cfg = cit->second;
+				auto wit = worlds_by_sid_.find(sid);
+				if (wit != worlds_by_sid_.end()) {
+					wit->second.world_id = cfg.world_id;
+					wit->second.db_name = cfg.db_dns;
+					wit->second.db_user = cfg.db_id;
+					wit->second.db_password = cfg.db_pw;
+				}
+				matched = true;
+			}
+		}
+
 		RegisteredWorldEndpoint endpoint{};
 		endpoint.sid = sid;
 		endpoint.serial = serial;
-		endpoint.server_id = server_id;
-		endpoint.world_id = world_id;
-		endpoint.channel_id = channel_id;
-		endpoint.active_zone_count = active_zone_count;
-		endpoint.load_score = load_score;
-		endpoint.flags = flags;
+		endpoint.world_id = cfg.world_id;
+		endpoint.flags = 0;
+		endpoint.ready = false;
 		endpoint.server_name.assign(server_name.data(), server_name.size());
 		endpoint.public_host.assign(public_host.data(), public_host.size());
 		endpoint.public_port = public_port;
 		endpoint.registered_at = std::chrono::steady_clock::now();
 		endpoint.last_heartbeat_at = endpoint.registered_at;
 
-		std::size_t world_count = 0;
+		auto world_id = cfg.world_id;
+		if (matched)
 		{
-			std::lock_guard lk(world_registry_mtx_);
+			std::size_t world_count = 0;
+			{
+				std::lock_guard lk(world_registry_mtx_);
 
-			auto prev = worlds_by_sid_.find(sid);
-			if (prev != worlds_by_sid_.end()) {
-				const auto prev_server_id = prev->second.server_id;
-				if (prev_server_id != 0 && prev_server_id != server_id) {
-					auto old_idx = world_sid_by_server_id_.find(prev_server_id);
-					if (old_idx != world_sid_by_server_id_.end() && old_idx->second == sid) {
-						world_sid_by_server_id_.erase(old_idx);
+				if (world_id != 0) {
+					const auto same_server = world_sid_by_world_id_.find(world_id);
+					if (same_server != world_sid_by_world_id_.end() && same_server->second != sid) {
+						worlds_by_sid_.erase(same_server->second);
 					}
+					world_sid_by_world_id_[world_id] = sid;
 				}
+
+				worlds_by_sid_[sid] = std::move(endpoint);
+				world_count = worlds_by_sid_.size();
 			}
 
-			if (server_id != 0) {
-				const auto same_server = world_sid_by_server_id_.find(server_id);
-				if (same_server != world_sid_by_server_id_.end() && same_server->second != sid) {
-					worlds_by_sid_.erase(same_server->second);
-				}
-				world_sid_by_server_id_[server_id] = sid;
-			}
-
-			worlds_by_sid_[sid] = std::move(endpoint);
-			world_count = worlds_by_sid_.size();
+			spdlog::info(
+				"[{}] world route registered sid={} serial={} world_id={} server_name={} public_host={} public_port={} world_count={}",
+				ToString(AccountFlowEvent::WorldRouteRegistered),
+				sid, serial, world_id, server_name, public_host, public_port, world_count);
 		}
-
-
-		spdlog::info(
-			"[{}] world route registered sid={} serial={} server_id={} world_id={} channel_id={} zones={} load_score={} flags={} server_name={} public_host={} public_port={} world_count={}",
-			ToString(AccountFlowEvent::WorldRouteRegistered),
-			sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port, world_count);
 
 		if (world_handler_) {
 			world_handler_->SendRegisterAck(
-				0,
-				sid,
-				serial,
-				1,
-				20,
-				world_id,
-				channel_id,
-				active_zone_count,
-				load_score,
-				flags,
-				"account",
-				public_host,
-				public_port);
+				0, sid, serial, matched ? 1 : 0, matched ? cfg.world_id : 0, 
+				matched ? cfg.db_dns : std::string_view{}, matched ? cfg.db_id : std::string_view{}, matched ? cfg.db_pw : std::string_view{});
+		}
+		if (!matched) {
+			spdlog::warn("[{}] world registration rejected. unknown world name='{}' sid={} serial={}", ToString(AccountFlowEvent::WorldRouteRegistered), server_name, sid, serial);
 		}
 	}
 
-	void AccountLineRuntime::OnWorldRouteDisconnected_(
+	void AccountLineRuntime::OnWorldRouteDisconnectedFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial)
 	{
-		std::uint32_t removed_server_id = 0;
+		std::uint32_t removed_world_id = 0;
 		std::size_t world_count = 0;
 
 		{
@@ -240,38 +245,36 @@ namespace dc {
 				return;
 			}
 
-			removed_server_id = it->second.server_id;
+			removed_world_id = it->second.world_id;
 			worlds_by_sid_.erase(it);
 
-			if (removed_server_id != 0) {
-				const auto idx = world_sid_by_server_id_.find(removed_server_id);
-				if (idx != world_sid_by_server_id_.end() && idx->second == sid) {
-					world_sid_by_server_id_.erase(idx);
+			if (removed_world_id != 0) {
+				const auto idx = world_sid_by_world_id_.find(removed_world_id);
+				if (idx != world_sid_by_world_id_.end() && idx->second == sid) {
+					world_sid_by_world_id_.erase(idx);
 				}
 			}
 
 			world_count = worlds_by_sid_.size();
 		}
 
-		if (removed_server_id != 0) {
-			ErasePendingWorldTicketsForServer_(removed_server_id);
+		if (removed_world_id != 0) {
+			ErasePendingWorldTicketsForServer_(removed_world_id);
 		}
 
 		spdlog::info(
-			"[{}] world route disconnected sid={} serial={} server_id={} remaining_worlds={}",
+			"[{}] world route disconnected sid={} serial={} world_id={} remaining_worlds={}",
 			ToString(AccountFlowEvent::WorldRouteDisconnected), sid,
 			serial,
-			removed_server_id,
+			removed_world_id,
 			world_count);
 	}
 
-	void AccountLineRuntime::OnWorldRouteHeartbeatReceived_(
+	void AccountLineRuntime::OnWorldRouteHeartbeatReceived(
 
 		std::uint32_t sid,
 		std::uint32_t serial,
-		std::uint32_t server_id,
 		std::uint16_t world_id,
-		std::uint16_t channel_id,
 		std::uint16_t active_zone_count,
 		std::uint16_t load_score,
 		std::uint32_t flags)
@@ -280,29 +283,26 @@ namespace dc {
 		const auto it = worlds_by_sid_.find(sid);
 		if (it == worlds_by_sid_.end() || it->second.serial != serial) {
 			spdlog::debug(
-				"[{}] ignored stale world route heartbeat sid={} serial={} server_id={} world_id={} channel_id={}",
+				"[{}] ignored stale world route heartbeat sid={} serial={} world_id={}",
 				ToString(AccountFlowEvent::WorldRouteHeartbeatStale), sid,
 				serial,
-				server_id,
-				world_id,
-				channel_id);
+				world_id);
 			return;
 		}
 
 		auto& endpoint = it->second;
-		if (endpoint.server_id != server_id) {
+		if (endpoint.world_id != world_id) {
 			spdlog::warn(
-				"[{}] ignored world heartbeat with mismatched server_id sid={} serial={} endpoint_server_id={} heartbeat_server_id={}",
+				"[{}] ignored world heartbeat with mismatched server_id sid={} serial={} endpoint_world_id={} heartbeat_world_id={}",
 				ToString(AccountFlowEvent::WorldRouteHeartbeatMismatch),
 				sid,
 				serial,
-				endpoint.server_id,
-				server_id);
+				endpoint.world_id,
+				world_id);
 			return;
 		}
 
 		endpoint.world_id = world_id;
-		endpoint.channel_id = channel_id;
 		endpoint.active_zone_count = active_zone_count;
 		endpoint.load_score = load_score;
 		endpoint.flags = flags;
@@ -311,6 +311,9 @@ namespace dc {
 
 	bool AccountLineRuntime::IsWorldSelectable_(const RegisteredWorldEndpoint& endpoint)
 	{
+		if (!endpoint.ready) {
+			return false;
+		}
 		if (endpoint.public_host.empty() || endpoint.public_port == 0) {
 			return false;
 		}
@@ -338,7 +341,6 @@ namespace dc {
 			}
 			proto::internal::login_account::WorldSummary summary{};
 			summary.world_id = endpoint.world_id;
-			summary.channel_id = endpoint.channel_id;
 			summary.active_zone_count = endpoint.active_zone_count;
 			summary.load_score = endpoint.load_score;
 			summary.public_port = endpoint.public_port;
@@ -359,22 +361,19 @@ namespace dc {
 
 	bool AccountLineRuntime::TryResolveSelectedWorldRoute_(
 		std::uint16_t world_id,
-		std::uint16_t channel_id,
 		std::string& out_host,
-		std::uint16_t& out_port,
-		std::uint32_t& out_server_id) const
+		std::uint16_t& out_port) const
 	{
 		std::lock_guard lk(world_registry_mtx_);
 		for (const auto& [_, endpoint] : worlds_by_sid_) {
 			if (!IsWorldSelectable_(endpoint)) {
 				continue;
 			}
-			if (endpoint.world_id != world_id || endpoint.channel_id != channel_id) {
+			if (endpoint.world_id != world_id) {
 				continue;
 			}
 			out_host = endpoint.public_host;
 			out_port = endpoint.public_port;
-			out_server_id = endpoint.server_id;
 			return true;
 		}
 		return false;
@@ -383,9 +382,7 @@ namespace dc {
 	bool AccountLineRuntime::TrySelectWorldRouteEndpoint_(
 		std::string& out_host,
 		std::uint16_t& out_port,
-		std::uint32_t& out_server_id,
-		std::uint16_t& out_world_id,
-		std::uint16_t& out_channel_id) const
+		std::uint16_t& out_world_id) const
 	{
 		std::lock_guard lk(world_registry_mtx_);
 
@@ -397,10 +394,9 @@ namespace dc {
 
 			if (!selected ||
 				endpoint.world_id < selected->world_id ||
-				(endpoint.world_id == selected->world_id && endpoint.channel_id < selected->channel_id) ||
-				(endpoint.world_id == selected->world_id && endpoint.channel_id == selected->channel_id && endpoint.load_score < selected->load_score) ||
-				(endpoint.world_id == selected->world_id && endpoint.channel_id == selected->channel_id && endpoint.load_score == selected->load_score && endpoint.active_zone_count > selected->active_zone_count) ||
-				(endpoint.world_id == selected->world_id && endpoint.channel_id == selected->channel_id && endpoint.load_score == selected->load_score && endpoint.active_zone_count == selected->active_zone_count && endpoint.server_id < selected->server_id)) {
+				(endpoint.world_id == selected->world_id ) ||
+				(endpoint.world_id == selected->world_id && endpoint.load_score < selected->load_score) ||
+				(endpoint.world_id == selected->world_id && endpoint.load_score == selected->load_score && endpoint.active_zone_count > selected->active_zone_count)) {
 
 				selected = &endpoint;
 			}
@@ -412,16 +408,14 @@ namespace dc {
 
 		out_host = selected->public_host;
 		out_port = selected->public_port;
-		out_server_id = selected->server_id;
 		out_world_id = selected->world_id;
-		out_channel_id = selected->channel_id;
 		return true;
 	}
 
-	bool AccountLineRuntime::TryResolveRegisteredWorldServerId_(
+	bool AccountLineRuntime::TryResolveRegisteredWorldId_(
 		std::uint32_t sid,
 		std::uint32_t serial,
-		std::uint32_t& out_server_id) const
+		std::uint32_t& out_world_id) const
 	{
 		std::lock_guard lk(world_registry_mtx_);
 		const auto it = worlds_by_sid_.find(sid);
@@ -429,19 +423,19 @@ namespace dc {
 			return false;
 		}
 
-		out_server_id = it->second.server_id;
-		return out_server_id != 0;
+		out_world_id = it->second.world_id;
+		return out_world_id != 0;
 	}
 
 
-	bool AccountLineRuntime::TryResolveWorldRouteSessionByServerId_(
-		std::uint32_t world_server_id,
+	bool AccountLineRuntime::TryResolveWorldRouteSessionById_(
+		std::uint32_t world_id,
 		std::uint32_t& out_sid,
 		std::uint32_t& out_serial) const
 	{
 		std::lock_guard lk(world_registry_mtx_);
-		const auto idx = world_sid_by_server_id_.find(world_server_id);
-		if (idx == world_sid_by_server_id_.end()) {
+		const auto idx = world_sid_by_world_id_.find(world_id);
+		if (idx == world_sid_by_world_id_.end()) {
 			return false;
 		}
 		const auto it = worlds_by_sid_.find(idx->second);
@@ -453,12 +447,12 @@ namespace dc {
 		return dc::IsValidSessionKey(out_sid, out_serial);
 	}
 
-	void AccountLineRuntime::ErasePendingWorldTicketsForServer_(std::uint32_t world_server_id)
+	void AccountLineRuntime::ErasePendingWorldTicketsForServer_(std::uint32_t world_id)
 	{
 		std::lock_guard lk(pending_world_upsert_mtx_);
 
 		for (auto it = pending_world_upserts_.begin(); it != pending_world_upserts_.end();) {
-			if (it->second.target_world_server_id == world_server_id) {
+			if (it->second.target_world_id == world_id) {
 				it = pending_world_upserts_.erase(it);
 			}
 			else {
@@ -467,7 +461,7 @@ namespace dc {
 		}
 
 		for (auto it = consumed_world_enters_awaiting_notify_.begin(); it != consumed_world_enters_awaiting_notify_.end();) {
-			if (it->second.target_world_server_id == world_server_id) {
+			if (it->second.target_world_id == world_id) {
 				it = consumed_world_enters_awaiting_notify_.erase(it);
 			}
 			else {
@@ -802,8 +796,6 @@ namespace dc {
 			session.account_id = rr.account_id;
 			session.selected_char_id = 0;
 			session.selected_world_id = 0;
-			session.selected_channel_id = 0;
-			session.selected_world_server_id = 0;
 			session.selected_world_host.clear();
 			session.selected_world_port = 0;
 			session.login_session = login_session;
@@ -899,7 +891,7 @@ namespace dc {
 	}
 
 
-	void AccountLineRuntime::HandleWorldCharacterListResponse_(
+	void AccountLineRuntime::OnWorldCharacterListResponseFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
@@ -916,8 +908,8 @@ namespace dc {
 			return;
 		}
 
-		std::uint32_t sender_world_server_id = 0;
-		if (!TryResolveRegisteredWorldServerId_(sid, serial, sender_world_server_id)) {
+		std::uint32_t sender_world_id = 0;
+		if (!TryResolveRegisteredWorldId_(sid, serial, sender_world_id)) {
 			return;
 		}
 
@@ -928,8 +920,7 @@ namespace dc {
 			const auto it = login_character_sessions_.find(std::string(login_session));
 			if (it == login_character_sessions_.end() ||
 				it->second.account_id != account_id ||
-				it->second.selected_world_server_id != sender_world_server_id ||
-				it->second.selected_world_id != world_id) {
+				it->second.selected_world_id != sender_world_id) {
 				return;
 			}
 			login_sid = it->second.login_sid;
@@ -988,7 +979,7 @@ namespace dc {
 		ConsumedWorldTicketAwaitingNotify& out_consumed)
 	{
 		std::uint32_t sender_world_server_id = 0;
-		if (!TryResolveRegisteredWorldServerId_(sid, serial, sender_world_server_id)) {
+		if (!TryResolveRegisteredWorldId_(sid, serial, sender_world_server_id)) {
 			return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::WorldServerMismatch);
 		}
 
@@ -1013,7 +1004,7 @@ namespace dc {
 		if (it->second.account_id != account_id) {
 			return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::AccountMismatch);
 		}
-		if (it->second.target_world_server_id != sender_world_server_id) {
+		if (it->second.target_world_id != sender_world_server_id) {
 			return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::WorldServerMismatch);
 		}
 
@@ -1021,7 +1012,7 @@ namespace dc {
 		out_consumed.trace_id = it->second.trace_id != 0 ? it->second.trace_id : trace_id;
 		out_consumed.login_sid = it->second.login_sid;
 		out_consumed.login_serial = it->second.login_serial;
-		out_consumed.target_world_server_id = it->second.target_world_server_id;
+		out_consumed.target_world_id = it->second.target_world_id;
 		out_consumed.account_id = it->second.account_id;
 		out_consumed.char_id = it->second.char_id;
 		out_consumed.login_session = it->second.login_session;
@@ -1035,7 +1026,7 @@ namespace dc {
 		return static_cast<std::uint16_t>(svr::ConsumePendingWorldAuthTicketResultKind::Ok);
 	}
 
-	void AccountLineRuntime::HandleWorldTicketConsumeRequest_(std::uint32_t sid,
+	void AccountLineRuntime::OnWorldTicketConsumeRequestFromHandler(std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
 		std::uint64_t request_id,
@@ -1117,8 +1108,8 @@ namespace dc {
 		std::string_view world_token,
 		ConsumedWorldTicketAwaitingNotify& out_consumed)
 	{
-		std::uint32_t sender_world_server_id = 0;
-		if (!TryResolveRegisteredWorldServerId_(sid, serial, sender_world_server_id)) {
+		std::uint32_t sender_world_id = 0;
+		if (!TryResolveRegisteredWorldId_(sid, serial, sender_world_id)) {
 			return false;
 		}
 
@@ -1133,7 +1124,7 @@ namespace dc {
 			it->second.account_id != account_id ||
 			it->second.char_id != char_id ||
 			it->second.login_session != login_session ||
-			it->second.target_world_server_id != sender_world_server_id)
+			it->second.target_world_id != sender_world_id)
 		{
 			return false;
 		}
@@ -1142,7 +1133,7 @@ namespace dc {
 		return true;
 	}
 
-	void AccountLineRuntime::HandleWorldEnterSuccessNotify_(
+	void AccountLineRuntime::OnWorldEnterSuccessNotifyFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
@@ -1256,7 +1247,7 @@ namespace dc {
 
 	void AccountLineRuntime::ExpireStaleWorldRoutes_(std::chrono::steady_clock::time_point now)
 	{
-		std::vector<std::uint32_t> stale_server_ids;
+		std::vector<std::uint32_t> stale_world_ids;
 		std::vector<std::pair<std::uint32_t, std::uint32_t>> stale_sessions;
 		{
 			std::lock_guard lk(world_registry_mtx_);
@@ -1270,21 +1261,19 @@ namespace dc {
 				const auto expired_serial = it->second.serial;
 
 				spdlog::warn(
-					"[{}] expired stale world route sid={} serial={} server_id={} world_id={} channel_id={} last_load={} zones={}",
+					"[{}] expired stale world route sid={} serial={} world_id={} last_load={} zones={}",
 					ToString(AccountFlowEvent::WorldRouteExpired),
 					it->second.sid,
 					it->second.serial,
-					it->second.server_id,
 					it->second.world_id,
-					it->second.channel_id,
 					it->second.load_score,
 					it->second.active_zone_count);
 
-				if (it->second.server_id != 0) {
-					stale_server_ids.push_back(it->second.server_id);
-					const auto idx = world_sid_by_server_id_.find(it->second.server_id);
-					if (idx != world_sid_by_server_id_.end() && idx->second == it->first) {
-						world_sid_by_server_id_.erase(idx);
+				if (it->second.world_id != 0) {
+					stale_world_ids.push_back(it->second.world_id);
+					const auto idx = world_sid_by_world_id_.find(it->second.world_id);
+					if (idx != world_sid_by_world_id_.end() && idx->second == it->first) {
+						world_sid_by_world_id_.erase(idx);
 					}
 				}
 				// stale route는 heartbeat만으로는 다시 살아나지 않으므로
@@ -1295,8 +1284,8 @@ namespace dc {
 			}
 		}
 
-		for (const auto server_id : stale_server_ids) {
-			ErasePendingWorldTicketsForServer_(server_id);
+		for (const auto world_id : stale_world_ids) {
+			ErasePendingWorldTicketsForServer_(world_id);
 		}
 
 		// 주의:
@@ -1337,7 +1326,7 @@ namespace dc {
 		}
 	}
 
-	void AccountLineRuntime::HandleLoginAuthRequest_(
+	void AccountLineRuntime::OnLoginAuthRequestFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
@@ -1411,7 +1400,7 @@ namespace dc {
 		}
 	}
 
-	void AccountLineRuntime::HandleWorldListRequest_(
+	void AccountLineRuntime::OnWorldListRequestFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
@@ -1443,31 +1432,29 @@ namespace dc {
 			worlds.empty() ? "world_not_ready" : "");
 	}
 
-	void AccountLineRuntime::HandleWorldSelectRequest_(
+	void AccountLineRuntime::OnWorldSelectRequestFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
 		std::uint64_t request_id,
 		std::uint64_t account_id,
 		std::uint16_t world_id,
-		std::uint16_t channel_id,
 		std::string_view login_session)
 	{
 		std::string world_host;
 		std::uint16_t world_port = 0;
-		std::uint32_t world_server_id = 0;
 
 		{
 			std::lock_guard lk(login_character_sessions_mtx_);
 			const auto it = login_character_sessions_.find(std::string(login_session));
 			if (it == login_character_sessions_.end() || it->second.account_id != account_id) {
-				login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, 0, login_session, "", "invalid_login_session", 0);
+				login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, login_session, "", "invalid_login_session", 0);
 				return;
 			}
 		}
 
-		if (!TryResolveSelectedWorldRoute_(world_id, channel_id, world_host, world_port, world_server_id)) {
-			login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, 0, login_session, "", "world_not_found", 0);
+		if (!TryResolveSelectedWorldRoute_(world_id, world_host, world_port)) {
+			login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, login_session, "", "world_not_found", 0);
 			return;
 		}
 
@@ -1475,21 +1462,19 @@ namespace dc {
 			std::lock_guard lk(login_character_sessions_mtx_);
 			auto it = login_character_sessions_.find(std::string(login_session));
 			if (it == login_character_sessions_.end() || it->second.account_id != account_id) {
-				login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, channel_id, 0, login_session, "", "invalid_login_session", 0);
+				login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, false, account_id, world_id, login_session, "", "invalid_login_session", 0);
 				return;
 			}
 			it->second.selected_world_id = world_id;
-			it->second.selected_channel_id = channel_id;
-			it->second.selected_world_server_id = world_server_id;
 			it->second.selected_world_host = world_host;
 			it->second.selected_world_port = world_port;
 			it->second.updated_at = std::chrono::steady_clock::now();
 		}
 
-		login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, true, account_id, world_id, channel_id, world_server_id, login_session, world_host, "", world_port);
+		login_handler_->SendWorldSelectResult(0, sid, serial, trace_id, request_id, true, account_id, world_id,login_session, world_host, "", world_port);
 	}
 
-	void AccountLineRuntime::HandleCharacterListRequest_(
+	void AccountLineRuntime::OnCharacterListRequestFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
@@ -1510,7 +1495,7 @@ namespace dc {
 				login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "invalid_login_session");
 				return;
 			}
-			if (it->second.selected_world_server_id == 0 || it->second.selected_world_id == 0) {
+			if (it->second.selected_world_id == 0) {
 				login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "world_not_selected");
 				return;
 			}
@@ -1518,7 +1503,6 @@ namespace dc {
 
 		std::uint32_t world_sid = 0;
 		std::uint32_t world_serial = 0;
-		std::uint32_t selected_world_server_id = 0;
 		{
 			std::lock_guard lk(login_character_sessions_mtx_);
 			const auto it = login_character_sessions_.find(std::string(login_session));
@@ -1526,7 +1510,7 @@ namespace dc {
 				login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "invalid_login_session");
 				return;
 			}
-			selected_world_server_id = it->second.selected_world_server_id;
+
             if (world_id == 0) {
                 world_id = it->second.selected_world_id;
             } else if (world_id != it->second.selected_world_id) {
@@ -1535,7 +1519,7 @@ namespace dc {
             }
 		}
 
-		if (!world_handler_ || !TryResolveWorldRouteSessionByServerId_(selected_world_server_id, world_sid, world_serial)) {
+		if (!world_handler_ || !TryResolveWorldRouteSessionById_(world_id, world_sid, world_serial)) {
 			login_handler_->SendCharacterListResult(0, sid, serial, trace_id, request_id, false, account_id, 0, nullptr, "world_route_not_ready");
 			return;
 		}
@@ -1553,7 +1537,7 @@ namespace dc {
 		}
 	}
 
-	void AccountLineRuntime::HandleCharacterSelectRequest_(
+	void AccountLineRuntime::OnCharacterSelectRequestFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
 		std::uint64_t trace_id,
@@ -1593,18 +1577,16 @@ namespace dc {
 			return;
 		}
 
-		if (session.selected_world_server_id == 0 || session.selected_world_id == 0) {
+		if (session.selected_world_id == 0) {
 			login_handler_->SendCharacterSelectResult(0, sid, serial, trace_id, request_id, false, account_id, char_id, login_session, "", "", "world_not_selected", 0);
 			return;
 		}
 
 		std::string world_host = session.selected_world_host;
 		std::uint16_t world_port = session.selected_world_port;
-		std::uint32_t target_world_server_id = session.selected_world_server_id;
 		std::uint16_t target_world_id = session.selected_world_id;
-		std::uint16_t target_channel_id = session.selected_channel_id;
-		if (world_host.empty() || world_port == 0 || target_world_server_id == 0) {
-			if (!TryResolveSelectedWorldRoute_(target_world_id, target_channel_id, world_host, world_port, target_world_server_id)) {
+		if (world_host.empty() || world_port == 0 || target_world_id == 0) {
+			if (!TryResolveSelectedWorldRoute_(target_world_id, world_host, world_port)) {
 				login_handler_->SendCharacterSelectResult(0, sid, serial, trace_id, request_id, false, account_id, char_id, login_session, "", "", "world_not_ready", 0);
 				return;
 			}
@@ -1616,9 +1598,7 @@ namespace dc {
 		pending.request_id = request_id;
 		pending.login_sid = sid;
 		pending.login_serial = serial;
-		pending.target_world_server_id = target_world_server_id;
 		pending.target_world_id = target_world_id;
-		pending.target_channel_id = target_channel_id;
 		pending.account_id = account_id;
 		pending.char_id = char_id;
 		pending.login_session.assign(login_session.data(), login_session.size());
@@ -1651,8 +1631,46 @@ namespace dc {
 			"character_select_issued_world_ticket");
 	}
 
+
+	bool AccountLineRuntime::LoadIniFile_()
+	{
+		const auto ini_path = FindIniPath_("AccountSystem.ini");
+		std::ifstream is(ini_path, std::ios::in | std::ios::binary);
+		if (!is) {
+			spdlog::error("AccountLineRuntime INI open failed: {}", ini_path.string());
+			return false;
+		}
+		inipp::Ini<char> ini;
+		ini.parse(is);
+		configured_worlds_by_name_.clear();
+		if (!ini.sections["Config"]["loginPort"].empty()) login_port_ = static_cast<std::uint16_t>(std::stoi(ini.sections["Config"]["loginPort"]));
+		if (!ini.sections["Config"]["worldPort"].empty()) world_port_ = static_cast<std::uint16_t>(std::stoi(ini.sections["Config"]["worldPort"]));
+		const auto db_address = ini.sections["Database"]["Address"];
+		const auto db_id = ini.sections["Database"]["ID"];
+		const auto db_pw = ini.sections["Database"]["PW"];
+
+		const auto world_db_id = ini.sections["World"]["DB_ID"];
+		const auto world_db_pw = ini.sections["World"]["DB_PW"];
+
+		for (int i = 0; i < 32; ++i) {
+			auto name = ini.sections["World"]["Name" + std::to_string(i)];
+			if (name.empty()) continue;
+			ConfiguredWorldEntry e{};
+			e.name = name;
+			e.db_dns = ini.sections["World"]["DBName" + std::to_string(i)];
+			e.db_id = world_db_id;
+			e.db_pw = db_pw;
+			const auto world_id_raw = ini.sections["World"]["WorldID" + std::to_string(i)];
+			if (!world_id_raw.empty()) e.world_id = static_cast<std::uint16_t>(std::stoi(world_id_raw));
+			configured_worlds_by_name_[e.name] = std::move(e);
+		}
+		spdlog::info("AccountLineRuntime INI loaded. login_port={} world_port={} configured_worlds={}", login_port_, world_port_, configured_worlds_by_name_.size());
+		return true;
+	}
+
 	bool AccountLineRuntime::OnRuntimeInit()
 	{
+		LoadIniFile_();
 		if (!InitDqs_()) {
 			spdlog::error("AccountLineRuntime failed to init DQS.");
 			return false;
@@ -1722,7 +1740,7 @@ namespace dc {
 		login_ready_.store(false, std::memory_order_release);
 		std::lock_guard lk(world_registry_mtx_);
 		worlds_by_sid_.clear();
-		world_sid_by_server_id_.clear();
+		world_sid_by_world_id_.clear();
 	}
 
 	void AccountLineRuntime::OnAfterIoStop()
@@ -1746,7 +1764,7 @@ namespace dc {
 		{
 			std::lock_guard lk(world_registry_mtx_);
 			worlds_by_sid_.clear();
-			world_sid_by_server_id_.clear();
+			world_sid_by_world_id_.clear();
 		}
 
 		{

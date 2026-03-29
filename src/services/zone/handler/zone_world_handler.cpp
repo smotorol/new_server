@@ -30,7 +30,7 @@ bool ZoneWorldHandler::SendHelloRegister(std::uint32_t dwProID, std::uint32_t dw
 	pkt.load_score = runtime_.GetLoadScore();
 	pkt.flags = runtime_.GetFlagsFromHandler();
 	std::snprintf(pkt.server_name, sizeof(pkt.server_name), "%s", server_name_.c_str());
-	const auto h = proto::make_header((std::uint16_t)pt_wz::WorldZoneMsg::zone_server_hello, (std::uint16_t)sizeof(pkt));
+	const auto h = proto::make_header((std::uint16_t)pt_wz::Msg::zone_server_hello, (std::uint16_t)sizeof(pkt));
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
@@ -43,7 +43,7 @@ bool ZoneWorldHandler::SendRouteHeartbeat(std::uint32_t dwProID, std::uint32_t d
 	pkt.active_player_count = runtime_.GetActivePlayerCount();
 	pkt.load_score = runtime_.GetLoadScore();
 	pkt.flags = runtime_.GetFlagsFromHandler();
-	const auto h = proto::make_header((std::uint16_t)pt_wz::WorldZoneMsg::zone_server_route_heartbeat, (std::uint16_t)sizeof(pkt));
+	const auto h = proto::make_header((std::uint16_t)pt_wz::Msg::zone_server_route_heartbeat, (std::uint16_t)sizeof(pkt));
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
@@ -51,7 +51,7 @@ bool ZoneWorldHandler::SendMapAssignResponse(std::uint32_t dwProID, std::uint32_
 {
 	pt_wz::ZoneWorldMapAssignResponse pkt{};
 	pkt.trace_id = trace_id; pkt.request_id = request_id; pkt.result_code = result_code; pkt.zone_id = zone_id; pkt.map_template_id = map_template_id; pkt.instance_id = instance_id;
-	const auto h = proto::make_header((std::uint16_t)pt_wz::WorldZoneMsg::zone_world_map_assign_response, (std::uint16_t)sizeof(pkt));
+	const auto h = proto::make_header((std::uint16_t)pt_wz::Msg::zone_world_map_assign_response, (std::uint16_t)sizeof(pkt));
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
@@ -59,7 +59,7 @@ bool ZoneWorldHandler::SendPlayerEnterAck(std::uint32_t dwProID, std::uint32_t d
 {
 	pt_wz::ZoneWorldPlayerEnterAck pkt{};
 	pkt.trace_id = trace_id; pkt.request_id = request_id; pkt.result_code = result_code; pkt.zone_id = zone_id; pkt.char_id = char_id; pkt.map_template_id = map_template_id; pkt.instance_id = instance_id;
-	const auto h = proto::make_header((std::uint16_t)pt_wz::WorldZoneMsg::zone_world_player_enter_ack, (std::uint16_t)sizeof(pkt));
+	const auto h = proto::make_header((std::uint16_t)pt_wz::Msg::zone_world_player_enter_ack, (std::uint16_t)sizeof(pkt));
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
@@ -68,18 +68,18 @@ bool ZoneWorldHandler::DataAnalysis(std::uint32_t, std::uint32_t n, _MSG_HEADER*
 	if (!pMsgHeader) return false;
 	const auto msg_type = proto::get_type_u16(*pMsgHeader);
 	const std::size_t body_len = (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
-	switch ((pt_wz::WorldZoneMsg)msg_type) {
-	case pt_wz::WorldZoneMsg::zone_server_register_ack: {
+	switch ((pt_wz::Msg)msg_type) {
+	case pt_wz::Msg::zone_server_register_ack: {
 		const auto* ack = proto::as<pt_wz::ZoneServerRegisterAck>(pMsg, body_len); if (!ack) return false;
 		if (ack->accepted != 0) runtime_.OnWorldRegisterAckFromHandler(n, GetLatestSerial(n));
 		return true; }
-	case pt_wz::WorldZoneMsg::world_zone_map_assign_request: {
+	case pt_wz::Msg::world_zone_map_assign_request: {
 		const auto* req = proto::as<pt_wz::WorldZoneMapAssignRequest>(pMsg, body_len); if (!req) return false;
 		runtime_.OnMapAssignRequestFromHandler(n, GetLatestSerial(n), *req); return true; }
-	case pt_wz::WorldZoneMsg::world_zone_player_enter: {
+	case pt_wz::Msg::world_zone_player_enter: {
 		const auto* req = proto::as<pt_wz::WorldZonePlayerEnter>(pMsg, body_len); if (!req) return false;
 		runtime_.OnPlayerEnterRequestFromHandler(n, GetLatestSerial(n), *req); return true; }
-	case pt_wz::WorldZoneMsg::world_zone_player_leave: {
+	case pt_wz::Msg::world_zone_player_leave: {
 		const auto* req = proto::as<pt_wz::WorldZonePlayerLeave>(pMsg, body_len); if (!req) return false;
 		runtime_.OnPlayerLeaveRequestFromHandler(n, GetLatestSerial(n), *req); return true; }
 	default: spdlog::warn("ZoneWorldHandler unknown msg_type={} sid={}", msg_type, n); return false;

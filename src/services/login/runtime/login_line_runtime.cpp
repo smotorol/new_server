@@ -4,6 +4,9 @@
 #include <cstdio>
 #include <ctime>
 #include <memory>
+#include <filesystem>
+#include <fstream>
+#include <inipp/inipp.h>
 
 #include <spdlog/spdlog.h>
 
@@ -313,7 +316,7 @@ namespace dc {
 			std::lock_guard lk(login_sessions_mtx_);
 			const auto it = login_sessions_.find(sid);
 			if (it == login_sessions_.end() || it->second.serial != serial || !it->second.logged_in) {
-				return SendWorldSelectResult_(sid, serial, false, world_id, channel_id, {}, 0, pt_l::WorldSelectFailReason::not_logged_in);
+				return SendWorldSelectResult_(sid, serial, false, world_id, {}, 0, pt_l::WorldSelectFailReason::not_logged_in);
 			}
 			session = it->second;
 		}
@@ -337,7 +340,7 @@ namespace dc {
 		if (!SendWorldSelectRequest_(pending)) {
 			std::lock_guard lk(pending_login_mtx_);
 			pending_world_select_requests_.erase(pending.request_id);
-			return SendWorldSelectResult_(sid, serial, false, world_id, channel_id, {}, 0, pt_l::WorldSelectFailReason::internal_error);
+			return SendWorldSelectResult_(sid, serial, false, world_id, {}, 0, pt_l::WorldSelectFailReason::internal_error);
 		}
 
 		return true;
@@ -357,7 +360,7 @@ namespace dc {
 			session = it->second;
 		}
 
-		if (session.selected_world_server_id == 0) {
+		if (session.selected_world_id == 0) {
 			return SendCharacterListResult_(sid, serial, false, 0, nullptr, "world_not_selected");
 		}
 
@@ -414,7 +417,7 @@ namespace dc {
 			session = it->second;
 		}
 
-		if (session.selected_world_server_id == 0) {
+		if (session.selected_world_id == 0) {
 			return SendCharacterSelectResult_(
 				sid,
 				serial,
@@ -471,8 +474,30 @@ namespace dc {
 		RemoveLoginSession_NoLock_(sid, serial);
 	}
 
-	bool LoginLineRuntime::OnRuntimeInit()
+	
+	bool LoginLineRuntime::LoadIniFile_()
 	{
+		namespace fs = std::filesystem;
+		const fs::path cwd = fs::current_path();
+		fs::path ini_path = cwd / "docs" / "LoginSystem.ini";
+		if (!fs::exists(ini_path)) ini_path = cwd / "Initialize" / "LoginSystem.ini";
+		if (!fs::exists(ini_path)) ini_path = cwd / "LoginSystem.ini";
+		std::ifstream is(ini_path, std::ios::in | std::ios::binary);
+		if (!is) {
+			spdlog::warn("LoginLineRuntime INI open failed: {}", ini_path.string());
+			return false;
+		}
+		inipp::Ini<char> ini; ini.parse(is);
+		if (!ini.sections["Config"]["Port"].empty()) port_ = static_cast<std::uint16_t>(std::stoi(ini.sections["Config"]["Port"]));
+		if (!ini.sections["Account"]["AccountAddress"].empty()) account_host_ = ini.sections["Account"]["AccountAddress"];
+		if (!ini.sections["Account"]["AccountPort"].empty()) account_port_ = static_cast<std::uint16_t>(std::stoi(ini.sections["Account"]["AccountPort"]));
+		spdlog::info("LoginLineRuntime INI loaded. client_port={} account_remote={}:{}", port_, account_host_, account_port_);
+		return true;
+	}
+
+bool LoginLineRuntime::OnRuntimeInit()
+	{
+		LoadIniFile_();
 		dc::InitHostedLineEntry(
 			client_line_,
 			0,
@@ -528,13 +553,11 @@ namespace dc {
 				bool ok,
 				std::uint64_t account_id,
 				std::uint16_t world_id,
-				std::uint16_t channel_id,
-				std::uint32_t world_server_id,
 				std::string_view login_session,
 				std::string_view world_host,
 				std::uint16_t world_port,
 				std::string_view fail_reason) {
-			OnWorldSelectResult(trace_id, request_id, ok, account_id, world_id, channel_id, world_server_id, login_session, world_host, world_port, fail_reason);
+			OnWorldSelectResult(trace_id, request_id, ok, account_id, world_id, login_session, world_host, world_port, fail_reason);
 		},
 			[this](std::uint64_t trace_id,
 				std::uint64_t request_id,
@@ -876,8 +899,6 @@ namespace dc {
 		bool ok,
 		std::uint64_t account_id,
 		std::uint16_t world_id,
-		std::uint16_t channel_id,
-		std::uint32_t world_server_id,
 		std::string_view login_session,
 		std::string_view world_host,
 		std::uint16_t world_port,
@@ -900,11 +921,9 @@ namespace dc {
 			if (it != login_sessions_.end() && it->second.serial == pending.client_serial && it->second.account_id == account_id) {
 				auto& st = it->second;
 				st.selected_world_id = world_id;
-				st.selected_channel_id = channel_id;
 				st.world_host.assign(world_host.data(), world_host.size());
 				st.world_port = world_port;
 				st.world_token.clear();
-				st.selected_world_server_id = world_server_id;
 			}
 		}
 
@@ -915,7 +934,7 @@ namespace dc {
 			 fail_reason == "invalid_login_session" ? pt_l::WorldSelectFailReason::invalid_login_session :
 			 pt_l::WorldSelectFailReason::internal_error);
 
-		SendWorldSelectResult_(pending.client_sid, pending.client_serial, ok, world_id, channel_id, world_host, world_port, fail_code);
+		SendWorldSelectResult_(pending.client_sid, pending.client_serial, ok, world_id, world_host, world_port, fail_code);
 	}
 
 	void LoginLineRuntime::OnCharacterListResult(
@@ -1084,8 +1103,6 @@ namespace dc {
 			st.account_id = account_id;
 			st.char_id = 0;
 			st.selected_world_id = 0;
-			st.selected_channel_id = 0;
-			st.selected_world_server_id = 0;
 			st.world_host.clear();
 			st.world_port = 0;
 			st.login_session.assign(login_session.data(), login_session.size());
@@ -1381,7 +1398,6 @@ namespace dc {
 		std::uint32_t serial,
 		bool ok,
 		std::uint16_t world_id,
-		std::uint16_t channel_id,
 		std::string_view world_host,
 		std::uint16_t world_port,
 		pt_l::WorldSelectFailReason fail_reason)
@@ -1394,7 +1410,6 @@ namespace dc {
 		res.ok = ok ? 1 : 0;
 		res.fail_reason = static_cast<std::uint16_t>(fail_reason);
 		res.world_id = world_id;
-		res.channel_id = channel_id;
 		res.world_port = world_port;
 		std::snprintf(res.world_host, sizeof(res.world_host), "%.*s",
 			static_cast<int>(world_host.size()), world_host.data());

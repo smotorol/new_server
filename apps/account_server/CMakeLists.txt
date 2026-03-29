@@ -4,6 +4,7 @@ add_executable(account_server
 
 dc_target_defaults(account_server)
 dc_target_src_root(account_server)
+dc_set_vs_workdir(account_server)
 
 target_link_libraries(account_server PRIVATE
     dc_shared

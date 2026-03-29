@@ -17,8 +17,6 @@ namespace dc {
         std::uint64_t account_id = 0;
         std::uint64_t char_id = 0;
         std::uint16_t selected_world_id = 0;
-        std::uint16_t selected_channel_id = 0;
-        std::uint32_t selected_world_server_id = 0;
         std::string world_host;
         std::uint16_t world_port = 0;
 

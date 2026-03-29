@@ -41,13 +41,7 @@ namespace svr {
 			allow_legacy_item_template_fallback_ = !(legacyFallbackEnv[0] == '0' || legacyFallbackEnv[0] == 'f' || legacyFallbackEnv[0] == 'F');
 		}
 
-		if (!DatabaseInit()) {
-			spdlog::warn("DatabaseInit() failed (stub). Continue without DB.");
-		}
-
-		if (!PreloadItemTemplateRepository_()) {
-			spdlog::warn("PreloadItemTemplateRepository_() failed. Runtime will continue with fallback item bonuses.");
-		}
+		spdlog::info("WorldRuntime waiting for account register ack before DB initialization.");
 
         if (!dc::zone::ZoneRuntimeDataStore::LoadFromBinary(dc::zone::DefaultZoneRuntimeBinaryPath())) {
             auto zone_status = dc::zone::ZoneRuntimeDataStore::SnapshotStatus();

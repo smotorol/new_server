@@ -8,7 +8,7 @@
 
 namespace proto::internal::login_account {
 
-    enum class LoginAccountMsg : std::uint16_t
+    enum class Msg : std::uint16_t
     {
         login_server_hello = 3201,
         login_server_register_ack = 3202,
@@ -113,7 +113,6 @@ namespace proto::internal::login_account {
         std::uint64_t request_id = 0;
         std::uint64_t account_id = 0;
         std::uint16_t world_id = 0;
-        std::uint16_t channel_id = 0;
         char login_session[dc::k_login_session_max_len + 1]{};
     };
 
@@ -124,8 +123,6 @@ namespace proto::internal::login_account {
         std::uint8_t ok = 0;
         std::uint64_t account_id = 0;
         std::uint16_t world_id = 0;
-        std::uint16_t channel_id = 0;
-        std::uint32_t world_server_id = 0;
         std::uint16_t world_port = 0;
         char login_session[dc::k_login_session_max_len + 1]{};
         char world_host[dc::k_world_host_max_len + 1]{};

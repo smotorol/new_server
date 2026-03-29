@@ -51,8 +51,6 @@ public:
         bool ok,
         std::uint64_t account_id,
         std::uint16_t world_id,
-        std::uint16_t channel_id,
-        std::uint32_t world_server_id,
         std::string_view login_session,
         std::string_view world_host,
         std::uint16_t world_port,

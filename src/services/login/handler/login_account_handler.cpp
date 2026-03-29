@@ -52,7 +52,7 @@ bool LoginAccountHandler::SendHelloRegister(
     std::snprintf(pkt.server_name, sizeof(pkt.server_name), "%s", server_name_.c_str());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::login_server_hello),
+        static_cast<std::uint16_t>(pt_la::Msg::login_server_hello),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -77,7 +77,7 @@ bool LoginAccountHandler::SendAccountAuthRequest(
         static_cast<int>(password.size()), password.data());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::account_auth_request),
+        static_cast<std::uint16_t>(pt_la::Msg::account_auth_request),
         static_cast<std::uint16_t>(sizeof(pkt)));
 
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -101,7 +101,7 @@ bool LoginAccountHandler::SendWorldListRequest(
         static_cast<int>(login_session.size()), login_session.data());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::world_list_request),
+        static_cast<std::uint16_t>(pt_la::Msg::world_list_request),
         static_cast<std::uint16_t>(sizeof(pkt)));
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
@@ -122,12 +122,11 @@ bool LoginAccountHandler::SendWorldSelectRequest(
     pkt.request_id = request_id;
     pkt.account_id = account_id;
     pkt.world_id = world_id;
-    pkt.channel_id = channel_id;
     std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
         static_cast<int>(login_session.size()), login_session.data());
 
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::world_select_request),
+        static_cast<std::uint16_t>(pt_la::Msg::world_select_request),
         static_cast<std::uint16_t>(sizeof(pkt)));
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
@@ -150,7 +149,7 @@ bool LoginAccountHandler::SendCharacterListRequest(
     std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
         static_cast<int>(login_session.size()), login_session.data());
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::character_list_request),
+        static_cast<std::uint16_t>(pt_la::Msg::character_list_request),
         static_cast<std::uint16_t>(sizeof(pkt)));
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
@@ -173,7 +172,7 @@ bool LoginAccountHandler::SendCharacterSelectRequest(
     std::snprintf(pkt.login_session, sizeof(pkt.login_session), "%.*s",
         static_cast<int>(login_session.size()), login_session.data());
     const auto h = proto::make_header(
-        static_cast<std::uint16_t>(pt_la::LoginAccountMsg::character_select_request),
+        static_cast<std::uint16_t>(pt_la::Msg::character_select_request),
         static_cast<std::uint16_t>(sizeof(pkt)));
     return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
@@ -194,8 +193,8 @@ bool LoginAccountHandler::DataAnalysis(
     const std::size_t body_len =
         (pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
 
-    switch (static_cast<pt_la::LoginAccountMsg>(msg_type)) {
-    case pt_la::LoginAccountMsg::login_server_register_ack:
+    switch (static_cast<pt_la::Msg>(msg_type)) {
+    case pt_la::Msg::login_server_register_ack:
         {
             const auto* ack = proto::as<pt_la::LoginServerRegisterAck>(pMsg, body_len);
             if (!ack) {
@@ -214,7 +213,7 @@ bool LoginAccountHandler::DataAnalysis(
             return true;
         }
 
-    case pt_la::LoginAccountMsg::account_auth_result:
+    case pt_la::Msg::account_auth_result:
         {
             const auto* res = proto::as<pt_la::AccountAuthResult>(pMsg, body_len);
             if (!res) {
@@ -237,7 +236,7 @@ bool LoginAccountHandler::DataAnalysis(
             }
             return true;
         }
-    case pt_la::LoginAccountMsg::world_list_response:
+    case pt_la::Msg::world_list_response:
         {
             const auto* res = proto::as<pt_la::WorldListResponse>(pMsg, body_len);
             if (!res) {
@@ -256,7 +255,7 @@ bool LoginAccountHandler::DataAnalysis(
             }
             return true;
         }
-    case pt_la::LoginAccountMsg::world_select_response:
+    case pt_la::Msg::world_select_response:
         {
             const auto* res = proto::as<pt_la::WorldSelectResponse>(pMsg, body_len);
             if (!res) {
@@ -270,8 +269,6 @@ bool LoginAccountHandler::DataAnalysis(
                     res->ok != 0,
                     res->account_id,
                     res->world_id,
-                    res->channel_id,
-                    res->world_server_id,
                     res->login_session,
                     res->world_host,
                     res->world_port,
@@ -279,7 +276,7 @@ bool LoginAccountHandler::DataAnalysis(
             }
             return true;
         }
-    case pt_la::LoginAccountMsg::character_list_response:
+    case pt_la::Msg::character_list_response:
         {
             const auto* res = proto::as<pt_la::CharacterListResponse>(pMsg, body_len);
             if (!res) {
@@ -298,7 +295,7 @@ bool LoginAccountHandler::DataAnalysis(
             }
             return true;
         }
-    case pt_la::LoginAccountMsg::character_select_response:
+    case pt_la::Msg::character_select_response:
         {
             const auto* res = proto::as<pt_la::CharacterSelectResponse>(pMsg, body_len);
             if (!res) {
@@ -320,7 +317,7 @@ bool LoginAccountHandler::DataAnalysis(
             }
             return true;
         }
-    case pt_la::LoginAccountMsg::world_enter_success_notify:
+    case pt_la::Msg::world_enter_success_notify:
         {
             const auto* req = proto::as<pt_la::WorldEnterSuccessNotify>(pMsg, body_len);
             if (!req) {

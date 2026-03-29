@@ -23,15 +23,10 @@ public:
         std::uint32_t dwIndex,
         std::uint32_t dwSerial,
         std::uint8_t accepted,
-        std::uint32_t server_id,
         std::uint16_t world_id,
-        std::uint16_t channel_id,
-        std::uint16_t active_zone_count,
-        std::uint16_t load_score,
-        std::uint32_t flags,
-        std::string_view server_name,
-        std::string_view public_host,
-        std::uint16_t public_port);
+        std::string_view db_dns,
+        std::string_view db_id,
+        std::string_view db_pw);
 
     bool SendWorldAuthTicketConsumeResponse(
         std::uint32_t dwProID,

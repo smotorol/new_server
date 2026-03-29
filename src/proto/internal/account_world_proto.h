@@ -14,11 +14,12 @@ namespace proto::internal::account_world {
         k_world_flag_visible = 1u << 1,
     };
 
-    enum class AccountWorldMsg : std::uint16_t
+    enum class Msg : std::uint16_t
     {
         world_server_hello = 3301,
         world_server_register_ack = 3302,
         world_server_route_heartbeat = 3303,
+        world_server_ready_notify = 3304,
 
         world_auth_ticket_consume_request = 3311,
         world_auth_ticket_consume_response = 3312,
@@ -32,20 +33,13 @@ namespace proto::internal::account_world {
 
     struct WorldServerHello
     {
-        std::uint32_t server_id = 0;
         std::uint16_t public_port = 0;
-        std::uint16_t world_id = 0;
-        std::uint16_t channel_id = 0;
-        std::uint16_t active_zone_count = 0;
-        std::uint16_t load_score = 0;
-        std::uint32_t flags = 0;
         char server_name[dc::k_service_name_max_len + 1]{};
         char public_host[dc::k_world_host_max_len + 1]{};
     };
 
     struct WorldServerRouteHeartbeat
     {
-        std::uint32_t server_id = 0;
         std::uint16_t world_id = 0;
         std::uint16_t channel_id = 0;
         std::uint16_t active_zone_count = 0;
@@ -56,15 +50,16 @@ namespace proto::internal::account_world {
     struct WorldServerRegisterAck
     {
         std::uint8_t accepted = 0;
-        std::uint32_t server_id = 0;
-        std::uint16_t public_port = 0;
         std::uint16_t world_id = 0;
-        std::uint16_t channel_id = 0;
-        std::uint16_t active_zone_count = 0;
-        std::uint16_t load_score = 0;
+        char db_dns[dc::k_world_host_max_len + 1]{};
+        char db_id[dc::k_login_id_max_len + 1]{};
+        char db_pw[dc::k_login_pw_max_len + 1]{};
+    };
+
+    struct WorldServerReadyNotify
+    {
+        std::uint16_t world_id = 0;
         std::uint32_t flags = 0;
-        char server_name[dc::k_service_name_max_len + 1]{};
-        char public_host[dc::k_world_host_max_len + 1]{};
     };
 
     struct WorldAuthTicketConsumeRequest

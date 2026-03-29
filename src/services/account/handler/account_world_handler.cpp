@@ -20,33 +20,24 @@ bool AccountWorldHandler::SendRegisterAck(
 	std::uint32_t dwIndex,
 	std::uint32_t dwSerial,
 	std::uint8_t accepted,
-	std::uint32_t server_id,
 	std::uint16_t world_id,
-	std::uint16_t channel_id,
-	std::uint16_t active_zone_count,
-	std::uint16_t load_score,
-	std::uint32_t flags,
-	std::string_view server_name,
-	std::string_view public_host,
-	std::uint16_t public_port)
+	std::string_view db_dns,
+	std::string_view db_id,
+	std::string_view db_pw)
 {
 	pt_aw::WorldServerRegisterAck pkt{};
 	pkt.accepted = accepted;
-	pkt.server_id = server_id;
-	pkt.public_port = public_port;
 	pkt.world_id = world_id;
-	pkt.channel_id = channel_id;
-	pkt.active_zone_count = active_zone_count;
-	pkt.load_score = load_score;
-	pkt.flags = flags;
 
-	std::snprintf(pkt.server_name, sizeof(pkt.server_name), "%.*s",
-		static_cast<int>(server_name.size()), server_name.data());
-	std::snprintf(pkt.public_host, sizeof(pkt.public_host), "%.*s",
-		static_cast<int>(public_host.size()), public_host.data());
+	std::snprintf(pkt.db_dns, sizeof(pkt.db_dns), "%.*s",
+		static_cast<int>(db_dns.size()), db_dns.data());
+	std::snprintf(pkt.db_id, sizeof(pkt.db_id), "%.*s",
+		static_cast<int>(db_id.size()), db_id.data());
+	std::snprintf(pkt.db_pw, sizeof(pkt.db_pw), "%.*s",
+		static_cast<int>(db_pw.size()), db_pw.data());
 
 	const auto h = proto::make_header(
-		static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_server_register_ack),
+		static_cast<std::uint16_t>(pt_aw::Msg::world_server_register_ack),
 		static_cast<std::uint16_t>(sizeof(pkt)));
 
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -77,7 +68,7 @@ bool AccountWorldHandler::SendWorldAuthTicketConsumeResponse(
 		static_cast<int>(world_token.size()), world_token.data());
 
 	const auto h = proto::make_header(
-		static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_auth_ticket_consume_response),
+		static_cast<std::uint16_t>(pt_aw::Msg::world_auth_ticket_consume_response),
 		static_cast<std::uint16_t>(sizeof(pkt)));
 
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -104,7 +95,7 @@ bool AccountWorldHandler::SendWorldCharacterListRequest(
 		static_cast<int>(login_session.size()), login_session.data());
 
 	const auto h = proto::make_header(
-		static_cast<std::uint16_t>(pt_aw::AccountWorldMsg::world_character_list_request),
+		static_cast<std::uint16_t>(pt_aw::Msg::world_character_list_request),
 		static_cast<std::uint16_t>(sizeof(pkt)));
 
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
@@ -126,8 +117,8 @@ bool AccountWorldHandler::DataAnalysis(
 	const std::size_t body_len =
 		(pMsgHeader->m_wSize > MSG_HEADER_SIZE) ? (pMsgHeader->m_wSize - MSG_HEADER_SIZE) : 0;
 
-	switch (static_cast<pt_aw::AccountWorldMsg>(msg_type)) {
-	case pt_aw::AccountWorldMsg::world_server_hello:
+	switch (static_cast<pt_aw::Msg>(msg_type)) {
+	case pt_aw::Msg::world_server_hello:
 		{
 			const auto* hello = proto::as<pt_aw::WorldServerHello>(pMsg, body_len);
 			if (!hello) {
@@ -135,22 +126,32 @@ bool AccountWorldHandler::DataAnalysis(
 				return false;
 			}
 
-			runtime_.OnWorldRouteRegisteredFromHandler(
+			runtime_.On_world_server_hello(
 				n,
 				GetLatestSerial(n),
-				hello->server_id,
-				hello->world_id,
-				hello->channel_id,
-				hello->active_zone_count,
-				hello->load_score,
-				hello->flags,
 				hello->server_name,
 				hello->public_host,
 				hello->public_port);
 			return true;
 		}
 
-	case pt_aw::AccountWorldMsg::world_server_route_heartbeat:
+	case pt_aw::Msg::world_server_ready_notify:
+		{
+			const auto* ready = proto::as<pt_aw::WorldServerReadyNotify>(pMsg, body_len);
+			if (!ready) {
+				spdlog::error("AccountWorldHandler invalid world_server_ready_notify sid={}", n);
+				return false;
+			}
+
+			runtime_.OnWorldReadyNotifyFromHandler(
+				n,
+				GetLatestSerial(n),
+				ready->world_id,
+				ready->flags);
+			return true;
+		}
+
+	case pt_aw::Msg::world_server_route_heartbeat:
 		{
 			const auto* hb = proto::as<pt_aw::WorldServerRouteHeartbeat>(pMsg, body_len);
 			if (!hb) {
@@ -158,19 +159,17 @@ bool AccountWorldHandler::DataAnalysis(
 				return false;
 			}
 
-			runtime_.OnWorldRouteHeartbeatFromHandler(
+			runtime_.OnWorldRouteHeartbeatReceived(
 				n,
 				GetLatestSerial(n),
-				hb->server_id,
 				hb->world_id,
-				hb->channel_id,
 				hb->active_zone_count,
 				hb->load_score,
 				hb->flags);
 			return true;
 		}
 
-	case pt_aw::AccountWorldMsg::world_auth_ticket_consume_request:
+	case pt_aw::Msg::world_auth_ticket_consume_request:
 		{
 			const auto* req = proto::as<pt_aw::WorldAuthTicketConsumeRequest>(pMsg, body_len);
 			if (!req) {
@@ -189,7 +188,7 @@ bool AccountWorldHandler::DataAnalysis(
 			return true;
 		}
 
-	case pt_aw::AccountWorldMsg::world_enter_success_notify:
+	case pt_aw::Msg::world_enter_success_notify:
 		{
 			const auto* req = proto::as<pt_aw::WorldEnterSuccessNotify>(pMsg, body_len);
 			if (!req) {
@@ -209,7 +208,7 @@ bool AccountWorldHandler::DataAnalysis(
 			return true;
 		}
 
-	case pt_aw::AccountWorldMsg::world_character_list_response:
+	case pt_aw::Msg::world_character_list_response:
 		{
 			const auto* req = proto::as<pt_aw::WorldCharacterListResponse>(pMsg, body_len);
 			if (!req) {

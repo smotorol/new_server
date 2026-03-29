@@ -152,7 +152,7 @@ namespace svr {
 		std::uint16_t world_id,
 		std::string_view login_session)
 	{
-		if (world_id != world_info_.world_idx || !world_pool_ || world_pool_->conns.empty()) {
+		if (world_id != world_id_ || !world_pool_ || world_pool_->conns.empty()) {
 			return false;
 		}
 
@@ -212,7 +212,7 @@ namespace svr {
 
 		for (std::uint32_t sid = 0; sid < shard_count; ++sid) {
 			svr::dqs_payload::FlushDirtyChars payload{};
-			payload.world_code = world_code;
+			payload.world_id_ = world_code;
 			payload.shard_id = sid;
 			payload.max_batch = batch;
 
@@ -380,7 +380,7 @@ namespace svr {
 							// 샘플: DB에서 "SELECT 1" 수행 (연결 설정이 없으면 ok=0)
 							int ok = 0;
 							const std::uint32_t world_code = payload.world_code;
-							if (world_code == world_info_.world_idx && world_pool_ && !world_pool_->conns.empty())
+							if (world_code == world_id_ && world_pool_ && !world_pool_->conns.empty())
 							{
 								auto& conn = world_pool_->next();
 								ok = conn.execute_scalar_int("SELECT 1");
@@ -414,7 +414,7 @@ namespace svr {
 							svr::dqs_payload::FlushDirtyChars payload{};
 							std::memcpy(&payload, slot.data.data(), sizeof(payload));
 
-							const std::uint32_t world_code = payload.world_code;
+							const std::uint32_t world_code = payload.world_id_;
 							const std::uint32_t shard_id = payload.shard_id;
 							const std::size_t max_batch = payload.max_batch ? payload.max_batch : 200u;
 							std::uint32_t pulled = 0;
@@ -422,7 +422,7 @@ namespace svr {
 							std::uint32_t failed = 0;
 							std::uint32_t conflicts = 0;
 
-							if (world_code != world_info_.world_idx || !world_pool_ || world_pool_->conns.empty())
+							if (world_code != world_id_ || !world_pool_ || world_pool_->conns.empty())
 							{
 								slot.result = svr::dqs::ResultCode::db_error;
 								svr::dqs_result::FlushDirtyCharsResult r{};
@@ -519,7 +519,7 @@ namespace svr {
 							const std::uint32_t expected_version = payload.expected_version;
 							bool saved = false;
 
-							if (world_code != world_info_.world_idx || !world_pool_ || world_pool_->conns.empty())
+							if (world_code != world_id_ || !world_pool_ || world_pool_->conns.empty())
 							{
 								slot.result = svr::dqs::ResultCode::db_error;
 								svr::dqs_result::FlushOneCharResult r{};
@@ -616,7 +616,7 @@ namespace svr {
 							r.account_id = payload.account_id;
 							r.char_id = payload.char_id;
 
-							if (payload.world_code != world_info_.world_idx || !world_pool_ || world_pool_->conns.empty())
+							if (payload.world_code != world_id_ || !world_pool_ || world_pool_->conns.empty())
 							{
 								slot.result = svr::dqs::ResultCode::db_error;
 								std::memcpy(r.fail_reason, "world_db_not_ready", sizeof("world_db_not_ready"));
@@ -684,7 +684,7 @@ namespace svr {
 							r.account_id = payload.account_id;
 							std::snprintf(r.login_session, sizeof(r.login_session), "%s", payload.login_session);
 
-							if (payload.world_code != world_info_.world_idx || !world_pool_ || world_pool_->conns.empty())
+							if (payload.world_code != world_id_ || !world_pool_ || world_pool_->conns.empty())
 							{
 								slot.result = svr::dqs::ResultCode::db_error;
 								std::memcpy(r.fail_reason, "world_db_not_ready", sizeof("world_db_not_ready"));
@@ -812,7 +812,7 @@ namespace svr {
 
 		for (std::uint32_t sid = 0; sid < shard_count; ++sid) {
 			svr::dqs_payload::FlushDirtyChars payload{};
-			payload.world_code = world_info_.world_idx;
+			payload.world_id_ = world_id_;
 			payload.shard_id = sid;
 			payload.max_batch = batch;
 

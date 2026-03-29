@@ -26,7 +26,7 @@ public:
         std::uint16_t count, const pt_la::WorldSummary* worlds, std::string_view fail_reason);
     bool SendWorldSelectResult(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial,
         std::uint64_t trace_id, std::uint64_t request_id, bool ok, std::uint64_t account_id,
-        std::uint16_t world_id, std::uint16_t channel_id, std::uint32_t world_server_id,
+        std::uint16_t world_id,
         std::string_view login_session, std::string_view world_host, std::string_view fail_reason,
         std::uint16_t world_port);
     bool SendWorldEnterSuccessNotify(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial,

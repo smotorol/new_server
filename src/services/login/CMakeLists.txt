@@ -10,6 +10,7 @@ target_link_libraries(dc_login_service PUBLIC
     dc_core
     dc_net
     dc_service_runtime
+    inipp
 )
 
 group_sources(${CMAKE_CURRENT_SOURCE_DIR} "" "${DC_LOGIN_SERVICE_SOURCES}")
