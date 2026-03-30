@@ -1,7 +1,10 @@
 #include "services/world/runtime/world_runtime_private.h"
 
+#include <algorithm>
 #include <fmt/format.h>
+#include <fmt/ranges.h>
 
+#include "server_common/config/server_topology.h"
 #include "server_common/log/enter_flow_log.h"
 
 namespace svr {
@@ -16,11 +19,51 @@ namespace svr {
 		{
 			return result_code == static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok);
 		}
+
+		static ZoneRouteInfo MakeZoneRouteInfo_(const ZoneRouteState& route) noexcept
+		{
+			ZoneRouteInfo current{};
+			current.sid = route.sid;
+			current.serial = route.serial;
+			current.zone_server_id = route.server_id;
+			current.zone_id = route.zone_id;
+			current.channel_id = route.channel_id;
+			current.active_map_instance_count = route.active_map_instance_count;
+			current.active_player_count = route.active_player_count;
+			current.load_score = route.load_score;
+			current.flags = route.flags;
+			current.served_map_ids = route.served_map_ids;
+			current.last_heartbeat_at = route.last_heartbeat_at;
+			return current;
+		}
+
+		static bool RouteServesMap_(const ZoneRouteState& route, std::uint32_t map_template_id) noexcept
+		{
+			if (route.served_map_ids.empty()) {
+				return true;
+			}
+
+			return std::find(route.served_map_ids.begin(), route.served_map_ids.end(), map_template_id) != route.served_map_ids.end();
+		}
 	}
 
 	std::uint64_t WorldRuntime::MakeMapAssignmentKey_(std::uint32_t map_template_id, std::uint32_t instance_id) const noexcept
 	{
 		return (static_cast<std::uint64_t>(map_template_id) << 32) | static_cast<std::uint64_t>(instance_id);
+	}
+
+	void WorldRuntime::LoadServerTopology_()
+	{
+		server_topology_ = dc::cfg::LoadServerTopology();
+		if (!server_topology_.has_value()) {
+			spdlog::warn("WorldRuntime server topology not found. map/channel route selection will use legacy zone-only fallback.");
+			return;
+		}
+
+		spdlog::info(
+			"WorldRuntime server topology loaded. source={} zone_processes={}",
+			server_topology_->source_path.string(),
+			server_topology_->zone_processes.size());
 	}
 
 	void WorldRuntime::RegisterZoneRoute(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneServerHello& req)
@@ -145,6 +188,7 @@ namespace svr {
 			MapAssignmentEntry{
 				pending_assign.target_zone_server_id,
 				res.zone_id,
+				pending_assign.target_channel_id,
 				res.map_template_id,
 				res.instance_id
 		};
@@ -344,16 +388,7 @@ namespace svr {
 				continue;
 			}
 
-			ZoneRouteInfo current{};
-			current.sid = route.sid;
-			current.serial = route.serial;
-			current.zone_server_id = route.server_id;
-			current.zone_id = route.zone_id;
-			current.active_map_instance_count = route.active_map_instance_count;
-			current.active_player_count = route.active_player_count;
-			current.load_score = route.load_score;
-			current.flags = route.flags;
-			current.last_heartbeat_at = route.last_heartbeat_at;
+			auto current = MakeZoneRouteInfo_(route);
 
 			if (!best.has_value()) {
 				best = current;
@@ -376,6 +411,49 @@ namespace svr {
 		return best;
 	}
 
+	std::optional<ZoneRouteInfo> WorldRuntime::TrySelectZoneRouteForMap_(std::uint32_t map_template_id, bool dungeon_instance) const
+	{
+		std::lock_guard lk(service_line_mtx_);
+		std::optional<ZoneRouteInfo> best;
+		for (const auto& [_, route] : zone_routes_by_sid_) {
+			if (!route.registered || route.serial == 0 || route.zone_id == 0) {
+				continue;
+			}
+			if (!RouteServesMap_(route, map_template_id)) {
+				continue;
+			}
+
+			auto current = MakeZoneRouteInfo_(route);
+			if (!best.has_value()) {
+				best = current;
+				continue;
+			}
+			if (current.load_score < best->load_score) {
+				best = current;
+				continue;
+			}
+			if (current.load_score == best->load_score &&
+				current.active_player_count < best->active_player_count) {
+				best = current;
+				continue;
+			}
+			if (current.load_score == best->load_score &&
+				current.active_player_count == best->active_player_count &&
+				dungeon_instance &&
+				current.active_map_instance_count < best->active_map_instance_count) {
+				best = current;
+				continue;
+			}
+			if (current.load_score == best->load_score &&
+				current.active_player_count == best->active_player_count &&
+				current.active_map_instance_count == best->active_map_instance_count &&
+				current.channel_id < best->channel_id) {
+				best = current;
+			}
+		}
+		return best;
+	}
+
 
 
 	std::optional<ZoneRouteInfo> WorldRuntime::FindZoneRouteByZoneId_(std::uint16_t zone_id) const
@@ -383,25 +461,39 @@ namespace svr {
 		std::lock_guard lk(service_line_mtx_);
 		for (const auto& [_, route] : zone_routes_by_sid_) {
 			if (route.registered && route.zone_id == zone_id) {
-				ZoneRouteInfo current{};
-				current.sid = route.sid;
-				current.serial = route.serial;
-				current.zone_server_id = route.server_id;
-				current.zone_id = route.zone_id;
-				current.active_map_instance_count = route.active_map_instance_count;
-				current.active_player_count = route.active_player_count;
-				current.load_score = route.load_score;
-				current.flags = route.flags;
-				current.last_heartbeat_at = route.last_heartbeat_at;
-				return current;
+				return MakeZoneRouteInfo_(route);
 			}
+		}
+		return std::nullopt;
+	}
+
+	std::optional<ZoneRouteInfo> WorldRuntime::FindZoneRouteByServerChannel_(std::uint32_t zone_server_id, std::uint16_t channel_id) const
+	{
+		std::lock_guard lk(service_line_mtx_);
+		for (const auto& [_, route] : zone_routes_by_sid_) {
+			if (!route.registered) {
+				continue;
+			}
+			if (route.server_id != zone_server_id) {
+				continue;
+			}
+			if (channel_id != 0 && route.channel_id != channel_id) {
+				continue;
+			}
+			return MakeZoneRouteInfo_(route);
 		}
 		return std::nullopt;
 	}
 
 	bool WorldRuntime::SendZonePlayerEnter_(std::uint64_t trace_id, std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
 	{
-		auto route = FindZoneRouteByZoneId_(zone_id);
+		std::optional<ZoneRouteInfo> route;
+		if (const auto it = map_assignments_.find(MakeMapAssignmentKey_(map_template_id, instance_id)); it != map_assignments_.end()) {
+			route = FindZoneRouteByServerChannel_(it->second.zone_server_id, it->second.channel_id);
+		}
+		if (!route.has_value()) {
+			route = FindZoneRouteByZoneId_(zone_id);
+		}
 		if (!route.has_value()) {
 			return false;
 		}
@@ -414,7 +506,13 @@ namespace svr {
 
 	bool WorldRuntime::SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
 	{
-		auto route = FindZoneRouteByZoneId_(zone_id);
+		std::optional<ZoneRouteInfo> route;
+		if (const auto it = map_assignments_.find(MakeMapAssignmentKey_(map_template_id, instance_id)); it != map_assignments_.end()) {
+			route = FindZoneRouteByServerChannel_(it->second.zone_server_id, it->second.channel_id);
+		}
+		if (!route.has_value()) {
+			route = FindZoneRouteByZoneId_(zone_id);
+		}
 		if (!route.has_value()) {
 			return false;
 		}
@@ -452,7 +550,10 @@ namespace svr {
 			return result;
 		}
 
-		auto zone = TrySelectZoneRoute_(dungeon_instance);
+		auto zone = TrySelectZoneRouteForMap_(map_template_id, dungeon_instance);
+		if (!zone.has_value()) {
+			zone = TrySelectZoneRoute_(dungeon_instance);
+		}
 		if (!zone.has_value()) {
 			result.kind = AssignMapInstanceResultKind::NoZoneAvailable;
 			return result;
@@ -473,6 +574,7 @@ namespace svr {
 		pending.target_serial = zone->serial;
 		pending.target_zone_server_id = zone->zone_server_id;
 		pending.target_zone_id = zone->zone_id;
+		pending.target_channel_id = zone->channel_id;
 		pending.map_template_id = map_template_id;
 		pending.instance_id = instance_id;
 		pending.issued_at = std::chrono::steady_clock::now();
@@ -623,11 +725,21 @@ namespace svr {
 		route.flags = flags;
 		route.server_name.assign(server_name.begin(), server_name.end());
 		route.last_heartbeat_at = std::chrono::steady_clock::now();
+		route.served_map_ids.clear();
+		if (server_topology_.has_value()) {
+			if (const auto* topo = server_topology_->FindZoneProcess(server_id); topo != nullptr) {
+				route.zone_id = topo->logical_zone_id;
+				route.world_id = topo->world_id;
+				route.channel_id = topo->channel_id;
+				route.server_name = topo->server_name;
+				route.served_map_ids = topo->maps;
+			}
+		}
 
 		spdlog::info(
-			"[{}] sid={} serial={} server_id={} zone_id={} world_id={} channel_id={} active_maps={} active_players={} capacity={} load={} flags={} name={}",
+			"[{}] sid={} serial={} server_id={} zone_id={} world_id={} channel_id={} active_maps={} active_players={} capacity={} load={} flags={} name={} served_maps={}",
 			dc::logevt::world::kZoneRouteReg,
-			sid, serial, server_id, zone_id, world_id, channel_id, active_map_instance_count, active_player_count, map_instance_capacity, load_score, flags, server_name);
+			sid, serial, route.server_id, route.zone_id, route.world_id, route.channel_id, active_map_instance_count, active_player_count, map_instance_capacity, load_score, flags, route.server_name, fmt::join(route.served_map_ids, ","));
 	}
 
 
@@ -665,9 +777,18 @@ namespace svr {
 		route.load_score = load_score;
 		route.flags = flags;
 		route.last_heartbeat_at = std::chrono::steady_clock::now();
+		if (server_topology_.has_value()) {
+			if (const auto* topo = server_topology_->FindZoneProcess(server_id); topo != nullptr) {
+				route.zone_id = topo->logical_zone_id;
+				route.world_id = topo->world_id;
+				route.channel_id = topo->channel_id;
+				route.server_name = topo->server_name;
+				route.served_map_ids = topo->maps;
+			}
+		}
 
-		spdlog::debug("[{}] sid={} serial={} zone_id={} active_maps={} active_players={} load={} flags={}",
-			dc::logevt::world::kZoneRouteHb, sid, serial, zone_id, active_map_instance_count, active_player_count, load_score, flags);
+		spdlog::debug("[{}] sid={} serial={} zone_id={} channel_id={} active_maps={} active_players={} load={} flags={} served_maps={}",
+			dc::logevt::world::kZoneRouteHb, sid, serial, route.zone_id, route.channel_id, active_map_instance_count, active_player_count, load_score, flags, fmt::join(route.served_map_ids, ","));
 	}
 
 

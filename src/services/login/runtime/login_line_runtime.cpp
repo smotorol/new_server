@@ -16,6 +16,7 @@
 #include "proto/common/protobuf_packet_codec.h"
 #include "server_common/runtime/line_client_start_helper.h"
 #include "server_common/runtime/line_start_helper.h"
+#include "server_common/config/runtime_config_path.h"
 #include "server_common/session/session_key.h"
 #include "server_common/log/flow_event_codes.h"
 #include "server_common/log/enter_flow_log.h"
@@ -542,10 +543,13 @@ bool LoginLineRuntime::IssueCharacterSelectRequest(
 	bool LoginLineRuntime::LoadIniFile_()
 	{
 		namespace fs = std::filesystem;
-		const fs::path cwd = fs::current_path();
-		fs::path ini_path = cwd / "docs" / "LoginSystem.ini";
-		if (!fs::exists(ini_path)) ini_path = cwd / "Initialize" / "LoginSystem.ini";
-		if (!fs::exists(ini_path)) ini_path = cwd / "LoginSystem.ini";
+		fs::path ini_path = ::dc::cfg::ResolveRuntimeConfigPath(
+			"DC_LOGIN_CONFIG_PATH",
+			{
+				fs::path("docs") / "LoginSystem.ini",
+				fs::path("Initialize") / "LoginSystem.ini",
+				fs::path("LoginSystem.ini"),
+			});
 		std::ifstream is(ini_path, std::ios::in | std::ios::binary);
 		if (!is) {
 			spdlog::warn("LoginLineRuntime INI open failed: {}", ini_path.string());

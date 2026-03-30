@@ -29,3 +29,5 @@
 /tools/DummyClientWinForms/obj/Release
 /tools/DummyClientWinForms/obj
 /tools/DummyClientWinForms/.vs
+/out
+/tools/DummyClientWinForms/bin

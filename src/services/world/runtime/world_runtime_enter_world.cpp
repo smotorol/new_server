@@ -1,9 +1,20 @@
 #include "services/world/runtime/world_runtime_private.h"
 #include "services/world/db/item_template_repository.h"
+#include "services/world/handler/world_handler.h"
+#include "proto/common/protobuf_packet_codec.h"
 #include <fmt/format.h>
+#include <limits>
 #include "server_common/log/enter_flow_log.h"
 #include "server_common/log/flow_event_codes.h"
 #include "services/world/common/string_utils.h"
+#include "services/world/zone_loader/zone_content_catalog.h"
+
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+#include "proto/generated/cpp/client_world.pb.h"
+#define DC_WORLD_CLIENT_PROTOBUF 1
+#else
+#define DC_WORLD_CLIENT_PROTOBUF 0
+#endif
 
 namespace svr {
 
@@ -24,6 +35,83 @@ namespace svr {
 			default:
 				return pt_w::EnterWorldResultCode::internal_error;
 			}
+		}
+
+		void SendEnterPlayerSpawn_(
+			WorldHandler& handler,
+			std::uint32_t dwProID,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id,
+			std::int32_t x,
+			std::int32_t y)
+		{
+#if DC_WORLD_CLIENT_PROTOBUF
+			if (handler.IsSessionProtoMode(sid, serial)) {
+				dc::proto::client::world::PlayerSpawn msg;
+				msg.set_char_id(char_id);
+				msg.set_x(x);
+				msg.set_y(y);
+				std::vector<char> framed;
+				if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn), msg, framed)) {
+					_MSG_HEADER header{};
+					std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+					handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+					return;
+				}
+			}
+#endif
+
+			proto::S2C_player_spawn legacy{};
+			legacy.char_id = char_id;
+			legacy.x = x;
+			legacy.y = y;
+			const auto h = proto::make_header(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn), static_cast<std::uint16_t>(sizeof(legacy)));
+			handler.Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&legacy));
+		}
+
+		void SendEnterPlayerSpawnBatch_(
+			WorldHandler& handler,
+			std::uint32_t dwProID,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			const std::vector<proto::S2C_player_spawn_item>& spawn_items)
+		{
+			if (spawn_items.empty()) {
+				return;
+			}
+
+#if DC_WORLD_CLIENT_PROTOBUF
+			if (handler.IsSessionProtoMode(sid, serial)) {
+				dc::proto::client::world::PlayerSpawnBatch msg;
+				for (const auto& item : spawn_items) {
+					auto* out = msg.add_items();
+					out->set_char_id(item.char_id);
+					out->set_x(item.x);
+					out->set_y(item.y);
+				}
+				std::vector<char> framed;
+				if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn_batch), msg, framed)) {
+					_MSG_HEADER header{};
+					std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+					handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+					return;
+				}
+			}
+#endif
+
+			const auto count = static_cast<std::uint16_t>(std::min<std::size_t>(spawn_items.size(), std::numeric_limits<std::uint16_t>::max()));
+			const std::size_t body_size =
+				sizeof(proto::S2C_player_spawn_batch) +
+				(count > 0 ? (static_cast<std::size_t>(count) - 1) * sizeof(proto::S2C_player_spawn_item) : 0);
+			std::vector<char> body(body_size);
+			auto* pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(body.data());
+			pkt->count = count;
+			for (std::size_t i = 0; i < count; ++i) {
+				pkt->items[i] = spawn_items[i];
+			}
+			auto h = proto::make_header(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn_batch), static_cast<std::uint16_t>(body_size));
+			handler.Send(dwProID, sid, serial, h, body.data());
 		}
 	}
 
@@ -260,6 +348,65 @@ namespace svr {
 			PostActor(svr::MakeZoneActorId(a.GetZoneId()), [this, char_id, sid, serial, assigned_zone_id, start_pos]() {
 				auto& z = GetOrCreateZoneActor(assigned_zone_id);
 				z.JoinOrUpdate(char_id, start_pos, sid, serial);
+
+				auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+				if (!handler) {
+					return;
+				}
+
+				std::vector<proto::S2C_player_spawn_item> initial_spawn_items;
+				std::vector<std::pair<std::uint32_t, std::uint32_t>> remote_receivers;
+				if (const auto self_it = z.players.find(char_id); self_it != z.players.end()) {
+					auto visible_ids = z.GatherNeighborsVec(self_it->second.cx, self_it->second.cy);
+					visible_ids.erase(
+						std::remove(visible_ids.begin(), visible_ids.end(), char_id),
+						visible_ids.end());
+					for (const auto other_char_id : visible_ids) {
+						auto it = z.players.find(other_char_id);
+						if (it == z.players.end()) {
+							continue;
+						}
+
+						proto::S2C_player_spawn_item item{};
+						item.char_id = other_char_id;
+						item.x = it->second.pos.x;
+						item.y = it->second.pos.y;
+						initial_spawn_items.push_back(item);
+
+						if (it->second.sid != 0 && it->second.serial != 0) {
+							remote_receivers.emplace_back(it->second.sid, it->second.serial);
+						}
+					}
+				}
+
+				if (!initial_spawn_items.empty()) {
+					SendEnterPlayerSpawnBatch_(
+						*handler,
+						0,
+						sid,
+						serial,
+						initial_spawn_items);
+				}
+
+				for (const auto& [other_sid, other_serial] : remote_receivers) {
+					SendEnterPlayerSpawn_(
+						*handler,
+						0,
+						other_sid,
+						other_serial,
+						char_id,
+						start_pos.x,
+						start_pos.y);
+				}
+
+				spdlog::info(
+					"enter initial aoi sync sent. char_id={} sid={} serial={} zone_id={} spawn_batch_count={} remote_spawn_notify_count={}",
+					char_id,
+					sid,
+					serial,
+					assigned_zone_id,
+					initial_spawn_items.size(),
+					remote_receivers.size());
 			});
 		});
 
@@ -342,6 +489,21 @@ namespace svr {
 			core_state.hot.position.x,
 			core_state.hot.position.y,
 			proto::ZoneMapStateReason::enter_success);
+
+		if (const auto content = svr::zonecontent::Find(assigned_zone_id, map_template_id); content.has_value()) {
+			spdlog::info(
+				"enter world content ready. char_id={} zone_id={} map_id={} wm_present={} portals={} npcs={} monsters={} safe={} special={} dir={}",
+				pending.char_id,
+				assigned_zone_id,
+				map_template_id,
+				std::filesystem::exists(content->map_wm_path) ? 1 : 0,
+				content->portal_count,
+				content->npc_count,
+				content->monster_count,
+				content->safe_count,
+				content->special_count,
+				content->directory.string());
+		}
 	}
 
 	bool WorldRuntime::RequestCharacterEnterSnapshotLoad_(

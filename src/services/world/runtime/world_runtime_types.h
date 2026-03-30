@@ -1,8 +1,9 @@
-#pragma once
+﻿#pragma once
 
+#include <chrono>
 #include <cstdint>
 #include <string>
-#include <chrono>
+#include <vector>
 
 #include "services/world/common/character_core_state.h"
 #include "services/world/runtime/world_session_types.h"
@@ -34,6 +35,7 @@ namespace svr {
 		std::uint16_t load_score = 0;
 		std::uint32_t flags = 0;
 		std::string server_name;
+		std::vector<std::uint32_t> served_map_ids;
 		std::chrono::steady_clock::time_point last_heartbeat_at{};
 	};
 
@@ -43,10 +45,12 @@ namespace svr {
 		std::uint32_t serial = 0;
 		std::uint32_t zone_server_id = 0;
 		std::uint16_t zone_id = 0;
+		std::uint16_t channel_id = 0;
 		std::uint16_t active_map_instance_count = 0;
 		std::uint16_t active_player_count = 0;
 		std::uint16_t load_score = 0;
 		std::uint32_t flags = 0;
+		std::vector<std::uint32_t> served_map_ids;
 		std::chrono::steady_clock::time_point last_heartbeat_at{};
 	};
 
@@ -54,6 +58,7 @@ namespace svr {
 	{
 		std::uint32_t zone_server_id = 0;
 		std::uint16_t zone_id = 0;
+		std::uint16_t channel_id = 0;
 		std::uint32_t map_template_id = 0;
 		std::uint32_t instance_id = 0;
 	};
@@ -67,6 +72,7 @@ namespace svr {
 		std::uint32_t target_serial = 0;
 		std::uint32_t target_zone_server_id = 0;
 		std::uint16_t target_zone_id = 0;
+		std::uint16_t target_channel_id = 0;
 		std::uint32_t map_template_id = 0;
 		std::uint32_t instance_id = 0;
 		std::chrono::steady_clock::time_point issued_at{};
@@ -115,3 +121,5 @@ namespace svr {
 		std::uint32_t instance_id = 0;
 	};
 } // namespace svr
+
+

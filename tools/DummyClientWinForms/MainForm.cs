@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
@@ -158,8 +158,25 @@ namespace DummyClientWinForms
 
             if (_lastMonsterId == 0)
             {
-                await SendWorldPacketAsync(ClientProtocol.SpawnMonster, ClientProtocol.BuildSpawnMonster(0));
-                AppendLog("spawn_monster requested for attack probe");
+                var monsterTemplateId = 0;
+                if (!string.IsNullOrWhiteSpace(_selectedObjectId))
+                {
+                    WorldObject selectedObject = null;
+                    if (!_state.LiveObjects.TryGetValue(_selectedObjectId, out selectedObject))
+                    {
+                        selectedObject = _state.StaticObjects.FirstOrDefault(o => o.Id == _selectedObjectId);
+                    }
+
+                    if (selectedObject is MonsterObject monster)
+                    {
+                        monsterTemplateId = Math.Max(0, monster.MonsterTemplateMin);
+                    }
+                }
+
+                await SendWorldPacketAsync(ClientProtocol.SpawnMonster, ClientProtocol.BuildSpawnMonster((uint)monsterTemplateId));
+                AppendLog(monsterTemplateId > 0
+                    ? $"spawn_monster requested using overlay template={monsterTemplateId}"
+                    : "spawn_monster requested for attack probe");
                 return;
             }
             await SendWorldPacketAsync(ClientProtocol.AttackMonster, ClientProtocol.BuildAttackMonster(_lastMonsterId));
@@ -549,21 +566,30 @@ namespace DummyClientWinForms
                     break;
                 case ClientProtocol.PlayerSpawn:
                     UpsertPlayer(ClientProtocol.ParsePlayerSpawn(body, _state.SelectedCharId));
+                    AppendLog($"player_spawn live_objects={_state.LiveObjects.Count}");
                     break;
                 case ClientProtocol.PlayerMove:
                     UpsertPlayer(ClientProtocol.ParsePlayerMove(body, _state.SelectedCharId));
+                    AppendLog($"player_move live_objects={_state.LiveObjects.Count}");
                     break;
                 case ClientProtocol.PlayerSpawnBatch:
-                    foreach (var p in ClientProtocol.ParsePlayerSpawnBatch(body, _state.SelectedCharId)) UpsertPlayer(p);
+                    var spawnBatch = ClientProtocol.ParsePlayerSpawnBatch(body, _state.SelectedCharId);
+                    foreach (var p in spawnBatch) UpsertPlayer(p);
+                    AppendLog($"player_spawn_batch count={spawnBatch.Count} live_objects={_state.LiveObjects.Count}");
                     break;
                 case ClientProtocol.PlayerMoveBatch:
-                    foreach (var p in ClientProtocol.ParsePlayerMoveBatch(body, _state.SelectedCharId)) UpsertPlayer(p);
+                    var moveBatch = ClientProtocol.ParsePlayerMoveBatch(body, _state.SelectedCharId);
+                    foreach (var p in moveBatch) UpsertPlayer(p);
+                    AppendLog($"player_move_batch count={moveBatch.Count} live_objects={_state.LiveObjects.Count}");
                     break;
                 case ClientProtocol.PlayerDespawn:
                     RemovePlayer(ClientProtocol.ParsePlayerDespawn(body));
+                    AppendLog($"player_despawn live_objects={_state.LiveObjects.Count}");
                     break;
                 case ClientProtocol.PlayerDespawnBatch:
-                    foreach (var id in ClientProtocol.ParsePlayerDespawnBatch(body)) RemovePlayer(id);
+                    var despawnBatch = ClientProtocol.ParsePlayerDespawnBatch(body);
+                    foreach (var id in despawnBatch) RemovePlayer(id);
+                    AppendLog($"player_despawn_batch count={despawnBatch.Count} live_objects={_state.LiveObjects.Count}");
                     break;
                 default:
                     AppendLog($"unknown world packet type={type} size={body.Length}");
@@ -783,6 +809,7 @@ namespace DummyClientWinForms
         }
     }
 }
+
 
 
 

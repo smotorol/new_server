@@ -2,6 +2,7 @@
 #include <cstdlib>
 #include "server_common/data/zone_runtime_data.h"
 #include "server_common/config/aoi_config.h"
+#include "services/world/zone_loader/zone_content_catalog.h"
 #include <thread>
 
 namespace svr {
@@ -50,6 +51,26 @@ namespace svr {
         else {
             auto zone_status = dc::zone::ZoneRuntimeDataStore::SnapshotStatus();
             spdlog::info("Zone runtime binary ready. source={} version={} maps={} portals={} npcs={} monsters={} ready={} empty={}", zone_status.source, zone_status.version, zone_status.preload_count, zone_status.portal_count, zone_status.npc_count, zone_status.monster_count, zone_status.ready ? 1 : 0, zone_status.empty ? 1 : 0);
+        }
+
+        if (!svr::zonecontent::LoadCatalog()) {
+            spdlog::warn("Zone content catalog load failed or empty. root={}", svr::zonecontent::DefaultResourcesRoot().string());
+        }
+        else {
+            const auto entries = svr::zonecontent::Snapshot();
+            for (const auto& entry : entries) {
+                spdlog::info(
+                    "Zone content catalog entry ready. zone_id={} map_id={} wm_present={} portals={} npcs={} monsters={} safe={} special={} dir={}",
+                    entry.zone_id,
+                    entry.map_id,
+                    std::filesystem::exists(entry.map_wm_path) ? 1 : 0,
+                    entry.portal_count,
+                    entry.npc_count,
+                    entry.monster_count,
+                    entry.safe_count,
+                    entry.special_count,
+                    entry.directory.string());
+            }
         }
 
 		if (!InitRedis()) {
@@ -415,7 +436,6 @@ namespace svr {
 		}
 
 } // namespace svr
-
 
 
 

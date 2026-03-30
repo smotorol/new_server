@@ -25,6 +25,7 @@
 #include "services/account/handler/account_world_handler.h"
 #include "services/world/runtime/i_world_runtime.h"
 #include "proto/internal/account_world_proto.h"
+#include "server_common/config/runtime_config_path.h"
 #include "server_common/log/flow_event_codes.h"
 #include "server_common/log/enter_flow_log.h"
 
@@ -76,12 +77,20 @@ namespace {
 	std::filesystem::path FindIniPath_(const char* file_name)
 	{
 		namespace fs = std::filesystem;
-		const fs::path cwd = fs::current_path();
-		const fs::path candidates[] = {
-			cwd / "Initialize" / file_name,
-		};
-		for (const auto& p : candidates) { if (fs::exists(p)) return p; }
-		return cwd / "Initialize" / file_name;
+		if (std::string_view(file_name) == "AccountSystem.ini") {
+			return ::dc::cfg::ResolveRuntimeConfigPath(
+				"DC_ACCOUNT_CONFIG_PATH",
+				{
+					fs::path("Initialize") / file_name,
+					fs::path(file_name),
+				});
+		}
+		return ::dc::cfg::ResolveRuntimeConfigPath(
+			nullptr,
+			{
+				fs::path("Initialize") / file_name,
+				fs::path(file_name),
+			});
 	}
 
 	std::string ToHexToken_(std::uint64_t a, std::uint64_t b)
@@ -1796,4 +1805,4 @@ namespace dc {
 
 
 
-
+#include "server_common/config/runtime_config_path.h"

@@ -1,9 +1,10 @@
-#include "services/world/runtime/world_runtime_private.h"
+﻿#include "services/world/runtime/world_runtime_private.h"
 #include "server_common/session/session_key.h"
 #include "server_common/config/aoi_config.h"
 #include "server_common/config/runtime_ini_schema.h"
 #include "server_common/config/runtime_ini_sanity.h"
 #include "server_common/config/runtime_ini_version.h"
+#include "server_common/config/runtime_config_path.h"
 #include "server_common/log/flow_event_codes.h"
 
 namespace svr {
@@ -65,8 +66,13 @@ namespace svr {
 	bool WorldRuntime::LoadIniFile()
 	{
 		namespace fs = std::filesystem;
-		const fs::path cwd = fs::current_path();
-		fs::path ini_path = cwd / "Initialize" / "WorldSystem.ini";
+		fs::path ini_path = dc::cfg::ResolveRuntimeConfigPath(
+			"DC_WORLD_CONFIG_PATH",
+			{
+				fs::path("Initialize") / "WorldSystem.ini",
+				fs::path("docs") / "WorldSystem.ini",
+				fs::path("WorldSystem.ini"),
+			});
 
 		std::ifstream is(ini_path, std::ios::in | std::ios::binary);
 		if (!is) {
@@ -350,6 +356,8 @@ namespace svr {
 
 		spdlog::info("World: name='{}' addr='{}'",
 			name_utf8_, host_);
+
+		LoadServerTopology_();
 
 		return true;
 	}
@@ -686,3 +694,4 @@ namespace svr {
 		return sent;
 	}
 } // namespace svr
+

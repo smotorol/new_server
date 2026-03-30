@@ -1,10 +1,19 @@
 #include "services/world/runtime/world_runtime_private.h"
+#include "services/world/handler/world_handler.h"
+#include "proto/common/protobuf_packet_codec.h"
 #include "services/world/common/string_utils.h"
 #include "services/world/metrics/world_metrics.h"
 #include "server_common/log/enter_flow_log.h"
 #include "server_common/session/session_key.h"
 #include <array>
 #include <random>
+
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+#include "proto/generated/cpp/client_world.pb.h"
+#define DC_WORLD_CLIENT_PROTOBUF 1
+#else
+#define DC_WORLD_CLIENT_PROTOBUF 0
+#endif
 
 namespace {
 
@@ -27,6 +36,33 @@ namespace {
 			out[i * 2 + 1] = kHex[bytes[i] & 0x0f];
 		}
 		return out;
+	}
+
+	void SendLeavePlayerDespawn_(
+		WorldHandler& handler,
+		std::uint32_t dwProID,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id)
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (handler.IsSessionProtoMode(sid, serial)) {
+			dc::proto::client::world::PlayerDespawn msg;
+			msg.set_char_id(char_id);
+			std::vector<char> framed;
+			if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::player_despawn), msg, framed)) {
+				_MSG_HEADER header{};
+				std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+				handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+				return;
+			}
+		}
+#endif
+
+		proto::S2C_player_despawn legacy{};
+		legacy.char_id = char_id;
+		const auto h = proto::make_header(static_cast<std::uint16_t>(proto::S2CMsg::player_despawn), static_cast<std::uint16_t>(sizeof(legacy)));
+		handler.Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&legacy));
 	}
 
 } // namespace
@@ -940,7 +976,37 @@ namespace svr {
 					svr::MakeZoneActorId(ctx.zone_id),
 					[this, char_id = ctx.char_id, zone_id = ctx.zone_id]() {
 					auto& z = GetOrCreateZoneActor(zone_id);
+					std::vector<std::pair<std::uint32_t, std::uint32_t>> receivers;
+					if (const auto self_it = z.players.find(char_id); self_it != z.players.end()) {
+						auto visible_ids = z.GatherNeighborsVec(self_it->second.cx, self_it->second.cy);
+						visible_ids.erase(
+							std::remove(visible_ids.begin(), visible_ids.end(), char_id),
+							visible_ids.end());
+						for (const auto other_char_id : visible_ids) {
+							auto it = z.players.find(other_char_id);
+							if (it == z.players.end()) {
+								continue;
+							}
+							if (it->second.sid != 0 && it->second.serial != 0) {
+								receivers.emplace_back(it->second.sid, it->second.serial);
+							}
+						}
+					}
+
 					z.Leave(char_id);
+
+					auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+					if (handler) {
+						for (const auto& [sid, serial] : receivers) {
+							SendLeavePlayerDespawn_(*handler, 0, sid, serial, char_id);
+						}
+					}
+
+					spdlog::info(
+						"leave world despawn sync sent. char_id={} zone_id={} receiver_count={}",
+						char_id,
+						zone_id,
+						receivers.size());
 				});
 			}
 

@@ -1,7 +1,16 @@
 #include "services/zone/runtime/zone_runtime.h"
 
+#include <algorithm>
+#include <fstream>
+#include <sstream>
+
+#include <fmt/format.h>
+#include <fmt/ranges.h>
 #include <spdlog/spdlog.h>
 
+#include <inipp/inipp.h>
+
+#include "server_common/config/runtime_config_path.h"
 #include "server_common/data/zone_runtime_data.h"
 #include "server_common/session/session_key.h"
 #include "services/zone/handler/zone_world_handler.h"
@@ -25,20 +34,105 @@ std::uint16_t ZoneRuntime::GetActivePlayerCount() const noexcept { return active
 
 bool ZoneRuntime::OnRuntimeInit()
 {
+    if (!LoadIniFile_()) {
+        spdlog::warn("ZoneRuntime failed to load ini. continuing with defaults.");
+    }
+
     if (!dc::zone::ZoneRuntimeDataStore::LoadFromBinary(dc::zone::DefaultZoneRuntimeBinaryPath())) {
         auto status = dc::zone::ZoneRuntimeDataStore::SnapshotStatus();
         spdlog::warn("ZoneRuntime binary load failed. source={} reason={}", status.source, status.last_error_reason);
     } else {
         auto status = dc::zone::ZoneRuntimeDataStore::SnapshotStatus();
         std::size_t prewarmed = 0;
-        for (const auto& map : dc::zone::ZoneRuntimeDataStore::GetMapRecords(zone_id_)) {
-            EnsureMapInstance_(map.map_id, 0, true, false);
-            ++prewarmed;
+        if (!served_map_ids_.empty()) {
+            for (const auto map_id : served_map_ids_) {
+                if (!ValidateZoneMapRuntimeData_(map_id)) {
+                    continue;
+                }
+                EnsureMapInstance_(map_id, 0, true, false);
+                ++prewarmed;
+            }
         }
-        spdlog::info("ZoneRuntime binary ready. source={} version={} maps={} portals={} npcs={} monsters={} safe={} special={} prewarmed_maps={} zone_id={}",
-            status.source, status.version, status.preload_count, status.portal_count, status.npc_count, status.monster_count, status.safe_count, status.special_count, prewarmed, zone_id_);
+        else {
+            for (const auto& map : dc::zone::ZoneRuntimeDataStore::GetMapRecords(zone_id_)) {
+                EnsureMapInstance_(map.map_id, 0, true, false);
+                ++prewarmed;
+            }
+        }
+        spdlog::info("ZoneRuntime binary ready. source={} version={} maps={} portals={} npcs={} monsters={} safe={} special={} prewarmed_maps={} logical_zone_id={} served_maps={}",
+            status.source, status.version, status.preload_count, status.portal_count, status.npc_count, status.monster_count, status.safe_count, status.special_count, prewarmed, zone_id_, fmt::join(served_map_ids_, ","));
     }
     return NetworkInit_();
+}
+
+bool ZoneRuntime::LoadIniFile_()
+{
+    namespace fs = std::filesystem;
+    const auto ini_path = dc::cfg::ResolveRuntimeConfigPath(
+        "DC_ZONE_CONFIG_PATH",
+        {
+            fs::path("Initialize") / "ZoneSystem.ini",
+            fs::path("config") / "zone_server.ini",
+            fs::path("ZoneSystem.ini"),
+        });
+
+    std::ifstream is(ini_path, std::ios::in | std::ios::binary);
+    if (!is) {
+        spdlog::warn("ZoneRuntime INI open failed: {}", ini_path.string());
+        return false;
+    }
+
+    inipp::Ini<char> ini;
+    ini.parse(is);
+
+    if (!ini.sections["System"]["ServerName"].empty()) {
+        server_name_ = ini.sections["System"]["ServerName"];
+    }
+    if (!ini.sections["System"]["ZoneServerId"].empty()) {
+        zone_server_id_ = static_cast<std::uint32_t>(std::stoul(ini.sections["System"]["ZoneServerId"]));
+    }
+    if (!ini.sections["System"]["ZoneId"].empty()) {
+        zone_id_ = static_cast<std::uint16_t>(std::stoul(ini.sections["System"]["ZoneId"]));
+    }
+    if (!ini.sections["System"]["WorldId"].empty()) {
+        world_id_ = static_cast<std::uint16_t>(std::stoul(ini.sections["System"]["WorldId"]));
+    }
+    if (!ini.sections["System"]["ChannelId"].empty()) {
+        channel_id_ = static_cast<std::uint16_t>(std::stoul(ini.sections["System"]["ChannelId"]));
+    }
+    if (!ini.sections["World"]["Host"].empty()) {
+        world_host_ = ini.sections["World"]["Host"];
+    }
+    if (!ini.sections["World"]["Port"].empty()) {
+        world_port_ = static_cast<std::uint16_t>(std::stoul(ini.sections["World"]["Port"]));
+    }
+    if (!ini.sections["Capacity"]["MapInstanceCapacity"].empty()) {
+        map_instance_capacity_ = static_cast<std::uint16_t>(std::stoul(ini.sections["Capacity"]["MapInstanceCapacity"]));
+    }
+    if (!ini.sections["Maps"]["ServedMaps"].empty()) {
+        served_map_ids_.clear();
+        std::stringstream ss(ini.sections["Maps"]["ServedMaps"]);
+        std::string item;
+        while (std::getline(ss, item, ',')) {
+            if (item.empty()) {
+                continue;
+            }
+            served_map_ids_.push_back(static_cast<std::uint32_t>(std::stoul(item)));
+        }
+        std::sort(served_map_ids_.begin(), served_map_ids_.end());
+        served_map_ids_.erase(std::unique(served_map_ids_.begin(), served_map_ids_.end()), served_map_ids_.end());
+    }
+
+    spdlog::info(
+        "ZoneRuntime INI loaded. file={} server_id={} logical_zone_id={} channel_id={} world_remote={}:{} served_maps={}",
+        ini_path.string(),
+        zone_server_id_,
+        zone_id_,
+        channel_id_,
+        world_host_,
+        world_port_,
+        fmt::join(served_map_ids_, ","));
+    return true;
 }
 
 void ZoneRuntime::OnBeforeIoStop() {}
@@ -120,7 +214,7 @@ void ZoneRuntime::OnMapAssignRequest(std::uint32_t sid, std::uint32_t serial, co
     }
     if (!ValidateZoneMapRuntimeData_(req.map_template_id)) {
         handler->SendMapAssignResponse(0, sid, serial, req.trace_id, req.request_id,
-            static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::not_found), zone_id_, req.map_template_id, req.instance_id);
+            static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::not_found), ResolveGameplayZoneId_(req.map_template_id), req.map_template_id, req.instance_id);
         return;
     }
 
@@ -129,19 +223,19 @@ void ZoneRuntime::OnMapAssignRequest(std::uint32_t sid, std::uint32_t serial, co
 
     if (!exists_before && req.create_if_missing == 0) {
         handler->SendMapAssignResponse(0, sid, serial, req.trace_id, req.request_id,
-            static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::not_found), zone_id_, req.map_template_id, req.instance_id);
+            static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::not_found), ResolveGameplayZoneId_(req.map_template_id), req.map_template_id, req.instance_id);
         return;
     }
 
     if (!exists_before && req.create_if_missing != 0 && map_instances_.size() >= static_cast<std::size_t>(map_instance_capacity_)) {
         handler->SendMapAssignResponse(0, sid, serial, req.trace_id, req.request_id,
-            static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::capacity_full), zone_id_, req.map_template_id, req.instance_id);
+            static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::capacity_full), ResolveGameplayZoneId_(req.map_template_id), req.map_template_id, req.instance_id);
         return;
     }
 
     EnsureMapInstance_(req.map_template_id, req.instance_id, req.create_if_missing != 0, req.dungeon_instance != 0);
     handler->SendMapAssignResponse(0, sid, serial, req.trace_id, req.request_id,
-        static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::ok), zone_id_, req.map_template_id, req.instance_id);
+        static_cast<std::uint16_t>(pt_wz::ZoneMapAssignResultCode::ok), ResolveGameplayZoneId_(req.map_template_id), req.map_template_id, req.instance_id);
 }
 
 void ZoneRuntime::EnsureMapInstance_(std::uint32_t map_template_id, std::uint32_t instance_id, bool create_if_missing, bool dungeon_instance)
@@ -176,7 +270,7 @@ void ZoneRuntime::OnPlayerEnterRequest_(std::uint32_t sid, std::uint32_t serial,
     auto it = map_instances_.find(key);
     if (it == map_instances_.end()) {
         handler->SendPlayerEnterAck(0, sid, serial, req.trace_id, req.request_id,
-            static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::map_not_found), zone_id_, req.char_id, req.map_template_id, req.instance_id);
+            static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::map_not_found), ResolveGameplayZoneId_(req.map_template_id), req.char_id, req.map_template_id, req.instance_id);
         return;
     }
 
@@ -185,7 +279,7 @@ void ZoneRuntime::OnPlayerEnterRequest_(std::uint32_t sid, std::uint32_t serial,
         if (bind_it->second.map_key == key) {
             it->second.last_access_at = std::chrono::steady_clock::now();
             handler->SendPlayerEnterAck(0, sid, serial, req.trace_id, req.request_id,
-                static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok), zone_id_, req.char_id, req.map_template_id, req.instance_id);
+                static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok), ResolveGameplayZoneId_(req.map_template_id), req.char_id, req.map_template_id, req.instance_id);
             return;
         }
         auto old_it = map_instances_.find(bind_it->second.map_key);
@@ -202,7 +296,7 @@ void ZoneRuntime::OnPlayerEnterRequest_(std::uint32_t sid, std::uint32_t serial,
     LogZoneRegionSummary_(req.map_template_id, 0, 0);
 
     handler->SendPlayerEnterAck(0, sid, serial, req.trace_id, req.request_id,
-        static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok), zone_id_, req.char_id, req.map_template_id, req.instance_id);
+        static_cast<std::uint16_t>(pt_wz::ZonePlayerEnterResultCode::ok), ResolveGameplayZoneId_(req.map_template_id), req.char_id, req.map_template_id, req.instance_id);
 }
 
 void ZoneRuntime::OnPlayerLeaveRequest_(std::uint32_t, std::uint32_t, const pt_wz::WorldZonePlayerLeave& req)
@@ -253,22 +347,43 @@ void ZoneRuntime::RefreshMetrics_()
 
 bool ZoneRuntime::ValidateZoneMapRuntimeData_(std::uint32_t map_template_id) const
 {
-    if (!dc::zone::ZoneRuntimeDataStore::HasMap(zone_id_, map_template_id)) {
-        spdlog::warn("ZoneRuntime map validation failed. zone_id={} map_template_id={} source={}",
-            zone_id_, map_template_id, dc::zone::ZoneRuntimeDataStore::SnapshotStatus().source);
+    if (!OwnsMapTemplate_(map_template_id)) {
+        spdlog::warn("ZoneRuntime map validation failed. logical_zone_id={} map_template_id={} reason=not_served_by_process",
+            zone_id_, map_template_id);
+        return false;
+    }
+
+    const auto gameplay_zone_id = ResolveGameplayZoneId_(map_template_id);
+    if (!dc::zone::ZoneRuntimeDataStore::HasMap(gameplay_zone_id, map_template_id)) {
+        spdlog::warn("ZoneRuntime map validation failed. logical_zone_id={} gameplay_zone_id={} map_template_id={} source={}",
+            zone_id_, gameplay_zone_id, map_template_id, dc::zone::ZoneRuntimeDataStore::SnapshotStatus().source);
         return false;
     }
     return true;
 }
 
+bool ZoneRuntime::OwnsMapTemplate_(std::uint32_t map_template_id) const noexcept
+{
+    if (served_map_ids_.empty()) {
+        return true;
+    }
+    return std::find(served_map_ids_.begin(), served_map_ids_.end(), map_template_id) != served_map_ids_.end();
+}
+
+std::uint16_t ZoneRuntime::ResolveGameplayZoneId_(std::uint32_t map_template_id) const noexcept
+{
+    return static_cast<std::uint16_t>(map_template_id == 0 ? zone_id_ : map_template_id);
+}
+
 void ZoneRuntime::LogZoneRegionSummary_(std::uint32_t map_template_id, std::int32_t x, std::int32_t y) const
 {
-    const auto* safe = dc::zone::ZoneRuntimeDataStore::FindSafeRegion(zone_id_, map_template_id, x, y);
-    const auto* special = dc::zone::ZoneRuntimeDataStore::FindSpecialRegion(zone_id_, map_template_id, x, y);
-    const auto npc_count = dc::zone::ZoneRuntimeDataStore::GetNpcRegions(zone_id_, map_template_id).size();
-    const auto monster_count = dc::zone::ZoneRuntimeDataStore::GetMonsterRegions(zone_id_, map_template_id).size();
-    spdlog::debug("ZoneRuntime region summary. zone_id={} map_template_id={} pos=({}, {}) safe={} special={} npc_regions={} monster_regions={}",
-        zone_id_, map_template_id, x, y, safe != nullptr ? 1 : 0, special != nullptr ? 1 : 0, npc_count, monster_count);
+    const auto gameplay_zone_id = ResolveGameplayZoneId_(map_template_id);
+    const auto* safe = dc::zone::ZoneRuntimeDataStore::FindSafeRegion(gameplay_zone_id, map_template_id, x, y);
+    const auto* special = dc::zone::ZoneRuntimeDataStore::FindSpecialRegion(gameplay_zone_id, map_template_id, x, y);
+    const auto npc_count = dc::zone::ZoneRuntimeDataStore::GetNpcRegions(gameplay_zone_id, map_template_id).size();
+    const auto monster_count = dc::zone::ZoneRuntimeDataStore::GetMonsterRegions(gameplay_zone_id, map_template_id).size();
+    spdlog::debug("ZoneRuntime region summary. logical_zone_id={} gameplay_zone_id={} map_template_id={} pos=({}, {}) safe={} special={} npc_regions={} monster_regions={}",
+        zone_id_, gameplay_zone_id, map_template_id, x, y, safe != nullptr ? 1 : 0, special != nullptr ? 1 : 0, npc_count, monster_count);
 }
 
 std::uint64_t ZoneRuntime::MakeMapInstanceKey_(std::uint32_t map_template_id, std::uint32_t instance_id) noexcept

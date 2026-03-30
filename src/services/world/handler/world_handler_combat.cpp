@@ -7,6 +7,7 @@
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
 #include "proto/common/protobuf_packet_codec.h"
+#include "server_common/data/zone_runtime_data.h"
 #include "server_common/session/session_key.h"
 #include "services/world/actors/world_actors.h"
 
@@ -76,6 +77,11 @@ bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t
 	auto& attacker = runtime().GetOrCreatePlayerActor(attacker_id);
 	const std::uint32_t attacker_atk = attacker.GetAttack();
 	const std::uint32_t zone_id = attacker.GetZoneId();
+	if (dc::zone::ZoneRuntimeDataStore::FindSafeRegion(zone_id, attacker.GetMapId(), attacker.GetPosition().x, attacker.GetPosition().y) != nullptr) {
+		spdlog::info("attack_monster blocked in safe zone. char_id={} zone_id={} map_id={} pos=({}, {})",
+			attacker_id, zone_id, attacker.GetMapId(), attacker.GetPosition().x, attacker.GetPosition().y);
+		return true;
+	}
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (!dc::IsValidSessionKey(sid, serial)) return true;
 	SetSessionProtoMode(sid, serial, use_protobuf || IsSessionProtoMode(sid, serial));
@@ -163,6 +169,13 @@ bool WorldHandler::HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t 
 
 	std::uint64_t attacker_id = 0;
 	if (!ResolveAuthenticatedCharIdOrReject_("attack_player", sid, attacker_id)) {
+		return true;
+	}
+
+	auto& attacker = runtime().GetOrCreatePlayerActor(attacker_id);
+	if (dc::zone::ZoneRuntimeDataStore::FindSafeRegion(attacker.GetZoneId(), attacker.GetMapId(), attacker.GetPosition().x, attacker.GetPosition().y) != nullptr) {
+		spdlog::info("attack_player blocked in safe zone. attacker_id={} target_char_id={} zone_id={} map_id={} pos=({}, {})",
+			attacker_id, target_char_id, attacker.GetZoneId(), attacker.GetMapId(), attacker.GetPosition().x, attacker.GetPosition().y);
 		return true;
 	}
 

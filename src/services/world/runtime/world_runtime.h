@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <array>
 #include <cstdint>
 #include <string>
@@ -41,6 +41,7 @@
 #include "services/world/runtime/world_runtime_types.h"
 #include "services/world/handler/world_account_handler.h"
 #include "services/world/handler/world_zone_handler.h"
+#include "server_common/config/server_topology.h"
 #include "services/world/common/character_core_state.h"
 
 #include "proto/client/world_proto.h"
@@ -465,9 +466,12 @@ namespace svr {
 		void OnZoneMapAssignResponse(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res);
 		void OnZonePlayerEnterAck(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack);
 		std::optional<ZoneRouteInfo> TrySelectZoneRoute_(bool dungeon_instance) const;
+		std::optional<ZoneRouteInfo> TrySelectZoneRouteForMap_(std::uint32_t map_template_id, bool dungeon_instance) const;
 		std::optional<ZoneRouteInfo> FindZoneRouteByZoneId_(std::uint16_t zone_id) const;
+		std::optional<ZoneRouteInfo> FindZoneRouteByServerChannel_(std::uint32_t zone_server_id, std::uint16_t channel_id) const;
 		bool SendZonePlayerEnter_(std::uint64_t trace_id, std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		bool SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
+		void LoadServerTopology_();
 		void RemoveMapAssignmentsByZoneSid_(std::uint32_t sid);
 		void FailPendingZoneAssignRequestsByZoneSid_(
 			std::uint32_t sid,
@@ -570,6 +574,7 @@ namespace svr {
 		mutable std::mutex service_line_mtx_;
 		RemoteServiceLineState control_line_state_{};
 		std::unordered_map<std::uint32_t, ZoneRouteState> zone_routes_by_sid_{};
+		std::optional<dc::cfg::ServerTopology> server_topology_{};
 
 		std::atomic<std::uint64_t> next_world_auth_consume_request_id_{ 1 };
 		mutable std::mutex pending_enter_world_consume_mtx_;
@@ -714,6 +719,7 @@ namespace svr {
 	void ServerProgramExit(const char* call_site, bool save);
 
 } // namespace svr
+
 
 
 

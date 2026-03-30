@@ -13,6 +13,7 @@ target_link_libraries(dc_zone_service PUBLIC
     dc_proto
     dc_server_common
     dc_service_runtime
+    inipp
 )
 
 group_sources(${CMAKE_CURRENT_SOURCE_DIR} "" "${DC_ZONE_SERVICE_SOURCES}")

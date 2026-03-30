@@ -4,6 +4,7 @@
 #include <iterator>
 #include <memory>
 #include <thread>
+#include <limits>
 
 #include <spdlog/spdlog.h>
 
@@ -606,6 +607,39 @@ bool WorldHandler::HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t 
 	}
 	auto& a = runtime().GetOrCreatePlayerActor(char_id);
 	const std::uint32_t zone_id = a.GetZoneId();
+	const auto pos = a.GetPosition();
+	if (dc::zone::ZoneRuntimeDataStore::FindSafeRegion(zone_id, a.GetMapId(), pos.x, pos.y) != nullptr) {
+		spdlog::info("spawn_monster blocked in safe zone. char_id={} zone_id={} map_id={} pos=({}, {})",
+			char_id, zone_id, a.GetMapId(), pos.x, pos.y);
+		return true;
+	}
+	if (template_id == 0) {
+		const auto regions = dc::zone::ZoneRuntimeDataStore::GetMonsterRegions(zone_id, a.GetMapId());
+		if (!regions.empty()) {
+			const auto* nearest = &regions.front();
+			std::int64_t best_dist_sq = std::numeric_limits<std::int64_t>::max();
+			for (const auto& row : regions) {
+				const auto dx = static_cast<std::int64_t>(pos.x) - static_cast<std::int64_t>(row.center_x);
+				const auto dy = static_cast<std::int64_t>(pos.y) - static_cast<std::int64_t>(row.center_z);
+				const auto dist_sq = dx * dx + dy * dy;
+				if (dist_sq < best_dist_sq) {
+					best_dist_sq = dist_sq;
+					nearest = &row;
+				}
+			}
+			template_id = static_cast<std::uint32_t>(std::max(1, nearest->value02));
+			spdlog::info(
+				"spawn_monster mapped from zone content. char_id={} zone_id={} map_id={} template_id={} region_id={} center=({}, {}) radius={}",
+				char_id,
+				zone_id,
+				a.GetMapId(),
+				template_id,
+				nearest->region_id,
+				nearest->center_x,
+				nearest->center_z,
+				nearest->radius);
+		}
+	}
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (serial == 0) return true;
 	SetSessionProtoMode(sid, serial, use_protobuf || IsSessionProtoMode(sid, serial));

@@ -2,9 +2,11 @@
 
 #include <atomic>
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
+#include <vector>
 
 #include "server_common/runtime/line_client_start_helper.h"
 #include "services/runtime/server_runtime_base.h"
@@ -58,7 +60,10 @@ private:
     void OnAfterIoStop() override;
     void OnMainLoopTick(std::chrono::steady_clock::time_point now) override;
 
+    bool LoadIniFile_();
     bool NetworkInit_();
+    bool OwnsMapTemplate_(std::uint32_t map_template_id) const noexcept;
+    std::uint16_t ResolveGameplayZoneId_(std::uint32_t map_template_id) const noexcept;
     void MarkWorldRegistered_(std::uint32_t sid, std::uint32_t serial);
     void MarkWorldDisconnected_(std::uint32_t sid, std::uint32_t serial);
     void SendWorldHeartbeat_();
@@ -97,6 +102,7 @@ private:
     std::uint16_t world_port_ = 27788;
 
     std::uint16_t map_instance_capacity_ = 128;
+    std::vector<std::uint32_t> served_map_ids_{ 1 };
     std::unordered_map<std::uint64_t, MapInstanceState> map_instances_{};
     std::unordered_map<std::uint64_t, PlayerBindingState> player_bindings_{};
     std::atomic<std::uint16_t> active_map_instance_count_{ 0 };
