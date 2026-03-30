@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include <functional>
@@ -13,6 +13,8 @@
 #include "server_common/handler/service_line_handler_base.h"
 #include "proto/client/world_proto.h"
 #include "proto/common/proto_base.h"
+#include "services/world/runtime/i_world_runtime.h"
+#include "services/world/runtime/world_session_types.h"
 
 namespace svr { class WorldRuntime; }
 
@@ -46,6 +48,34 @@ public:
         proto::world::EnterWorldResultCode reason,
         std::uint64_t account_id,
         std::uint64_t char_id,
+        bool use_protobuf,
+        std::string_view reconnect_token = {});
+    void SendStatsResponse(
+        std::uint32_t dwProID,
+        std::uint32_t sid,
+        std::uint32_t serial,
+        std::uint64_t char_id,
+        std::uint32_t hp,
+        std::uint32_t max_hp,
+        std::uint32_t atk,
+        std::uint32_t def,
+        std::uint32_t gold,
+        bool use_protobuf);
+    void SendLogoutWorldResult(
+        std::uint32_t dwProID,
+        std::uint32_t sid,
+        std::uint32_t serial,
+        bool ok,
+        proto::world::LogoutType type,
+        proto::world::LogoutWorldResultCode reason,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        bool use_protobuf);
+    void SendReconnectWorldResult(
+        std::uint32_t dwProID,
+        std::uint32_t sid,
+        std::uint32_t serial,
+        const svr::ReconnectWorldSessionResult& result,
         bool use_protobuf);
     void SetSessionProtoMode(std::uint32_t sid, std::uint32_t serial, bool use_protobuf);
     bool IsSessionProtoMode(std::uint32_t sid, std::uint32_t serial) const;
@@ -76,22 +106,29 @@ private:
 		const char* op_name,
 		std::uint32_t sid,
 		std::uint64_t& out_char_id) const;
+	bool ResolveAuthenticatedSessionOrReject_(
+		const char* op_name,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		svr::WorldAuthedSession& out_session) const;
 
 	bool HandleEnterWorldWithToken(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
+	bool HandleLogoutWorld(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
+	bool HandleReconnectWorld(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
 
 	bool HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
-	bool HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
 	bool HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t n, bool use_protobuf);
-	bool HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
 
 	bool HandleWorldMove(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
 	bool HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 	bool HandleWorldBenchReset();
 	bool HandleWorldBenchMeasure(const char* body, std::size_t body_len);
 
-	bool HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
-	bool HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
-	bool HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
+	bool HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
+	bool HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
 
 	bool HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 	bool HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
@@ -101,3 +138,4 @@ private:
 	mutable std::mutex session_proto_mode_mtx_;
 	std::unordered_map<std::uint32_t, std::pair<std::uint32_t, bool>> session_proto_mode_;
 };
+

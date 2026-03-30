@@ -630,19 +630,35 @@ GO
 
 IF NOT EXISTS (SELECT 1 FROM [auth].[account] WHERE [login_id] = 'test01' AND [is_deleted] = 0)
 BEGIN
-    INSERT INTO [auth].[account] ([login_id], [account_state])
-    VALUES ('test01', 1);
+    INSERT INTO [auth].[account] ([login_id], [password_hash], [password_salt], [account_state])
+    VALUES ('test01', 0x56C8BF868DF00D31FFBE65C3DEB00C22B92FC28FB7D0AA6431224C144AEAF920, 0x0102030405060708090A0B0C0D0E0F10, 1);
+END
+ELSE
+BEGIN
+    UPDATE [auth].[account]
+       SET [password_hash] = 0x56C8BF868DF00D31FFBE65C3DEB00C22B92FC28FB7D0AA6431224C144AEAF920,
+           [password_salt] = 0x0102030405060708090A0B0C0D0E0F10,
+           [account_state] = 1,
+           [is_deleted] = 0,
+           [updated_at_utc] = SYSUTCDATETIME()
+     WHERE [login_id] = 'test01';
 END
 GO
 
 USE [NFX_GAME];
 GO
 
-IF NOT EXISTS
+DECLARE @sample_account_id BIGINT;
+SELECT TOP (1) @sample_account_id = [account_id]
+FROM [NFX_AUTH].[auth].[account]
+WHERE [login_id] = 'test01'
+  AND [is_deleted] = 0;
+
+IF @sample_account_id IS NOT NULL AND NOT EXISTS
 (
     SELECT 1
     FROM [game].[character]
-    WHERE [account_id] = 1
+    WHERE [account_id] = @sample_account_id
       AND [world_code] = 0
       AND [slot_no] = 0
       AND [char_state] <> 9
@@ -650,7 +666,7 @@ IF NOT EXISTS
 BEGIN
     DECLARE @char_id BIGINT;
     EXEC [game].[usp_create_character]
-        @account_id = 1,
+        @account_id = @sample_account_id,
         @world_code = 0,
         @char_name = 'TestKnight',
         @slot_no = 0,
@@ -676,4 +692,5 @@ GO
  - load_character_blob
    EXEC [NFX_GAME].[game].[usp_get_character_blob] @char_id=?
 ****************************************************************************/
+
 

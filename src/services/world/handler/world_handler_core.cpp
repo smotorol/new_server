@@ -1,4 +1,4 @@
-#include "services/world/handler/world_handler.h"
+﻿#include "services/world/handler/world_handler.h"
 
 #include <iostream>
 
@@ -17,6 +17,23 @@ namespace pt_w = proto::world;
 #else
 #define DC_WORLD_CLIENT_PROTOBUF 0
 #endif
+
+namespace {
+#if DC_WORLD_CLIENT_PROTOBUF
+	template <typename TMessage>
+	bool TryParseClientProto_(const char* packet_name, std::uint16_t msg_id, const char* body, std::size_t body_len, TMessage& out)
+	{
+		const bool ok = out.ParseFromArray(body, static_cast<int>(body_len));
+		if (ok) {
+			spdlog::debug("[world][recv] protobuf parse ok packet={} msg_id={} body_size={}", packet_name, msg_id, body_len);
+			return true;
+		}
+
+		spdlog::debug("[world][recv] protobuf parse failed -> legacy fallback packet={} msg_id={} body_size={}", packet_name, msg_id, body_len);
+		return false;
+	}
+#endif
+}
 
 std::uint64_t WorldHandler::GetActorIdBySession(std::uint32_t sid) const
 {
@@ -107,53 +124,120 @@ bool WorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEA
 	{
 #if DC_WORLD_CLIENT_PROTOBUF
 		dc::proto::client::world::EnterWorldWithTokenRequest req;
-		if (req.ParseFromArray(pMsg, static_cast<int>(body_len))) {
+		if (TryParseClientProto_("enter_world_with_token", type, pMsg, body_len, req)) {
 			SetSessionProtoMode(n, GetLatestSerial(n), true);
 			return HandleEnterWorldWithToken(dwProID, n, pMsg, body_len, true);
 		}
 #endif
 		return HandleEnterWorldWithToken(dwProID, n, pMsg, body_len, false);
 	}
-	case proto::C2SMsg::open_world_notice:
-		return HandleWorldOpenWorldNotice(dwProID, n, pMsg, body_len);
-	case proto::C2SMsg::add_gold:
-		return HandleWorldAddGold(dwProID, n, pMsg, body_len);
-	case proto::C2SMsg::get_stats:
+	case static_cast<std::uint16_t>(pt_w::WorldC2SMsg::logout_world):
 	{
 #if DC_WORLD_CLIENT_PROTOBUF
-		dc::proto::client::world::GetStatsRequest req;
-		if (req.ParseFromArray(pMsg, static_cast<int>(body_len))) {
+		dc::proto::client::world::LogoutWorldRequest req;
+		if (TryParseClientProto_("logout_world", type, pMsg, body_len, req)) {
 			SetSessionProtoMode(n, GetLatestSerial(n), true);
-			return HandleWorldGetStats(dwProID, n, true);
+			return HandleLogoutWorld(dwProID, n, pMsg, body_len, true);
 		}
 #endif
-		return HandleWorldGetStats(dwProID, n, false);
+		return HandleLogoutWorld(dwProID, n, pMsg, body_len, false);
 	}
-	case proto::C2SMsg::heal_self:
-		return HandleWorldHealSelf(dwProID, n, pMsg, body_len);
-	case proto::C2SMsg::move:
+	case static_cast<std::uint16_t>(pt_w::WorldC2SMsg::reconnect_world):
 	{
 #if DC_WORLD_CLIENT_PROTOBUF
-		dc::proto::client::world::MoveRequest req;
-		if (req.ParseFromArray(pMsg, static_cast<int>(body_len))) {
+		dc::proto::client::world::ReconnectWorldRequest req;
+		if (TryParseClientProto_("reconnect_world", type, pMsg, body_len, req)) {
 			SetSessionProtoMode(n, GetLatestSerial(n), true);
-			return HandleWorldMove(dwProID, n, pMsg, body_len, true);
+			return HandleReconnectWorld(dwProID, n, pMsg, body_len, true);
 		}
 #endif
-		return HandleWorldMove(dwProID, n, pMsg, body_len, false);
+		return HandleReconnectWorld(dwProID, n, pMsg, body_len, false);
 	}
-	case proto::C2SMsg::bench_move:
-		return HandleWorldBenchMove(dwProID, n, pMsg, body_len);
-	case proto::C2SMsg::bench_reset:
-		return HandleWorldBenchReset();
-	case proto::C2SMsg::bench_measure:
-		return HandleWorldBenchMeasure(pMsg, body_len);
-	case proto::C2SMsg::spawn_monster:
-		return HandleWorldSpawnMonster(dwProID, n, pMsg, body_len);
-	case proto::C2SMsg::attack_monster:
-		return HandleWorldAttackMonster(dwProID, n, pMsg, body_len);
-	case proto::C2SMsg::attack_player:
-		return HandleWorldAttackPlayer(dwProID, n, pMsg, body_len);
+    case proto::C2SMsg::open_world_notice:
+        return HandleWorldOpenWorldNotice(dwProID, n, pMsg, body_len);
+    case proto::C2SMsg::add_gold:
+    {
+#if DC_WORLD_CLIENT_PROTOBUF
+        dc::proto::client::world::AddGoldRequest req;
+        if (TryParseClientProto_("add_gold", type, pMsg, body_len, req)) {
+            SetSessionProtoMode(n, GetLatestSerial(n), true);
+            return HandleWorldAddGold(dwProID, n, pMsg, body_len, true);
+        }
+#endif
+        return HandleWorldAddGold(dwProID, n, pMsg, body_len, false);
+    }
+    case proto::C2SMsg::get_stats:
+    {
+#if DC_WORLD_CLIENT_PROTOBUF
+        dc::proto::client::world::GetStatsRequest req;
+        if (TryParseClientProto_("get_stats", type, pMsg, body_len, req)) {
+            SetSessionProtoMode(n, GetLatestSerial(n), true);
+            return HandleWorldGetStats(dwProID, n, true);
+        }
+#endif
+        return HandleWorldGetStats(dwProID, n, false);
+    }
+    case proto::C2SMsg::heal_self:
+    {
+#if DC_WORLD_CLIENT_PROTOBUF
+        dc::proto::client::world::HealSelfRequest req;
+        if (TryParseClientProto_("heal_self", type, pMsg, body_len, req)) {
+            SetSessionProtoMode(n, GetLatestSerial(n), true);
+            return HandleWorldHealSelf(dwProID, n, pMsg, body_len, true);
+        }
+#endif
+        return HandleWorldHealSelf(dwProID, n, pMsg, body_len, false);
+    }
+    case proto::C2SMsg::move:
+    {
+#if DC_WORLD_CLIENT_PROTOBUF
+        dc::proto::client::world::MoveRequest req;
+        if (TryParseClientProto_("move", type, pMsg, body_len, req)) {
+            SetSessionProtoMode(n, GetLatestSerial(n), true);
+            return HandleWorldMove(dwProID, n, pMsg, body_len, true);
+        }
+#endif
+        return HandleWorldMove(dwProID, n, pMsg, body_len, false);
+    }
+    case proto::C2SMsg::bench_move:
+        return HandleWorldBenchMove(dwProID, n, pMsg, body_len);
+    case proto::C2SMsg::bench_reset:
+        return HandleWorldBenchReset();
+    case proto::C2SMsg::bench_measure:
+        return HandleWorldBenchMeasure(pMsg, body_len);
+    case proto::C2SMsg::spawn_monster:
+    {
+#if DC_WORLD_CLIENT_PROTOBUF
+        dc::proto::client::world::SpawnMonsterRequest req;
+        if (TryParseClientProto_("spawn_monster", type, pMsg, body_len, req)) {
+            SetSessionProtoMode(n, GetLatestSerial(n), true);
+            return HandleWorldSpawnMonster(dwProID, n, pMsg, body_len, true);
+        }
+#endif
+        return HandleWorldSpawnMonster(dwProID, n, pMsg, body_len, false);
+    }
+    case proto::C2SMsg::attack_monster:
+    {
+#if DC_WORLD_CLIENT_PROTOBUF
+        dc::proto::client::world::AttackMonsterRequest req;
+        if (TryParseClientProto_("attack_monster", type, pMsg, body_len, req)) {
+            SetSessionProtoMode(n, GetLatestSerial(n), true);
+            return HandleWorldAttackMonster(dwProID, n, pMsg, body_len, true);
+        }
+#endif
+        return HandleWorldAttackMonster(dwProID, n, pMsg, body_len, false);
+    }
+    case proto::C2SMsg::attack_player:
+    {
+#if DC_WORLD_CLIENT_PROTOBUF
+        dc::proto::client::world::AttackPlayerRequest req;
+        if (TryParseClientProto_("attack_player", type, pMsg, body_len, req)) {
+            SetSessionProtoMode(n, GetLatestSerial(n), true);
+            return HandleWorldAttackPlayer(dwProID, n, pMsg, body_len, true);
+        }
+#endif
+        return HandleWorldAttackPlayer(dwProID, n, pMsg, body_len, false);
+    }
 	case proto::C2SMsg::actor_seq_test:
 		return HandleWorldActorSeqTest(dwProID, n, pMsg, body_len);
 	case proto::C2SMsg::actor_forward:
@@ -163,3 +247,4 @@ bool WorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEA
 		return true;
 	}
 }
+

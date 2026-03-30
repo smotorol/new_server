@@ -329,7 +329,8 @@ namespace svr {
 			pt_w::EnterWorldResultCode::success,
 			pending.account_id,
 			pending.char_id,
-			pending.use_protobuf);
+			pending.use_protobuf,
+			GetOrCreateReconnectTokenForSession(pending.sid, pending.serial));
 
 		handler->SendZoneMapState(
 			0,

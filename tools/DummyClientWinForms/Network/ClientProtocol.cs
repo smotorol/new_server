@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using DummyClientWinForms.Models;
 using Google.Protobuf;
@@ -30,18 +30,24 @@ namespace DummyClientWinForms.Network
         public const ushort CharacterListResponse = 1104;
         public const ushort CharacterSelectResponse = 1105;
         public const ushort EnterWorldWithToken = 2001;
+        public const ushort LogoutWorld = 2002;
+        public const ushort ReconnectWorld = 2003;
         public const ushort EnterWorldResult = 2101;
+        public const ushort LogoutWorldResult = 2103;
+        public const ushort ReconnectWorldResult = 2104;
 
         public const ushort AddGold = 2;
+        public const ushort AddGoldOk = 2;
         public const ushort GetStats = 10;
-        public const ushort ZoneMapState = 12;
-        public const ushort HealSelf = 11;
-        public const ushort SpawnMonster = 20;
-        public const ushort AttackMonster = 21;
-        public const ushort Move = 40;
         public const ushort Stats = 10;
+        public const ushort HealSelf = 11;
+        public const ushort ZoneMapState = 12;
+        public const ushort SpawnMonster = 20;
         public const ushort SpawnMonsterOk = 20;
+        public const ushort AttackMonster = 21;
         public const ushort AttackResult = 21;
+        public const ushort AttackPlayer = 30;
+        public const ushort Move = 40;
         public const ushort PlayerSpawn = 40;
         public const ushort PlayerDespawn = 41;
         public const ushort PlayerMove = 42;
@@ -59,10 +65,7 @@ namespace DummyClientWinForms.Network
             }.ToByteArray();
         }
 
-        public static byte[] BuildWorldListRequest()
-        {
-            return new LoginProto.WorldListRequest().ToByteArray();
-        }
+        public static byte[] BuildWorldListRequest() => new LoginProto.WorldListRequest().ToByteArray();
 
         public static byte[] BuildWorldSelectRequest(ushort worldId, string serverCode)
         {
@@ -73,17 +76,11 @@ namespace DummyClientWinForms.Network
             }.ToByteArray();
         }
 
-        public static byte[] BuildCharacterListRequest()
-        {
-            return new LoginProto.CharacterListRequest().ToByteArray();
-        }
+        public static byte[] BuildCharacterListRequest() => new LoginProto.CharacterListRequest().ToByteArray();
 
         public static byte[] BuildCharacterSelectRequest(ulong charId)
         {
-            return new LoginProto.CharacterSelectRequest
-            {
-                CharId = charId
-            }.ToByteArray();
+            return new LoginProto.CharacterSelectRequest { CharId = charId }.ToByteArray();
         }
 
         public static byte[] BuildEnterWorldRequest(ulong accountId, string loginSession, string worldToken)
@@ -96,10 +93,27 @@ namespace DummyClientWinForms.Network
             }.ToByteArray();
         }
 
-        public static byte[] BuildGetStats()
+        public static byte[] BuildLogoutWorld(bool hardLogout)
         {
-            return new WorldProto.GetStatsRequest().ToByteArray();
+            return new WorldProto.LogoutWorldRequest
+            {
+                Type = hardLogout
+                    ? WorldProto.LogoutType.Hard
+                    : WorldProto.LogoutType.Soft
+            }.ToByteArray();
         }
+
+        public static byte[] BuildReconnectWorld(ulong accountId, ulong charId, string reconnectToken)
+        {
+            return new WorldProto.ReconnectWorldRequest
+            {
+                AccountId = accountId,
+                CharId = charId,
+                ReconnectToken = reconnectToken ?? string.Empty
+            }.ToByteArray();
+        }
+
+        public static byte[] BuildGetStats() => new WorldProto.GetStatsRequest().ToByteArray();
 
         public static byte[] BuildMove(int x, int y)
         {
@@ -110,10 +124,30 @@ namespace DummyClientWinForms.Network
             }.ToByteArray();
         }
 
-        public static byte[] BuildHeal(uint amount) { using (var w = new PacketWriter()) { w.WriteUInt32(amount); return w.ToArray(); } }
-        public static byte[] BuildGold(uint amount) { using (var w = new PacketWriter()) { w.WriteUInt32(amount); return w.ToArray(); } }
-        public static byte[] BuildSpawnMonster(uint templateId) { using (var w = new PacketWriter()) { w.WriteUInt32(templateId); return w.ToArray(); } }
-        public static byte[] BuildAttackMonster(ulong monsterId) { using (var w = new PacketWriter()) { w.WriteUInt64(monsterId); return w.ToArray(); } }
+        public static byte[] BuildHeal(uint amount)
+        {
+            return new WorldProto.HealSelfRequest { Amount = amount }.ToByteArray();
+        }
+
+        public static byte[] BuildGold(uint amount)
+        {
+            return new WorldProto.AddGoldRequest { Add = amount }.ToByteArray();
+        }
+
+        public static byte[] BuildSpawnMonster(uint templateId)
+        {
+            return new WorldProto.SpawnMonsterRequest { TemplateId = templateId }.ToByteArray();
+        }
+
+        public static byte[] BuildAttackMonster(ulong monsterId)
+        {
+            return new WorldProto.AttackMonsterRequest { MonsterId = monsterId }.ToByteArray();
+        }
+
+        public static byte[] BuildAttackPlayer(ulong targetCharId)
+        {
+            return new WorldProto.AttackPlayerRequest { TargetCharId = targetCharId }.ToByteArray();
+        }
 
         public static LoginResultModel ParseLoginResult(byte[] body)
         {
@@ -174,15 +208,15 @@ namespace DummyClientWinForms.Network
             };
         }
 
-        public static List<DummyClientWinForms.Models.CharacterSummary> ParseCharacterList(byte[] body, out bool ok, out string failReason)
+        public static List<CharacterSummary> ParseCharacterList(byte[] body, out bool ok, out string failReason)
         {
             var msg = LoginProto.CharacterListResponse.Parser.ParseFrom(body);
-            var list = new List<DummyClientWinForms.Models.CharacterSummary>();
+            var list = new List<CharacterSummary>();
             ok = msg.Ok;
             failReason = msg.FailReason ?? string.Empty;
             foreach (var item in msg.Characters)
             {
-                list.Add(new DummyClientWinForms.Models.CharacterSummary
+                list.Add(new CharacterSummary
                 {
                     CharId = item.CharId,
                     Name = item.Name ?? string.Empty,
@@ -220,6 +254,37 @@ namespace DummyClientWinForms.Network
                 Reason = (ushort)msg.Reason,
                 AccountId = msg.AccountId,
                 CharId = msg.CharId,
+                ReconnectToken = msg.ReconnectToken ?? string.Empty,
+            };
+        }
+
+        public static LogoutWorldResultModel ParseLogoutWorldResult(byte[] body)
+        {
+            var msg = WorldProto.LogoutWorldResult.Parser.ParseFrom(body);
+            return new LogoutWorldResultModel
+            {
+                Ok = msg.Ok,
+                Type = (ushort)msg.Type,
+                Reason = (ushort)msg.Reason,
+                AccountId = msg.AccountId,
+                CharId = msg.CharId,
+            };
+        }
+
+        public static ReconnectWorldResultModel ParseReconnectWorldResult(byte[] body)
+        {
+            var msg = WorldProto.ReconnectWorldResult.Parser.ParseFrom(body);
+            return new ReconnectWorldResultModel
+            {
+                Ok = msg.Ok,
+                Reason = (ushort)msg.Reason,
+                AccountId = msg.AccountId,
+                CharId = msg.CharId,
+                ReconnectToken = msg.ReconnectToken ?? string.Empty,
+                ZoneId = msg.ZoneId,
+                MapId = msg.MapId,
+                X = msg.X,
+                Y = msg.Y,
             };
         }
 
@@ -237,6 +302,23 @@ namespace DummyClientWinForms.Network
             };
         }
 
+        public static AddGoldResultModel ParseAddGoldResult(byte[] body)
+        {
+            try
+            {
+                var msg = WorldProto.AddGoldResult.Parser.ParseFrom(body);
+                return new AddGoldResultModel { Ok = msg.Ok, Gold = msg.Gold };
+            }
+            catch
+            {
+                return new AddGoldResultModel
+                {
+                    Ok = PacketReader.ReadUInt32(body, 0) != 0,
+                    Gold = PacketReader.ReadUInt32(body, 4)
+                };
+            }
+        }
+
         public static ZoneMapStateModel ParseZoneMapState(byte[] body)
         {
             var msg = WorldProto.ZoneMapState.Parser.ParseFrom(body);
@@ -251,13 +333,98 @@ namespace DummyClientWinForms.Network
             };
         }
 
-        public static PlayerObject ParsePlayerSpawn(byte[] body, bool isSelf)
+        private static PlayerObject ToPlayerObject(ulong charId, int x, int y, ulong selfId)
         {
-            var charId = PacketReader.ReadUInt64(body, 0);
-            return new PlayerObject { Kind = WorldObjectKind.Player, CharId = charId, Id = "player:" + charId, X = PacketReader.ReadInt32(body, 8), Y = PacketReader.ReadInt32(body, 12), Label = isSelf ? "Self" : "Player", IsSelf = isSelf };
+            return new PlayerObject
+            {
+                Kind = WorldObjectKind.Player,
+                CharId = charId,
+                Id = "player:" + charId,
+                X = x,
+                Y = y,
+                Label = charId == selfId ? "Self" : "Player",
+                IsSelf = charId == selfId,
+            };
+        }
+
+        public static PlayerObject ParsePlayerSpawn(byte[] body, ulong selfId)
+        {
+            try
+            {
+                var msg = WorldProto.PlayerSpawn.Parser.ParseFrom(body);
+                return ToPlayerObject(msg.CharId, msg.X, msg.Y, selfId);
+            }
+            catch
+            {
+                var charId = PacketReader.ReadUInt64(body, 0);
+                return ToPlayerObject(charId, PacketReader.ReadInt32(body, 8), PacketReader.ReadInt32(body, 12), selfId);
+            }
+        }
+
+        public static PlayerObject ParsePlayerMove(byte[] body, ulong selfId)
+        {
+            try
+            {
+                var msg = WorldProto.PlayerMove.Parser.ParseFrom(body);
+                return ToPlayerObject(msg.CharId, msg.X, msg.Y, selfId);
+            }
+            catch
+            {
+                var charId = PacketReader.ReadUInt64(body, 0);
+                return ToPlayerObject(charId, PacketReader.ReadInt32(body, 8), PacketReader.ReadInt32(body, 12), selfId);
+            }
+        }
+
+        public static ulong ParsePlayerDespawn(byte[] body)
+        {
+            try
+            {
+                var msg = WorldProto.PlayerDespawn.Parser.ParseFrom(body);
+                return msg.CharId;
+            }
+            catch
+            {
+                return PacketReader.ReadUInt64(body, 0);
+            }
         }
 
         public static List<PlayerObject> ParsePlayerSpawnBatch(byte[] body, ulong selfId)
+        {
+            try
+            {
+                var msg = WorldProto.PlayerSpawnBatch.Parser.ParseFrom(body);
+                var list = new List<PlayerObject>(msg.Items.Count);
+                foreach (var item in msg.Items)
+                {
+                    list.Add(ToPlayerObject(item.CharId, item.X, item.Y, selfId));
+                }
+                return list;
+            }
+            catch
+            {
+                return ParseLegacyPlayerSnapshotBatch(body, selfId);
+            }
+        }
+
+        public static List<PlayerObject> ParsePlayerMoveBatch(byte[] body, ulong selfId)
+        {
+            try
+            {
+                var msg = WorldProto.PlayerMoveBatch.Parser.ParseFrom(body);
+                var list = new List<PlayerObject>(msg.Items.Count);
+                foreach (var item in msg.Items)
+                {
+                    list.Add(ToPlayerObject(item.CharId, item.X, item.Y, selfId));
+                }
+                return list;
+            }
+            catch
+            {
+                return ParseLegacyPlayerSnapshotBatch(body, selfId);
+            }
+        }
+
+        private static List<PlayerObject> ParseLegacyPlayerSnapshotBatch(byte[] body, ulong selfId)
         {
             var count = PacketReader.ReadUInt16(body, 0);
             var list = new List<PlayerObject>();
@@ -265,7 +432,7 @@ namespace DummyClientWinForms.Network
             for (var i = 0; i < count; i++)
             {
                 var charId = PacketReader.ReadUInt64(body, offset);
-                list.Add(new PlayerObject { Kind = WorldObjectKind.Player, CharId = charId, Id = "player:" + charId, X = PacketReader.ReadInt32(body, offset + 8), Y = PacketReader.ReadInt32(body, offset + 12), Label = charId == selfId ? "Self" : "Player", IsSelf = charId == selfId });
+                list.Add(ToPlayerObject(charId, PacketReader.ReadInt32(body, offset + 8), PacketReader.ReadInt32(body, offset + 12), selfId));
                 offset += 16;
             }
             return list;
@@ -273,30 +440,70 @@ namespace DummyClientWinForms.Network
 
         public static List<ulong> ParsePlayerDespawnBatch(byte[] body)
         {
-            var count = PacketReader.ReadUInt16(body, 0);
-            var list = new List<ulong>();
-            var offset = 2;
-            for (var i = 0; i < count; i++) { list.Add(PacketReader.ReadUInt64(body, offset)); offset += 8; }
-            return list;
+            try
+            {
+                var msg = WorldProto.PlayerDespawnBatch.Parser.ParseFrom(body);
+                return new List<ulong>(msg.CharIds);
+            }
+            catch
+            {
+                var count = PacketReader.ReadUInt16(body, 0);
+                var list = new List<ulong>();
+                var offset = 2;
+                for (var i = 0; i < count; i++) { list.Add(PacketReader.ReadUInt64(body, offset)); offset += 8; }
+                return list;
+            }
         }
 
         public static MonsterSpawnResult ParseSpawnMonsterOk(byte[] body)
         {
-            return new MonsterSpawnResult { MonsterId = PacketReader.ReadUInt64(body, 0), Hp = PacketReader.ReadUInt32(body, 8), Atk = PacketReader.ReadUInt32(body, 12), Def = PacketReader.ReadUInt32(body, 16) };
+            try
+            {
+                var msg = WorldProto.SpawnMonsterResult.Parser.ParseFrom(body);
+                return new MonsterSpawnResult { MonsterId = msg.MonsterId, Hp = msg.Hp, Atk = msg.Atk, Def = msg.Def };
+            }
+            catch
+            {
+                return new MonsterSpawnResult { MonsterId = PacketReader.ReadUInt64(body, 0), Hp = PacketReader.ReadUInt32(body, 8), Atk = PacketReader.ReadUInt32(body, 12), Def = PacketReader.ReadUInt32(body, 16) };
+            }
         }
 
         public static AttackResultModel ParseAttackResult(byte[] body)
         {
-            return new AttackResultModel { AttackerId = PacketReader.ReadUInt64(body, 0), TargetId = PacketReader.ReadUInt64(body, 8), Damage = PacketReader.ReadUInt32(body, 16), TargetHp = PacketReader.ReadUInt32(body, 20), Killed = PacketReader.ReadUInt32(body, 24) != 0, AttackerGold = PacketReader.ReadUInt32(body, 36) };
+            try
+            {
+                var msg = WorldProto.AttackResult.Parser.ParseFrom(body);
+                return new AttackResultModel
+                {
+                    AttackerId = msg.AttackerId,
+                    TargetId = msg.TargetId,
+                    Damage = msg.Damage,
+                    TargetHp = msg.TargetHp,
+                    Killed = msg.Killed,
+                    DropItemId = msg.DropItemId,
+                    DropCount = msg.DropCount,
+                    AttackerGold = msg.AttackerGold,
+                };
+            }
+            catch
+            {
+                return new AttackResultModel { AttackerId = PacketReader.ReadUInt64(body, 0), TargetId = PacketReader.ReadUInt64(body, 8), Damage = PacketReader.ReadUInt32(body, 16), TargetHp = PacketReader.ReadUInt32(body, 20), Killed = PacketReader.ReadUInt32(body, 24) != 0, DropItemId = PacketReader.ReadUInt32(body, 28), DropCount = PacketReader.ReadUInt32(body, 32), AttackerGold = PacketReader.ReadUInt32(body, 36) };
+            }
         }
     }
 
     public sealed class LoginResultModel { public bool Ok; public ulong AccountId; public ulong CharId; public ushort WorldPort; public string LoginSession; public string WorldHost; public string WorldToken; public string FailReason; public int WorldEntries; }
     public sealed class WorldSelectResultModel { public bool Ok; public string FailReason; public ushort WorldId; public string ServerCode; public ushort WorldPort; public string WorldHost; }
     public sealed class CharacterSelectResultModel { public bool Ok; public string FailReason; public ulong AccountId; public ulong CharId; public ushort WorldPort; public string WorldHost; public string WorldToken; }
-    public sealed class EnterWorldResultModel { public bool Ok; public ushort Reason; public ulong AccountId; public ulong CharId; }
+    public sealed class EnterWorldResultModel { public bool Ok; public ushort Reason; public ulong AccountId; public ulong CharId; public string ReconnectToken; }
+    public sealed class LogoutWorldResultModel { public bool Ok; public ushort Type; public ushort Reason; public ulong AccountId; public ulong CharId; }
+    public sealed class ReconnectWorldResultModel { public bool Ok; public ushort Reason; public ulong AccountId; public ulong CharId; public string ReconnectToken; public uint ZoneId; public uint MapId; public int X; public int Y; }
     public sealed class StatsModel { public ulong CharId; public uint Hp; public uint MaxHp; public uint Atk; public uint Def; public uint Gold; }
+    public sealed class AddGoldResultModel { public bool Ok; public uint Gold; }
     public sealed class ZoneMapStateModel { public ulong CharId; public uint ZoneId; public uint MapId; public int X; public int Y; public ushort Reason; }
     public sealed class MonsterSpawnResult { public ulong MonsterId; public uint Hp; public uint Atk; public uint Def; }
-    public sealed class AttackResultModel { public ulong AttackerId; public ulong TargetId; public uint Damage; public uint TargetHp; public bool Killed; public uint AttackerGold; }
+    public sealed class AttackResultModel { public ulong AttackerId; public ulong TargetId; public uint Damage; public uint TargetHp; public bool Killed; public uint DropItemId; public uint DropCount; public uint AttackerGold; }
 }
+
+
+

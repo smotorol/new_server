@@ -76,5 +76,25 @@ namespace svr {
 		}
 	}
 
+	inline const char* ToString(WorldSessionCloseReason reason) noexcept
+	{
+		switch (reason) {
+		case WorldSessionCloseReason::None:
+			return "None";
+		case WorldSessionCloseReason::NetworkDisconnect:
+			return "NetworkDisconnect";
+		case WorldSessionCloseReason::ExplicitSoftLogout:
+			return "ExplicitSoftLogout";
+		case WorldSessionCloseReason::ExplicitHardLogout:
+			return "ExplicitHardLogout";
+		case WorldSessionCloseReason::DuplicateKick:
+			return "DuplicateKick";
+		case WorldSessionCloseReason::ServerShutdown:
+			return "ServerShutdown";
+		default:
+			return "UnknownWorldSessionCloseReason";
+		}
+	}
+
 
 } // namespace svr

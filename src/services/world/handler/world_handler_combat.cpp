@@ -1,4 +1,4 @@
-#include "services/world/handler/world_handler.h"
+﻿#include "services/world/handler/world_handler.h"
 
 #include <memory>
 
@@ -6,13 +6,68 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "proto/common/protobuf_packet_codec.h"
 #include "server_common/session/session_key.h"
 #include "services/world/actors/world_actors.h"
 
-bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+#include "proto/generated/cpp/client_world.pb.h"
+#define DC_WORLD_CLIENT_PROTOBUF 1
+#else
+#define DC_WORLD_CLIENT_PROTOBUF 0
+#endif
+
+namespace {
+	void SendAttackResultPacket_(
+		WorldHandler& handler,
+		std::uint32_t dwProID,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		const proto::S2C_attack_result& res)
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (handler.IsSessionProtoMode(sid, serial)) {
+			dc::proto::client::world::AttackResult msg;
+			msg.set_attacker_id(res.attacker_id);
+			msg.set_target_id(res.target_id);
+			msg.set_damage(res.damage);
+			msg.set_target_hp(res.target_hp);
+			msg.set_killed(res.killed != 0);
+			msg.set_drop_item_id(res.drop_item_id);
+			msg.set_drop_count(res.drop_count);
+			msg.set_attacker_gold(res.attacker_gold);
+			std::vector<char> framed;
+			if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::attack_result), msg, framed)) {
+				_MSG_HEADER header{};
+				std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+				handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+				return;
+			}
+		}
+#endif
+		auto h = proto::make_header((std::uint16_t)proto::S2CMsg::attack_result, (std::uint16_t)sizeof(res));
+		handler.Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+	}
+}
+
+bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len, bool use_protobuf)
 {
-	auto* req = proto::as<proto::C2S_attack_monster>(body, body_len);
-	if (!req) return false;
+	std::uint64_t monster_id = 0;
+#if DC_WORLD_CLIENT_PROTOBUF
+	if (use_protobuf) {
+		dc::proto::client::world::AttackMonsterRequest req;
+		if (!req.ParseFromArray(body, static_cast<int>(body_len))) {
+			return false;
+		}
+		monster_id = req.monster_id();
+	}
+	else
+#endif
+	{
+		auto* req = proto::as<proto::C2S_attack_monster>(body, body_len);
+		if (!req) return false;
+		monster_id = req->monster_id;
+	}
 
 	std::uint64_t attacker_id = 0;
 	if (!ResolveAuthenticatedCharIdOrReject_("attack_monster", sid, attacker_id)) {
@@ -23,7 +78,7 @@ bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t
 	const std::uint32_t zone_id = attacker.GetZoneId();
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (!dc::IsValidSessionKey(sid, serial)) return true;
-	const std::uint64_t monster_id = req->monster_id;
+	SetSessionProtoMode(sid, serial, use_protobuf || IsSessionProtoMode(sid, serial));
 	auto self = shared_from_this();
 
 	runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, self, dwProID, sid, serial, attacker_id, attacker_atk, zone_id, monster_id]() {
@@ -59,8 +114,7 @@ bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t
 			res.damage = dmg;
 			res.target_hp = mon_hp;
 			res.killed = 0;
-			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::attack_result, (std::uint16_t)sizeof(res));
-			self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+			SendAttackResultPacket_(static_cast<WorldHandler&>(*self), dwProID, sid, serial, res);
 			return;
 		}
 
@@ -82,24 +136,42 @@ bool WorldHandler::HandleWorldAttackMonster(std::uint32_t dwProID, std::uint32_t
 			res.drop_count = ok ? drop_cnt : 0;
 			res.attacker_gold = a.GetGold();
 
-			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::attack_result, (std::uint16_t)sizeof(res));
-			self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+			SendAttackResultPacket_(static_cast<WorldHandler&>(*self), dwProID, sid, serial, res);
 		});
 	});
 	return true;
 }
 
-bool WorldHandler::HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len, bool use_protobuf)
 {
-	auto* req = proto::as<proto::C2S_attack_player>(body, body_len);
-	if (!req) return false;
+	std::uint64_t target_char_id = 0;
+#if DC_WORLD_CLIENT_PROTOBUF
+	if (use_protobuf) {
+		dc::proto::client::world::AttackPlayerRequest req;
+		if (!req.ParseFromArray(body, static_cast<int>(body_len))) {
+			return false;
+		}
+		target_char_id = req.target_char_id();
+	}
+	else
+#endif
+	{
+		auto* req = proto::as<proto::C2S_attack_player>(body, body_len);
+		if (!req) return false;
+		target_char_id = req->target_char_id;
+	}
 
 	std::uint64_t attacker_id = 0;
 	if (!ResolveAuthenticatedCharIdOrReject_("attack_player", sid, attacker_id)) {
 		return true;
 	}
 
-	auto& target = runtime().GetOrCreatePlayerActor(req->target_char_id);
+	const std::uint32_t a_serial = GetLatestSerial(sid);
+	if (a_serial != 0) {
+		SetSessionProtoMode(sid, a_serial, use_protobuf || IsSessionProtoMode(sid, a_serial));
+	}
+
+	auto& target = runtime().GetOrCreatePlayerActor(target_char_id);
 	const std::uint32_t target_sid = target.sid;
 
 	std::uint32_t dmg = 10;
@@ -118,22 +190,18 @@ bool WorldHandler::HandleWorldAttackPlayer(std::uint32_t dwProID, std::uint32_t 
 
 	proto::S2C_attack_result res{};
 	res.attacker_id = attacker_id;
-	res.target_id = req->target_char_id;
+	res.target_id = target_char_id;
 	res.damage = dmg;
 	res.target_hp = target_hp;
 	res.killed = killed ? 1u : 0u;
 
-	auto h = proto::make_header((std::uint16_t)proto::S2CMsg::attack_result,
-		(std::uint16_t)sizeof(res));
-
-	const std::uint32_t a_serial = GetLatestSerial(sid);
 	if (a_serial != 0) {
-		Send(dwProID, sid, a_serial, h, reinterpret_cast<const char*>(&res));
+		SendAttackResultPacket_(*this, dwProID, sid, a_serial, res);
  	}
 	if (target_sid != 0) {
 		const std::uint32_t t_serial = GetLatestSerial(target_sid);
 		if (t_serial != 0) {
-			Send(dwProID, target_sid, t_serial, h, reinterpret_cast<const char*>(&res));
+			SendAttackResultPacket_(*this, dwProID, target_sid, t_serial, res);
  		}
  	}
 

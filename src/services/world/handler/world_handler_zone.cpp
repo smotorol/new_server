@@ -1,4 +1,4 @@
-#include "services/world/handler/world_handler.h"
+﻿#include "services/world/handler/world_handler.h"
 
 #include <algorithm>
 #include <iterator>
@@ -54,6 +54,165 @@ namespace {
 #else
 #define DC_WORLD_CLIENT_PROTOBUF 0
 #endif
+
+namespace {
+#if DC_WORLD_CLIENT_PROTOBUF
+	template <typename TMessage>
+	bool TryBuildQueuedProtoPacket_(std::uint16_t msg_id, const TMessage& msg, _MSG_HEADER& out_header, std::shared_ptr<std::vector<char>>& out_body)
+	{
+		std::vector<char> framed;
+		if (!dc::proto::BuildFramedMessage(msg_id, msg, framed)) {
+			return false;
+		}
+		std::memcpy(&out_header, framed.data(), MSG_HEADER_SIZE);
+		const auto body_size = framed.size() - MSG_HEADER_SIZE;
+		out_body = std::make_shared<std::vector<char>>(body_size);
+		if (body_size > 0) {
+			std::memcpy(out_body->data(), framed.data() + MSG_HEADER_SIZE, body_size);
+		}
+		return true;
+	}
+#endif
+
+	void SendSpawnMonsterResultPacket_(WorldHandler& handler, std::uint32_t dwProID, std::uint32_t sid, std::uint32_t serial, const proto::S2C_spawn_monster_ok& res)
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (handler.IsSessionProtoMode(sid, serial)) {
+			dc::proto::client::world::SpawnMonsterResult msg;
+			msg.set_monster_id(res.monster_id);
+			msg.set_hp(res.hp);
+			msg.set_atk(res.atk);
+			msg.set_def(res.def);
+			std::vector<char> framed;
+			if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::spawn_monster_ok), msg, framed)) {
+				_MSG_HEADER header{};
+				std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+				handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+				return;
+			}
+		}
+#endif
+		auto h = proto::make_header((std::uint16_t)proto::S2CMsg::spawn_monster_ok, (std::uint16_t)sizeof(res));
+		handler.Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+	}
+
+	void SendOrQueuePlayerSnapshot_(WorldHandler& handler, svr::ZoneActor& z, std::uint32_t sid, std::uint32_t serial, std::uint16_t msg_id, std::uint64_t char_id, std::int32_t x, std::int32_t y, std::uint64_t move_char_id = 0)
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (handler.IsSessionProtoMode(sid, serial)) {
+			_MSG_HEADER h{};
+			std::shared_ptr<std::vector<char>> body;
+			if (msg_id == (std::uint16_t)proto::S2CMsg::player_spawn) {
+				dc::proto::client::world::PlayerSpawn msg;
+				msg.set_char_id(char_id);
+				msg.set_x(x);
+				msg.set_y(y);
+				if (TryBuildQueuedProtoPacket_(msg_id, msg, h, body)) {
+					z.EnqueueSend_(sid, serial, h, body, msg_id, move_char_id);
+					return;
+				}
+			}
+			if (msg_id == (std::uint16_t)proto::S2CMsg::player_move) {
+				dc::proto::client::world::PlayerMove msg;
+				msg.set_char_id(char_id);
+				msg.set_x(x);
+				msg.set_y(y);
+				if (TryBuildQueuedProtoPacket_(msg_id, msg, h, body)) {
+					z.EnqueueSend_(sid, serial, h, body, msg_id, move_char_id);
+					return;
+				}
+			}
+		}
+#endif
+		proto::S2C_player_spawn legacy{};
+		legacy.char_id = char_id;
+		legacy.x = x;
+		legacy.y = y;
+		const auto h = proto::make_header(msg_id, (std::uint16_t)sizeof(legacy));
+		z.EnqueueSend_(sid, serial, h, svr::ZoneActor::MakeBody_(legacy), msg_id, move_char_id);
+	}
+
+	void SendOrQueuePlayerDespawn_(WorldHandler& handler, svr::ZoneActor& z, std::uint32_t sid, std::uint32_t serial, std::uint64_t char_id)
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (handler.IsSessionProtoMode(sid, serial)) {
+			dc::proto::client::world::PlayerDespawn msg;
+			msg.set_char_id(char_id);
+			_MSG_HEADER h{};
+			std::shared_ptr<std::vector<char>> body;
+			if (TryBuildQueuedProtoPacket_((std::uint16_t)proto::S2CMsg::player_despawn, msg, h, body)) {
+				z.EnqueueSend_(sid, serial, h, body, (std::uint16_t)proto::S2CMsg::player_despawn);
+				return;
+			}
+		}
+#endif
+		proto::S2C_player_despawn legacy{};
+		legacy.char_id = char_id;
+		const auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn, (std::uint16_t)sizeof(legacy));
+		z.EnqueueSend_(sid, serial, h, svr::ZoneActor::MakeBody_(legacy), (std::uint16_t)proto::S2CMsg::player_despawn);
+	}
+
+	void SendPlayerSpawnBatch_(WorldHandler& handler, std::uint32_t dwProID, std::uint32_t sid, std::uint32_t serial, const std::vector<proto::S2C_player_spawn_item>& spawn_items)
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (handler.IsSessionProtoMode(sid, serial)) {
+			dc::proto::client::world::PlayerSpawnBatch msg;
+			for (const auto& item : spawn_items) {
+				auto* out = msg.add_items();
+				out->set_char_id(item.char_id);
+				out->set_x(item.x);
+				out->set_y(item.y);
+			}
+			std::vector<char> framed;
+			if (dc::proto::BuildFramedMessage((std::uint16_t)proto::S2CMsg::player_spawn_batch, msg, framed)) {
+				_MSG_HEADER header{};
+				std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+				handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+				return;
+			}
+		}
+#endif
+		const auto count = svr::aoi::ClampBatchEntityCount(spawn_items.size());
+		const std::size_t body_size = svr::aoi::SpawnBatchBodySize(count);
+		std::vector<char> body(body_size);
+		auto* pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(body.data());
+		pkt->count = count;
+		for (std::size_t i = 0; i < count; ++i) {
+			pkt->items[i] = spawn_items[i];
+		}
+		auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn_batch, (std::uint16_t)body_size);
+		handler.Send(dwProID, sid, serial, h, body.data());
+	}
+
+	void SendPlayerDespawnBatch_(WorldHandler& handler, std::uint32_t dwProID, std::uint32_t sid, std::uint32_t serial, const std::vector<std::uint64_t>& char_ids)
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (handler.IsSessionProtoMode(sid, serial)) {
+			dc::proto::client::world::PlayerDespawnBatch msg;
+			for (auto char_id : char_ids) {
+				msg.add_char_ids(char_id);
+			}
+			std::vector<char> framed;
+			if (dc::proto::BuildFramedMessage((std::uint16_t)proto::S2CMsg::player_despawn_batch, msg, framed)) {
+				_MSG_HEADER header{};
+				std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+				handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+				return;
+			}
+		}
+#endif
+		const auto count = svr::aoi::ClampBatchEntityCount(char_ids.size());
+		const std::size_t body_size = svr::aoi::DespawnBatchBodySize(count);
+		std::vector<char> body(body_size);
+		auto* pkt = reinterpret_cast<proto::S2C_player_despawn_batch*>(body.data());
+		pkt->count = count;
+		for (std::size_t i = 0; i < count; ++i) {
+			pkt->items[i].char_id = char_ids[i];
+		}
+		auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn_batch, (std::uint16_t)body_size);
+		handler.Send(dwProID, sid, serial, h, body.data());
+	}
+}
 
 void WorldHandler::SendZoneMapState(
     std::uint32_t dwProID,
@@ -285,15 +444,7 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
             if (!spawn_items.empty()) {
                 const auto count = svr::aoi::ClampBatchEntityCount(spawn_items.size());
                 spawn_items.resize(count);
-                const std::size_t body_size = svr::aoi::SpawnBatchBodySize(count);
-                std::vector<char> body(body_size);
-                auto* pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(body.data());
-                pkt->count = count;
-                for (std::size_t i = 0; i < count; ++i) {
-                    pkt->items[i] = spawn_items[i];
-                }
-                auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn_batch, (std::uint16_t)body_size);
-                self->Send(dwProID, sid, serial, h, body.data());
+                SendPlayerSpawnBatch_(static_cast<WorldHandler&>(*self), dwProID, sid, serial, spawn_items);
             }
         }
 
@@ -305,58 +456,32 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
         if (!sanitized_exited.empty()) {
             const auto count = svr::aoi::ClampBatchEntityCount(sanitized_exited.size());
             sanitized_exited.resize(count);
-            const std::size_t body_size = svr::aoi::DespawnBatchBodySize(count);
-            std::vector<char> body(body_size);
-            auto* pkt = reinterpret_cast<proto::S2C_player_despawn_batch*>(body.data());
-            pkt->count = count;
-            for (std::size_t i = 0; i < count; ++i) {
-                pkt->items[i].char_id = sanitized_exited[i];
-            }
-            auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn_batch, (std::uint16_t)body_size);
-            self->Send(dwProID, sid, serial, h, body.data());
+            SendPlayerDespawnBatch_(static_cast<WorldHandler&>(*self), dwProID, sid, serial, sanitized_exited);
         }
 
-        proto::S2C_player_spawn self_spawn{};
-        self_spawn.char_id = char_id;
-        self_spawn.x = nx;
-        self_spawn.y = ny;
-        auto h_spawn = proto::make_header((std::uint16_t)proto::S2CMsg::player_spawn, (std::uint16_t)sizeof(self_spawn));
-        auto body_self_spawn = svr::ZoneActor::MakeBody_(self_spawn);
-
-        proto::S2C_player_despawn self_des{};
-        self_des.char_id = char_id;
-        auto h_des = proto::make_header((std::uint16_t)proto::S2CMsg::player_despawn, (std::uint16_t)sizeof(self_des));
-        auto body_self_des = svr::ZoneActor::MakeBody_(self_des);
+        const auto sanitized_new_vis = svr::aoi::SanitizeEntityIds(diff.new_vis);
+        if (diff.new_vis.size() > sanitized_new_vis.size()) {
+            svr::metrics::g_aoi_sanitize_removed_new_vis.fetch_add(static_cast<std::uint64_t>(diff.new_vis.size() - sanitized_new_vis.size()), std::memory_order_relaxed);
+        }
 
         for (auto rid : sanitized_entered) {
             auto it = z.players.find(rid);
             if (it == z.players.end()) continue;
             if (it->second.sid == 0 || it->second.serial == 0) continue;
-            z.EnqueueSend_(it->second.sid, it->second.serial, h_spawn, body_self_spawn, (std::uint16_t)proto::S2CMsg::player_spawn);
+            SendOrQueuePlayerSnapshot_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, (std::uint16_t)proto::S2CMsg::player_spawn, char_id, nx, ny);
         }
         for (auto rid : sanitized_exited) {
             auto it = z.players.find(rid);
             if (it == z.players.end()) continue;
             if (it->second.sid == 0 || it->second.serial == 0) continue;
-            z.EnqueueSend_(it->second.sid, it->second.serial, h_des, body_self_des, (std::uint16_t)proto::S2CMsg::player_despawn);
-        }
-
-        proto::S2C_player_move mmsg{};
-        mmsg.char_id = char_id;
-        mmsg.x = nx;
-        mmsg.y = ny;
-        auto h_move = proto::make_header((std::uint16_t)proto::S2CMsg::player_move, (std::uint16_t)sizeof(mmsg));
-        auto body_move = svr::ZoneActor::MakeBody_(mmsg);
-        const auto sanitized_new_vis = svr::aoi::SanitizeEntityIds(diff.new_vis);
-        if (diff.new_vis.size() > sanitized_new_vis.size()) {
-            svr::metrics::g_aoi_sanitize_removed_new_vis.fetch_add(static_cast<std::uint64_t>(diff.new_vis.size() - sanitized_new_vis.size()), std::memory_order_relaxed);
+            SendOrQueuePlayerDespawn_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, char_id);
         }
 
         for (auto rid : sanitized_new_vis) {
             auto it = z.players.find(rid);
             if (it == z.players.end()) continue;
             if (it->second.sid == 0 || it->second.serial == 0) continue;
-            z.EnqueueSend_(it->second.sid, it->second.serial, h_move, body_move, (std::uint16_t)proto::S2CMsg::player_move, char_id);
+            SendOrQueuePlayerSnapshot_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, (std::uint16_t)proto::S2CMsg::player_move, char_id, nx, ny, char_id);
         }
 
         z.FlushPendingSends_(static_cast<WorldHandler&>(*self), dwProID);
@@ -413,7 +538,30 @@ bool WorldHandler::HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t sid
             std::this_thread::sleep_for(std::chrono::microseconds(work_us));
         }
 
-        z.FlushMoveTickIfDue_(static_cast<WorldHandler&>(*self), dwProID, false);
+        z.FlushMoveTickIfDue_(
+            static_cast<WorldHandler&>(*self),
+            dwProID,
+            [self](std::uint32_t target_sid, std::uint32_t target_serial) {
+                return static_cast<WorldHandler&>(*self).IsSessionProtoMode(target_sid, target_serial);
+            },
+            [](const std::vector<proto::S2C_player_move_item>& items, _MSG_HEADER& out_header, std::shared_ptr<std::vector<char>>& out_body) {
+#if DC_WORLD_CLIENT_PROTOBUF
+                dc::proto::client::world::PlayerMoveBatch msg;
+                for (const auto& item : items) {
+                    auto* out = msg.add_items();
+                    out->set_char_id(item.char_id);
+                    out->set_x(item.x);
+                    out->set_y(item.y);
+                }
+                return TryBuildQueuedProtoPacket_((std::uint16_t)proto::S2CMsg::player_move_batch, msg, out_header, out_body);
+#else
+                static_cast<void>(items);
+                static_cast<void>(out_header);
+                static_cast<void>(out_body);
+                return false;
+#endif
+            },
+            false);
     });
     return true;
 }
@@ -433,36 +581,53 @@ bool WorldHandler::HandleWorldBenchMeasure(const char* body, std::size_t body_le
     return true;
 }
 
-bool WorldHandler::HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len, bool use_protobuf)
 {
-    auto* req = proto::as<proto::C2S_spawn_monster>(body, body_len);
-    if (!req) return false;
+	std::uint32_t template_id = 0;
+#if DC_WORLD_CLIENT_PROTOBUF
+	if (use_protobuf) {
+		dc::proto::client::world::SpawnMonsterRequest req;
+		if (!req.ParseFromArray(body, static_cast<int>(body_len))) {
+			return false;
+		}
+		template_id = req.template_id();
+	}
+	else
+#endif
+	{
+		auto* req = proto::as<proto::C2S_spawn_monster>(body, body_len);
+		if (!req) return false;
+		template_id = req->template_id;
+	}
 
-    std::uint64_t char_id = 0;
-    if (!ResolveAuthenticatedCharIdOrReject_("spawn_monster", sid, char_id)) {
-        return true;
-    }
-    auto& a = runtime().GetOrCreatePlayerActor(char_id);
-    const std::uint32_t zone_id = a.GetZoneId();
-    const std::uint32_t serial = GetLatestSerial(sid);
-    if (serial == 0) return true;
+	std::uint64_t char_id = 0;
+	if (!ResolveAuthenticatedCharIdOrReject_("spawn_monster", sid, char_id)) {
+		return true;
+	}
+	auto& a = runtime().GetOrCreatePlayerActor(char_id);
+	const std::uint32_t zone_id = a.GetZoneId();
+	const std::uint32_t serial = GetLatestSerial(sid);
+	if (serial == 0) return true;
+	SetSessionProtoMode(sid, serial, use_protobuf || IsSessionProtoMode(sid, serial));
 
-    auto self = shared_from_this();
-    runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, self, dwProID, sid, serial, zone_id, tid = req->template_id]() {
-        auto& z = runtime().GetOrCreateZoneActor(zone_id);
-        svr::MonsterState m{};
-        m.id = z.next_monster_id++;
-        if (tid == 1) { m.hp = 120; m.atk = 15; m.def = 4; m.drop_item_id = 2001; m.drop_count = 1; }
-        else { m.hp = 50; m.atk = 8; m.def = 1; m.drop_item_id = 1001; m.drop_count = 1; }
-        z.monsters[m.id] = m;
+	auto self = shared_from_this();
+	runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, self, dwProID, sid, serial, zone_id, template_id]() {
+		auto& z = runtime().GetOrCreateZoneActor(zone_id);
+		svr::MonsterState m{};
+		m.id = z.next_monster_id++;
+		if (template_id == 1) { m.hp = 120; m.atk = 15; m.def = 4; m.drop_item_id = 2001; m.drop_count = 1; }
+		else { m.hp = 50; m.atk = 8; m.def = 1; m.drop_item_id = 1001; m.drop_count = 1; }
+		z.monsters[m.id] = m;
 
-        proto::S2C_spawn_monster_ok res{};
-        res.monster_id = m.id;
-        res.hp = m.hp;
-        res.atk = m.atk;
-        res.def = m.def;
-        auto h = proto::make_header((std::uint16_t)proto::S2CMsg::spawn_monster_ok, (std::uint16_t)sizeof(res));
-        self->Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
-    });
-    return true;
+		proto::S2C_spawn_monster_ok res{};
+		res.monster_id = m.id;
+		res.hp = m.hp;
+		res.atk = m.atk;
+		res.def = m.def;
+		SendSpawnMonsterResultPacket_(static_cast<WorldHandler&>(*self), dwProID, sid, serial, res);
+	});
+	return true;
 }
+
+
+

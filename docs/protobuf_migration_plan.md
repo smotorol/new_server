@@ -1,4 +1,4 @@
-# Protobuf Migration Plan
+﻿# Protobuf Migration Plan
 
 ## Goal
 Keep the existing 4-byte `_MSG_HEADER` framing and migrate only packet bodies to protobuf bytes.
@@ -14,6 +14,10 @@ Completed in code and build:
 - stats request/response
 - move request
 - zone_map_state response/notify
+- heal_self / add_gold
+- spawn_monster / attack_monster / attack_player
+- player_spawn / player_despawn / player_move
+- player_spawn_batch / player_despawn_batch / player_move_batch
 
 ## Mixed mode
 - migrated client-facing messages use protobuf-first parse with legacy fallback
@@ -34,7 +38,8 @@ Completed in code and build:
 - regeneration target: `dc_proto_codegen`
 
 ## Safe next order
-1. WinForms remaining gameplay packets (heal/add_gold/combat/AOI)
+1. WinForms runtime regression for mixed protobuf/legacy sessions
 2. Unity runtime package wiring + first-path live test
 3. reconnect/resume token path formalization on protobuf client path
 4. internal login-account first-path only if/when needed separately
+

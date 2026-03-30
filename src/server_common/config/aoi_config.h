@@ -7,8 +7,11 @@ namespace dc::cfg {
 
     struct AoiConfig {
         svr::Vec2i map_size{ 2000, 2000 };
+        // Coordinate rule: 1 world unit == 1 meter.
+        // WORLD_SIGHT_UNIT is only the AOI cell granularity in meters.
         int world_sight_unit = svr::ZoneActor::kCellSize;
-        int aoi_radius_cells = 1; // 1 => 3x3
+        // 5 cells * 10 meters-per-cell => 50 meter AOI radius by default.
+        int aoi_radius_cells = 5;
     };
 
     // 전역 공용 설정 접근

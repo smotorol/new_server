@@ -1,8 +1,40 @@
+using System;
 using System.Collections.Generic;
 using DummyClientWinForms.Models;
 
 namespace DummyClientWinForms.Services
 {
+    public enum ClientStage
+    {
+        None,
+        LoginConnected,
+        LoggedIn,
+        WorldSelected,
+        CharacterSelected,
+        WorldConnected,
+        EnterWorldPending,
+        InWorld,
+    }
+
+    public enum DisconnectReason
+    {
+        None,
+        ExplicitLogout,
+        ManualReconnect,
+        FormClosing,
+        NetworkError,
+        RemoteClosed,
+        ServerClosed,
+        WorldTransition,
+    }
+
+    public enum ReconnectTarget
+    {
+        None,
+        Login,
+        World,
+    }
+
     public sealed class DummyClientState
     {
         public string LoginHost { get; set; } = "127.0.0.1";
@@ -19,6 +51,7 @@ namespace DummyClientWinForms.Services
         public ushort SelectedChannelId { get; set; }
         public string LoginSession { get; set; } = string.Empty;
         public string WorldToken { get; set; } = string.Empty;
+        public string ReconnectToken { get; set; } = string.Empty;
         public string WorldHost { get; set; } = string.Empty;
         public int WorldPort { get; set; }
         public bool AutoOverlayZone { get; set; } = true;
@@ -26,15 +59,36 @@ namespace DummyClientWinForms.Services
         public int MapId { get; set; } = 1;
         public int PosX { get; set; }
         public int PosY { get; set; }
+        public int CoordinateUnitMeters { get; set; } = 1;
+        public int AoiRadiusMeters { get; set; } = 50;
         public ushort ZoneMapStateReason { get; set; }
         public uint Hp { get; set; }
         public uint MaxHp { get; set; }
         public uint Atk { get; set; }
         public uint Def { get; set; }
         public uint Gold { get; set; }
+        public ClientStage CurrentStage { get; set; } = ClientStage.None;
+        public ClientStage LastStableStage { get; set; } = ClientStage.None;
+        public DisconnectReason LastDisconnectReason { get; set; } = DisconnectReason.None;
+        public DisconnectReason PendingDisconnectReason { get; set; } = DisconnectReason.None;
+        public string LastDisconnectDetail { get; set; } = string.Empty;
+        public ReconnectTarget LastReconnectTarget { get; set; } = ReconnectTarget.None;
+        public ClientStage ReconnectResumeStage { get; set; } = ClientStage.None;
+        public bool ReconnectRequested { get; set; }
+        public bool ExplicitLogoutRequested { get; set; }
+        public bool HardLogoutRequested { get; set; }
+        public bool WorldEnterCompleted { get; set; }
+        public bool EnterWorldRequested { get; set; }
         public List<WorldSummary> Worlds { get; } = new List<WorldSummary>();
         public List<CharacterSummary> Characters { get; } = new List<CharacterSummary>();
         public Dictionary<string, WorldObject> LiveObjects { get; } = new Dictionary<string, WorldObject>();
         public List<WorldObject> StaticObjects { get; } = new List<WorldObject>();
+
+        public bool CanDirectReconnectToWorld =>
+            SelectedCharId != 0 &&
+            !string.IsNullOrWhiteSpace(WorldHost) &&
+            WorldPort > 0 &&
+            (!string.IsNullOrWhiteSpace(ReconnectToken) ||
+             (!WorldEnterCompleted && !string.IsNullOrWhiteSpace(WorldToken)));
     }
 }

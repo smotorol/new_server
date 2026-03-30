@@ -256,7 +256,25 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial);
 
+		void MarkWorldSessionCloseReason(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			WorldSessionCloseReason reason);
+
 		void HandleWorldSessionClosed(
+			std::uint32_t sid,
+			std::uint32_t serial);
+
+		std::optional<WorldAuthedSession> TryGetAuthenticatedWorldSession(
+			std::uint32_t sid,
+			std::uint32_t serial) const;
+		std::string GetOrCreateReconnectTokenForSession(
+			std::uint32_t sid,
+			std::uint32_t serial);
+		ReconnectWorldSessionResult TryReconnectWorldSession(
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::string_view reconnect_token,
 			std::uint32_t sid,
 			std::uint32_t serial);
 
@@ -571,8 +589,10 @@ namespace svr {
 		std::unordered_map<std::uint32_t, WorldAuthedSession> authed_sessions_by_sid_;
 		std::unordered_map<std::uint64_t, std::uint64_t> authed_session_key_by_char_id_;
 		std::unordered_map<std::uint64_t, std::uint64_t> authed_session_key_by_account_id_;
-		std::unordered_map<std::uint32_t, WorldEnterStage> world_enter_stage_by_sid_;
-		std::unordered_map<std::uint64_t, std::uint32_t> pending_enter_sid_by_char_id_;
+		std::unordered_map<std::string, std::uint64_t> reconnect_session_key_by_token_;
+		std::unordered_map<std::uint64_t, WorldSessionCloseReason> session_close_reason_by_session_key_;
+		std::unordered_map<std::uint64_t, WorldEnterStage> world_enter_stage_by_session_key_;
+		std::unordered_map<std::uint64_t, std::uint64_t> pending_enter_session_key_by_char_id_;
 
 
 		std::mutex delayed_world_close_mtx_;
@@ -694,4 +714,6 @@ namespace svr {
 	void ServerProgramExit(const char* call_site, bool save);
 
 } // namespace svr
+
+
 

@@ -24,7 +24,9 @@
 namespace svr {
 class ZoneActor final : public net::IActor {
 	public:
-		static constexpr std::int32_t kCellSize = 10; // 샘플: 10 단위
+		// Coordinate rule: 1 world unit == 1 meter.
+		// AOI cells are grouped in 10 meter chunks by default.
+		static constexpr std::int32_t kCellSize = 10;
 
 		// ====== (레거시 eos_royal 스타일) 섹터(셀) 컨테이너 ======
 		// - init_sector(map_size, unit): 맵 크기 / 셀 단위 / AOI 반경(셀 단위)을 초기화
@@ -32,7 +34,7 @@ class ZoneActor final : public net::IActor {
 		struct SectorContainer final {
 			bool inited = false;
 			Vec2i map_size{};          // world width/height (임시)
-			std::int32_t unit = 10;    // WORLD_SIGHT_UNIT 느낌(셀 한 변 크기)
+			std::int32_t unit = 10;    // WORLD_SIGHT_UNIT in meters per cell edge
 			std::int32_t aoi_r = 1;    // 주변 셀 반경(1이면 3x3)
 
 			std::int32_t max_cx = 0;
@@ -674,7 +676,12 @@ class ZoneActor final : public net::IActor {
 		//   * 각 셀은 자신의 3x3 이웃 셀(관심영역)에서 발생한 move item들을 한 번에 받는다.
 		//   * 결과적으로 "sid별 payload 빌드" 비용이 사라지고, 직렬화는 "셀당 1회"만 수행된다.
 		// - FlushPendingSends_는 budget 기반으로 TrySendLossy()
-		bool FlushMoveTickIfDue_(dc::ServiceLineHandlerBase& net, std::uint32_t pro_id, bool force = false)
+		template <typename TIsProtoSession, typename TBuildProtoMoveBatch>
+		bool FlushMoveTickIfDue_(dc::ServiceLineHandlerBase& net,
+			std::uint32_t pro_id,
+			TIsProtoSession&& is_proto_session,
+			TBuildProtoMoveBatch&& build_proto_move_batch,
+			bool force = false)
 		{
 			using clock = std::chrono::steady_clock;
 			const auto now = clock::now();
@@ -736,13 +743,8 @@ class ZoneActor final : public net::IActor {
 				if (total == 0) continue;
 
 				const std::uint16_t count = (std::uint16_t)std::min<std::size_t>(total, 4096);
-				// ✅ flexible array style: sizeof(batch) + (count-1)*sizeof(item)
-				const std::size_t body_size = sizeof(proto::S2C_player_move_batch)
-					+ (count > 0 ? ((std::size_t)count - 1) * sizeof(proto::S2C_player_move_item) : 0);
-				auto body = std::make_shared<std::vector<char>>(body_size);
-				auto* pkt = reinterpret_cast<proto::S2C_player_move_batch*>(body->data());
-				pkt->count = count;
-				char* dst = reinterpret_cast<char*>(pkt->items);
+				std::vector<proto::S2C_player_move_item> batch_items;
+				batch_items.reserve(count);
 				std::size_t written = 0;
 				for (int dy = -1; dy <= 1 && written < count; ++dy) {
 					for (int dx = -1; dx <= 1 && written < count; ++dx) {
@@ -751,15 +753,56 @@ class ZoneActor final : public net::IActor {
 						auto& vec = it->second;
 						const std::size_t can = std::min<std::size_t>(vec.size(), (std::size_t)count - written);
 						if (can == 0) continue;
-						std::memcpy(dst + written * sizeof(proto::S2C_player_move_item), vec.data(), can * sizeof(proto::S2C_player_move_item));
+						batch_items.insert(batch_items.end(), vec.begin(), vec.begin() + static_cast<std::ptrdiff_t>(can));
 						written += can;
 					}
 				}
 
-				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_move_batch, (std::uint16_t)body_size);
+				if (batch_items.empty()) continue;
 
-				// publish to this cell channel (shared body)
-				CellChannels{ *this }.PublishToCell(recv_ck, h, body, (std::uint16_t)proto::S2CMsg::player_move_batch);
+				std::shared_ptr<std::vector<char>> legacy_body;
+				std::shared_ptr<std::vector<char>> proto_body;
+				_MSG_HEADER legacy_header{};
+				_MSG_HEADER proto_header{};
+				bool legacy_ready = false;
+				bool proto_ready = false;
+				bool proto_attempted = false;
+
+				for (auto rid : recv_ids) {
+					auto itr = players.find(rid);
+					if (itr == players.end()) continue;
+					const auto sid = itr->second.sid;
+					const auto serial = itr->second.serial;
+					if (sid == 0 || serial == 0) continue;
+
+					if (is_proto_session(sid, serial)) {
+						if (!proto_attempted) {
+							proto_attempted = true;
+							proto_ready = build_proto_move_batch(batch_items, proto_header, proto_body);
+						}
+						if (proto_ready) {
+							EnqueueSend_(sid, serial, proto_header, proto_body, (std::uint16_t)proto::S2CMsg::player_move_batch);
+							svr::metrics::g_s2c_move_pkts_sent.fetch_add(1, std::memory_order_relaxed);
+							svr::metrics::g_s2c_move_items_sent.fetch_add(batch_items.size(), std::memory_order_relaxed);
+							continue;
+						}
+					}
+
+					if (!legacy_ready) {
+						const std::size_t body_size = sizeof(proto::S2C_player_move_batch)
+							+ (batch_items.size() > 0 ? (batch_items.size() - 1) * sizeof(proto::S2C_player_move_item) : 0);
+						legacy_body = std::make_shared<std::vector<char>>(body_size);
+						auto* pkt = reinterpret_cast<proto::S2C_player_move_batch*>(legacy_body->data());
+						pkt->count = static_cast<std::uint16_t>(batch_items.size());
+						std::memcpy(pkt->items, batch_items.data(), batch_items.size() * sizeof(proto::S2C_player_move_item));
+						legacy_header = proto::make_header((std::uint16_t)proto::S2CMsg::player_move_batch, (std::uint16_t)body_size);
+						legacy_ready = true;
+					}
+
+					EnqueueSend_(sid, serial, legacy_header, legacy_body, (std::uint16_t)proto::S2CMsg::player_move_batch);
+					svr::metrics::g_s2c_move_pkts_sent.fetch_add(1, std::memory_order_relaxed);
+					svr::metrics::g_s2c_move_items_sent.fetch_add(batch_items.size(), std::memory_order_relaxed);
+				}
 			}
 
 			pending_moves_.clear();
@@ -792,6 +835,15 @@ class ZoneActor final : public net::IActor {
 
 			last_move_tick_tp_ = now;
 			return true;
+		}
+
+		bool FlushMoveTickIfDue_(dc::ServiceLineHandlerBase& net, std::uint32_t pro_id, bool force = false)
+		{
+			auto always_legacy = [](std::uint32_t, std::uint32_t) { return false; };
+			auto no_proto_builder = [](const std::vector<proto::S2C_player_move_item>&, _MSG_HEADER&, std::shared_ptr<std::vector<char>>&) {
+				return false;
+			};
+			return FlushMoveTickIfDue_(net, pro_id, always_legacy, no_proto_builder, force);
 		}
 
 		struct MoveDiff {

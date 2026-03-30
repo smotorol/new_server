@@ -14,6 +14,8 @@ namespace DummyClientWinForms.Scenes
         public event Action HealRequested;
         public event Action GoldRequested;
         public event Action ReconnectRequested;
+        public event Action SoftLogoutRequested;
+        public event Action LogoutRequested;
         public event Action AttackRequested;
         public event Action MoveRequested;
 
@@ -37,6 +39,8 @@ namespace DummyClientWinForms.Scenes
             buttons.Controls.Add(MakeButton("Heal", () => HealRequested?.Invoke()));
             buttons.Controls.Add(MakeButton("Gold+", () => GoldRequested?.Invoke()));
             buttons.Controls.Add(MakeButton("Reconnect", () => ReconnectRequested?.Invoke()));
+            buttons.Controls.Add(MakeButton("ToChars", () => SoftLogoutRequested?.Invoke()));
+            buttons.Controls.Add(MakeButton("Logout", () => LogoutRequested?.Invoke()));
             Controls.Add(CharacterListBox);
             Controls.Add(new Label { Dock = DockStyle.Top, Height = 18, Text = "Worlds" });
             Controls.Add(WorldListBox);

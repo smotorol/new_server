@@ -1,4 +1,4 @@
-# DummyClientWinForms Protobuf Path
+﻿# DummyClientWinForms Protobuf Path
 
 ## Current scope
 The WinForms dummy client now uses generated protobuf C# for:
@@ -11,12 +11,12 @@ The WinForms dummy client now uses generated protobuf C# for:
 - stats request/response
 - move request
 - zone_map_state response/notify
-
-Legacy packed struct parsing remains for:
 - heal/add_gold
-- spawn/attack
-- player spawn/despawn/move batch
-- other AOI/combat/debug packets
+- spawn_monster / attack_monster / attack_player
+- player spawn / player despawn / player move
+- player spawn batch / player despawn batch / player move batch
+
+Legacy packed struct parsing remains only as fallback when protobuf parse fails or when the connected session is legacy mode.
 
 ## Runtime dependencies
 Current net48-compatible references:
@@ -31,3 +31,5 @@ Current net48-compatible references:
 1. Build `DummyClientWinForms.csproj`
 2. Run `tools/DummyClientWinForms/bin/Debug/DummyClientWinForms.exe`
 3. Test flow: connect -> login -> world list -> world select -> character list -> character select -> enter world -> stats/move
+4. Gameplay checks: heal, gold, spawn monster, attack, AOI move batch
+

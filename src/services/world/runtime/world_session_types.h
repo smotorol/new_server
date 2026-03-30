@@ -35,6 +35,7 @@ namespace svr {
 		std::uint64_t char_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+		WorldSessionCloseReason close_reason = WorldSessionCloseReason::None;
 	};
 
 	struct DelayedCloseKey
@@ -75,10 +76,30 @@ namespace svr {
 		std::uint64_t char_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+		WorldSessionCloseReason close_reason = WorldSessionCloseReason::None;
 
 		[[nodiscard]] bool removed() const noexcept
 		{
 			return unbind_kind == UnbindAuthedWorldSessionResultKind::Removed;
+		}
+	};
+
+	struct ReconnectWorldSessionResult
+	{
+		proto::world::ReconnectWorldResultCode code =
+			proto::world::ReconnectWorldResultCode::internal_error;
+		WorldAuthedSession current_session{};
+		WorldAuthedSession previous_session{};
+		std::uint32_t zone_id = 0;
+		std::uint32_t map_id = 0;
+		std::uint32_t instance_id = 0;
+		std::int32_t x = 0;
+		std::int32_t y = 0;
+		std::string reconnect_token;
+
+		[[nodiscard]] bool ok() const noexcept
+		{
+			return code == proto::world::ReconnectWorldResultCode::success;
 		}
 	};
 

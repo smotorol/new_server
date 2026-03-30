@@ -11,27 +11,39 @@ namespace DummyClientWinForms.Network
         private TcpClient _client;
         private NetworkStream _stream;
         private CancellationTokenSource _cts;
+        private bool _disconnectNotified;
+        private string _endpointTag = string.Empty;
+        private string _plannedCloseReason = "manual_disconnect";
+        private bool _plannedCloseExpected = true;
 
         public event Action<ushort, byte[]> PacketReceived;
         public event Action<string> Log;
         public event Action<bool> ConnectionChanged;
+        public event Action<string, bool> Disconnected;
 
         public bool IsConnected => _client != null && _client.Connected;
+        public string EndpointTag => _endpointTag;
 
         public async Task ConnectAsync(string host, int port)
         {
-            await DisconnectAsync().ConfigureAwait(false);
+            await DisconnectAsync("connect_reset", true).ConfigureAwait(false);
+            _disconnectNotified = false;
+            _plannedCloseReason = "socket_open";
+            _plannedCloseExpected = true;
+            _endpointTag = $"{host}:{port}";
             _cts = new CancellationTokenSource();
             _client = new TcpClient();
             await _client.ConnectAsync(host, port).ConfigureAwait(false);
             _stream = _client.GetStream();
             ConnectionChanged?.Invoke(true);
-            Log?.Invoke($"connected {host}:{port}");
+            Log?.Invoke($"connected {_endpointTag}");
             _ = Task.Run(() => ReadLoopAsync(_cts.Token));
         }
 
-        public async Task DisconnectAsync()
+        public async Task DisconnectAsync(string reason = "manual_disconnect", bool expected = true)
         {
+            _plannedCloseReason = reason ?? "manual_disconnect";
+            _plannedCloseExpected = expected;
             try { _cts?.Cancel(); } catch { }
             try { _stream?.Dispose(); } catch { }
             try { _client?.Close(); } catch { }
@@ -39,7 +51,7 @@ namespace DummyClientWinForms.Network
             _client = null;
             _cts = null;
             await Task.CompletedTask;
-            ConnectionChanged?.Invoke(false);
+            NotifyDisconnected_(reason, expected);
         }
 
         public async Task SendAsync(ushort type, byte[] body)
@@ -56,10 +68,13 @@ namespace DummyClientWinForms.Network
             {
                 await _stream.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
             }
+            Log?.Invoke($"tx endpoint={_endpointTag} type={type} body_size={body.Length}");
         }
 
         private async Task ReadLoopAsync(CancellationToken token)
         {
+            var closeReason = _plannedCloseReason;
+            var expected = _plannedCloseExpected;
             try
             {
                 var headerBytes = new byte[PacketHeader.SizeInBytes];
@@ -73,17 +88,41 @@ namespace DummyClientWinForms.Network
                     {
                         await ReadExactAsync(_stream, body, bodyLen, token).ConfigureAwait(false);
                     }
+                    Log?.Invoke($"rx endpoint={_endpointTag} type={header.Type} body_size={bodyLen}");
                     PacketReceived?.Invoke(header.Type, body);
                 }
+                closeReason = token.IsCancellationRequested ? _plannedCloseReason : "remote_closed";
+                expected = token.IsCancellationRequested ? _plannedCloseExpected : false;
+            }
+            catch (OperationCanceledException)
+            {
+                closeReason = _plannedCloseReason;
+                expected = _plannedCloseExpected;
+            }
+            catch (IOException ex)
+            {
+                closeReason = "remote_closed:" + ex.Message;
+                expected = false;
+                Log?.Invoke("socket closed: " + ex.Message);
             }
             catch (Exception ex)
             {
+                closeReason = "socket_error:" + ex.Message;
+                expected = false;
                 Log?.Invoke("socket closed: " + ex.Message);
             }
             finally
             {
-                ConnectionChanged?.Invoke(false);
+                NotifyDisconnected_(closeReason, expected);
             }
+        }
+
+        private void NotifyDisconnected_(string reason, bool expected)
+        {
+            if (_disconnectNotified) return;
+            _disconnectNotified = true;
+            ConnectionChanged?.Invoke(false);
+            Disconnected?.Invoke(reason ?? string.Empty, expected);
         }
 
         private static async Task ReadExactAsync(Stream stream, byte[] buffer, int size, CancellationToken token)
@@ -99,7 +138,7 @@ namespace DummyClientWinForms.Network
 
         public void Dispose()
         {
-            try { DisconnectAsync().GetAwaiter().GetResult(); } catch { }
+            try { DisconnectAsync("dispose", true).GetAwaiter().GetResult(); } catch { }
         }
     }
 }

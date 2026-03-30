@@ -21,6 +21,7 @@ namespace svr {
 		std::uint64_t char_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+		std::string reconnect_token;
 	};
 
 	enum class WorldEnterStage
@@ -85,6 +86,16 @@ namespace svr {
 		DuplicateBoth,
 		DuplicateDeduplicatedSameSession,
 		Other,
+	};
+
+	enum class WorldSessionCloseReason
+	{
+		None = 0,
+		NetworkDisconnect,
+		ExplicitSoftLogout,
+		ExplicitHardLogout,
+		DuplicateKick,
+		ServerShutdown,
 	};
 
 	struct BindAuthedWorldSessionResult

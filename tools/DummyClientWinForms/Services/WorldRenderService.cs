@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -8,7 +8,8 @@ namespace DummyClientWinForms.Services
 {
     public sealed class WorldRenderService
     {
-        public float Zoom { get; set; } = 0.15f;
+        // 1 world unit == 1 meter. Keep roughly 100-150m visible in the default viewport.
+        public float Zoom { get; set; } = 4.0f;
 
         public PointF WorldToScreen(Point center, Rectangle viewport, Point objectPos)
         {
@@ -27,9 +28,25 @@ namespace DummyClientWinForms.Services
             }
 
             var center = new Point(state.PosX, state.PosY);
+            DrawAoiCircle(g, viewport, state);
             foreach (var obj in state.StaticObjects.Concat(state.LiveObjects.Values))
             {
                 DrawObject(g, viewport, center, obj, obj.Id == selectedObjectId);
+            }
+        }
+
+        private void DrawAoiCircle(Graphics g, Rectangle viewport, DummyClientState state)
+        {
+            if (state.AoiRadiusMeters <= 0)
+            {
+                return;
+            }
+
+            var center = new PointF(viewport.Width / 2f, viewport.Height / 2f);
+            var radius = Math.Max(8f, state.AoiRadiusMeters * Zoom);
+            using (var pen = new Pen(Color.FromArgb(96, Color.DeepSkyBlue), 2f))
+            {
+                g.DrawEllipse(pen, center.X - radius, center.Y - radius, radius * 2, radius * 2);
             }
         }
 

@@ -1,4 +1,4 @@
-# Protobuf Message Mapping
+﻿# Protobuf Message Mapping
 
 ## Client-facing protobuf switched
 
@@ -20,6 +20,17 @@
 - msg_id `10` -> `dc.proto.client.world.GetStatsRequest` / `dc.proto.client.world.StatsResponse`
 - msg_id `12` -> `dc.proto.client.world.ZoneMapState`
 - msg_id `40` -> `dc.proto.client.world.MoveRequest`
+- msg_id `11` -> `dc.proto.client.world.HealSelfRequest` / `dc.proto.client.world.StatsResponse`
+- msg_id `2` -> `dc.proto.client.world.AddGoldRequest` / `dc.proto.client.world.AddGoldResult`
+- msg_id `20` -> `dc.proto.client.world.SpawnMonsterRequest` / `dc.proto.client.world.SpawnMonsterResult`
+- msg_id `21` -> `dc.proto.client.world.AttackMonsterRequest` / `dc.proto.client.world.AttackResult`
+- msg_id `30` -> `dc.proto.client.world.AttackPlayerRequest` / `dc.proto.client.world.AttackResult`
+- msg_id `40` -> `dc.proto.client.world.PlayerSpawn` (S2C direction)
+- msg_id `41` -> `dc.proto.client.world.PlayerDespawn`
+- msg_id `42` -> `dc.proto.client.world.PlayerMove`
+- msg_id `43` -> `dc.proto.client.world.PlayerMoveBatch`
+- msg_id `44` -> `dc.proto.client.world.PlayerSpawnBatch`
+- msg_id `45` -> `dc.proto.client.world.PlayerDespawnBatch`
 
 ## World entry metadata shape
 `dc.proto.common.WorldEntryNode`
@@ -40,6 +51,6 @@
 - server-to-server messages: still legacy packed struct only
 
 ## Still not switched
-- heal / add_gold / spawn / attack
-- player spawn/despawn/move batch
 - internal login-account/login-world/world-zone/account-world bodies
+- remaining unused client-facing debug packets not exercised by DummyClientWinForms
+

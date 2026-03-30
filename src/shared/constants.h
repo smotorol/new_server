@@ -5,6 +5,7 @@
 namespace dc {
 	inline constexpr std::size_t k_login_session_max_len = 64;
 	inline constexpr std::size_t k_world_token_max_len = 32;
+	inline constexpr std::size_t k_reconnect_token_max_len = 64;
 	inline constexpr std::size_t k_login_id_max_len = 32;
 	inline constexpr std::size_t k_login_pw_max_len = 64;
 	inline constexpr std::size_t k_world_host_max_len = 64;

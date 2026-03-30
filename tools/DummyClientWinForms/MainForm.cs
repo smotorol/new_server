@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
@@ -43,6 +43,8 @@ namespace DummyClientWinForms
             _characterPanel.MoveRequested += async () => await MoveAsync();
             _characterPanel.AttackRequested += async () => await AttackAsync();
             _characterPanel.ReconnectRequested += async () => await ReconnectAsync();
+            _characterPanel.SoftLogoutRequested += async () => await SoftLogoutAsync();
+            _characterPanel.LogoutRequested += async () => await LogoutAsync();
             _worldPanel.ZoneOverlayChanged += zone => { if (!_state.AutoOverlayZone) LoadZoneOverlay(zone, true); };
             _worldPanel.AutoOverlayChanged += enabled =>
             {
@@ -60,8 +62,11 @@ namespace DummyClientWinForms
             _worldClient.PacketReceived += (type, body) => BeginInvoke((Action)(() => HandleWorldPacket(type, body)));
             _loginClient.Log += msg => BeginInvoke((Action)(() => AppendLog("[login] " + msg)));
             _worldClient.Log += msg => BeginInvoke((Action)(() => AppendLog("[world] " + msg)));
-            _loginClient.ConnectionChanged += on => BeginInvoke((Action)(() => { _state.ConnectedToLogin = on; RefreshUi(); }));
-            _worldClient.ConnectionChanged += on => BeginInvoke((Action)(() => { _state.ConnectedToWorld = on; RefreshUi(); }));
+            _loginClient.ConnectionChanged += on => BeginInvoke((Action)(() => HandleConnectionChanged(isWorld: false, on)));
+            _worldClient.ConnectionChanged += on => BeginInvoke((Action)(() => HandleConnectionChanged(isWorld: true, on)));
+            _loginClient.Disconnected += (reason, expected) => BeginInvoke((Action)(() => HandleSocketClosed(isWorld: false, reason, expected)));
+            _worldClient.Disconnected += (reason, expected) => BeginInvoke((Action)(() => HandleSocketClosed(isWorld: true, reason, expected)));
+            FormClosing += async (s, e) => await DisconnectAllAsync(DisconnectReason.FormClosing);
         }
 
         private async Task ConnectLoginAsync()
@@ -82,6 +87,7 @@ namespace DummyClientWinForms
         private async Task SelectWorldAsync()
         {
             if (!(_characterPanel.WorldListBox.SelectedItem is WorldSummary item)) return;
+            _state.SelectedWorldId = item.WorldId;
             await SendLoginPacketAsync(ClientProtocol.WorldSelectRequest, ClientProtocol.BuildWorldSelectRequest(item.WorldId, item.ServerCode));
         }
 
@@ -103,7 +109,28 @@ namespace DummyClientWinForms
             {
                 await _worldClient.ConnectAsync(_state.WorldHost, _state.WorldPort);
             }
+            _state.EnterWorldRequested = true;
+            _state.CurrentStage = ClientStage.EnterWorldPending;
             await SendWorldPacketAsync(ClientProtocol.EnterWorldWithToken, ClientProtocol.BuildEnterWorldRequest(_state.AccountId, _state.LoginSession, _state.WorldToken));
+        }
+
+        private async Task ReconnectWorldAsync()
+        {
+            if (string.IsNullOrWhiteSpace(_state.WorldHost) || _state.WorldPort <= 0 || string.IsNullOrWhiteSpace(_state.ReconnectToken))
+            {
+                AppendLog("reconnect token not ready; falling back to login reconnect");
+                await ConnectLoginAsync();
+                if (!string.IsNullOrWhiteSpace(_state.LoginId))
+                {
+                    await LoginAsync();
+                }
+                return;
+            }
+            if (!_worldClient.IsConnected)
+            {
+                await _worldClient.ConnectAsync(_state.WorldHost, _state.WorldPort);
+            }
+            await SendWorldPacketAsync(ClientProtocol.ReconnectWorld, ClientProtocol.BuildReconnectWorld(_state.AccountId, _state.SelectedCharId, _state.ReconnectToken));
         }
 
         private async Task MoveAsync()
@@ -112,12 +139,23 @@ namespace DummyClientWinForms
             var y = (int)_characterPanel.MoveY.Value;
             _state.PosX = x;
             _state.PosY = y;
+            EnsureSelfVisible();
             await SendWorldPacketAsync(ClientProtocol.Move, ClientProtocol.BuildMove(x, y));
             RefreshUi();
         }
 
         private async Task AttackAsync()
         {
+            if (!string.IsNullOrWhiteSpace(_selectedObjectId) && _state.LiveObjects.TryGetValue(_selectedObjectId, out var selected))
+            {
+                if (selected is PlayerObject player && !player.IsSelf)
+                {
+                    await SendWorldPacketAsync(ClientProtocol.AttackPlayer, ClientProtocol.BuildAttackPlayer(player.CharId));
+                    AppendLog($"attack_player requested target={player.CharId}");
+                    return;
+                }
+            }
+
             if (_lastMonsterId == 0)
             {
                 await SendWorldPacketAsync(ClientProtocol.SpawnMonster, ClientProtocol.BuildSpawnMonster(0));
@@ -127,19 +165,93 @@ namespace DummyClientWinForms
             await SendWorldPacketAsync(ClientProtocol.AttackMonster, ClientProtocol.BuildAttackMonster(_lastMonsterId));
         }
 
+        private async Task SoftLogoutAsync()
+        {
+            if (!_state.ConnectedToWorld)
+            {
+                AppendLog("soft logout skipped; world not connected");
+                return;
+            }
+            _state.ExplicitLogoutRequested = true;
+            _state.HardLogoutRequested = false;
+            _state.ReconnectRequested = false;
+            _state.LastReconnectTarget = ReconnectTarget.None;
+            _state.ReconnectResumeStage = ClientStage.None;
+            await SendWorldPacketAsync(ClientProtocol.LogoutWorld, ClientProtocol.BuildLogoutWorld(false));
+            AppendLog("soft logout requested");
+        }
+
+        private async Task LogoutAsync()
+        {
+            if (!_state.ConnectedToWorld)
+            {
+                _state.ExplicitLogoutRequested = true;
+                _state.HardLogoutRequested = true;
+                await DisconnectAllAsync(DisconnectReason.ExplicitLogout);
+                ResetWorldState(clearCredentials: false);
+                AppendLog("hard logout completed from login stage");
+                RefreshUi();
+                return;
+            }
+
+            _state.ExplicitLogoutRequested = true;
+            _state.HardLogoutRequested = true;
+            _state.ReconnectRequested = false;
+            _state.LastReconnectTarget = ReconnectTarget.None;
+            _state.ReconnectResumeStage = ClientStage.None;
+            await SendWorldPacketAsync(ClientProtocol.LogoutWorld, ClientProtocol.BuildLogoutWorld(true));
+            AppendLog("hard logout requested");
+        }
+
         private async Task ReconnectAsync()
         {
-            await _worldClient.DisconnectAsync();
-            await _loginClient.DisconnectAsync();
-            _state.InWorld = false;
-            _state.LoggedIn = false;
-            _state.Worlds.Clear();
-            _state.Characters.Clear();
-            _characterPanel.WorldListBox.DataSource = null;
-            _characterPanel.CharacterListBox.DataSource = null;
-            _state.LiveObjects.Clear();
-            _lastMonsterId = 0;
+            _state.ReconnectRequested = true;
+            _state.ExplicitLogoutRequested = false;
+            _state.HardLogoutRequested = false;
+            _state.ReconnectResumeStage = _state.LastStableStage;
+            _state.LastReconnectTarget = DetermineReconnectTarget();
+            var reconnectTarget = _state.LastReconnectTarget;
+            AppendLog($"reconnect requested stage={_state.LastStableStage} target={reconnectTarget}");
+            await DisconnectAllAsync(DisconnectReason.ManualReconnect);
+
+            if (reconnectTarget == ReconnectTarget.World)
+            {
+                AppendLog(_state.WorldEnterCompleted
+                    ? "reconnect target=world direct reconnect"
+                    : "reconnect target=world enter retry");
+                if (_state.WorldEnterCompleted)
+                {
+                    await ReconnectWorldAsync();
+                }
+                else
+                {
+                    await EnterWorldAsync();
+                }
+                return;
+            }
+
             await ConnectLoginAsync();
+            if (!string.IsNullOrWhiteSpace(_state.LoginId))
+            {
+                await LoginAsync();
+            }
+        }
+
+        private ReconnectTarget DetermineReconnectTarget()
+        {
+            if (_state.CanDirectReconnectToWorld)
+            {
+                return ReconnectTarget.World;
+            }
+            return ReconnectTarget.Login;
+        }
+
+        private async Task DisconnectAllAsync(DisconnectReason reason)
+        {
+            _state.PendingDisconnectReason = reason;
+            var expected = reason != DisconnectReason.NetworkError && reason != DisconnectReason.RemoteClosed && reason != DisconnectReason.ServerClosed;
+            await _worldClient.DisconnectAsync(reason.ToString(), expected);
+            await _loginClient.DisconnectAsync(reason.ToString(), expected);
         }
 
         private async Task SendLoginPacketAsync(ushort type, byte[] body)
@@ -158,6 +270,74 @@ namespace DummyClientWinForms
             await _worldClient.SendAsync(type, body);
         }
 
+        private void HandleConnectionChanged(bool isWorld, bool on)
+        {
+            if (isWorld)
+            {
+                _state.ConnectedToWorld = on;
+                if (on)
+                {
+                    _state.CurrentStage = ClientStage.WorldConnected;
+                }
+            }
+            else
+            {
+                _state.ConnectedToLogin = on;
+                if (on && _state.CurrentStage == ClientStage.None)
+                {
+                    _state.CurrentStage = ClientStage.LoginConnected;
+                }
+            }
+            RefreshUi();
+        }
+
+        private void HandleSocketClosed(bool isWorld, string reason, bool expected)
+        {
+            var mapped = MapDisconnectReason(reason, expected);
+            _state.LastDisconnectReason = mapped;
+            _state.LastDisconnectDetail = reason ?? string.Empty;
+            AppendLog($"{(isWorld ? "world" : "login")} closed reason={mapped} expected={(expected ? 1 : 0)} raw={reason} reconnect_target={_state.LastReconnectTarget}");
+
+            if (_state.PendingDisconnectReason != DisconnectReason.None)
+            {
+                _state.PendingDisconnectReason = DisconnectReason.None;
+            }
+            if (_state.ExplicitLogoutRequested)
+            {
+                _state.ReconnectRequested = false;
+            }
+            RefreshUi();
+        }
+
+        private DisconnectReason MapDisconnectReason(string reason, bool expected)
+        {
+            if (_state.PendingDisconnectReason != DisconnectReason.None)
+            {
+                return _state.PendingDisconnectReason;
+            }
+            if (_state.ExplicitLogoutRequested)
+            {
+                return DisconnectReason.ExplicitLogout;
+            }
+            if (string.IsNullOrWhiteSpace(reason))
+            {
+                return expected ? DisconnectReason.ManualReconnect : DisconnectReason.NetworkError;
+            }
+            if (reason.StartsWith("remote_closed", StringComparison.OrdinalIgnoreCase))
+            {
+                return DisconnectReason.RemoteClosed;
+            }
+            if (reason.StartsWith("socket_error", StringComparison.OrdinalIgnoreCase))
+            {
+                return DisconnectReason.NetworkError;
+            }
+            if (reason.StartsWith("FormClosing", StringComparison.OrdinalIgnoreCase))
+            {
+                return DisconnectReason.FormClosing;
+            }
+            return expected ? DisconnectReason.ManualReconnect : DisconnectReason.ServerClosed;
+        }
+
         private void HandleLoginPacket(ushort type, byte[] body)
         {
             switch (type)
@@ -170,8 +350,14 @@ namespace DummyClientWinForms
                     _state.WorldHost = string.Empty;
                     _state.WorldPort = 0;
                     _state.WorldToken = string.Empty;
-                    _state.SelectedWorldId = 0;
                     _state.SelectedChannelId = 0;
+                    _state.WorldEnterCompleted = false;
+                    _state.EnterWorldRequested = false;
+                    if (login.Ok)
+                    {
+                        _state.CurrentStage = ClientStage.LoggedIn;
+                        _state.LastStableStage = ClientStage.LoggedIn;
+                    }
                     _state.Worlds.Clear();
                     _state.Characters.Clear();
                     _characterPanel.WorldListBox.DataSource = null;
@@ -191,6 +377,15 @@ namespace DummyClientWinForms
                     _characterPanel.WorldListBox.DataSource = null;
                     _characterPanel.WorldListBox.DataSource = _state.Worlds.ToList();
                     AppendLog($"world_list ok={worldsOk} count={worlds.Count} reason={worldsReason}");
+                    if (_state.ReconnectRequested && _state.ReconnectResumeStage >= ClientStage.WorldSelected && _state.SelectedWorldId != 0)
+                    {
+                        var selected = _state.Worlds.FirstOrDefault(x => x.WorldId == _state.SelectedWorldId);
+                        if (selected != null)
+                        {
+                            _characterPanel.WorldListBox.SelectedItem = selected;
+                            _ = SelectWorldAsync();
+                        }
+                    }
                     break;
                 case ClientProtocol.WorldSelectResponse:
                     var worldSelect = ClientProtocol.ParseWorldSelect(body);
@@ -203,8 +398,14 @@ namespace DummyClientWinForms
                         _state.WorldToken = string.Empty;
                         _state.Characters.Clear();
                         _characterPanel.CharacterListBox.DataSource = null;
+                        _state.CurrentStage = ClientStage.WorldSelected;
+                        _state.LastStableStage = ClientStage.WorldSelected;
                     }
                     AppendLog($"world_select ok={worldSelect.Ok} world={worldSelect.WorldId} server_code={worldSelect.ServerCode} fail_reason={worldSelect.FailReason}");
+                    if (worldSelect.Ok && _state.ReconnectRequested && _state.ReconnectResumeStage >= ClientStage.CharacterSelected)
+                    {
+                        _ = SendLoginPacketAsync(ClientProtocol.CharacterListRequest, ClientProtocol.BuildCharacterListRequest());
+                    }
                     break;
                 case ClientProtocol.CharacterListResponse:
                     bool ok;
@@ -215,6 +416,15 @@ namespace DummyClientWinForms
                     _characterPanel.CharacterListBox.DataSource = null;
                     _characterPanel.CharacterListBox.DataSource = _state.Characters.ToList();
                     AppendLog($"character_list ok={ok} count={list.Count} reason={reason}");
+                    if (_state.ReconnectRequested && _state.ReconnectResumeStage >= ClientStage.CharacterSelected && _state.SelectedCharId != 0)
+                    {
+                        var selected = _state.Characters.FirstOrDefault(x => x.CharId == _state.SelectedCharId);
+                        if (selected != null)
+                        {
+                            _characterPanel.CharacterListBox.SelectedItem = selected;
+                            _ = SelectCharacterAsync();
+                        }
+                    }
                     break;
                 case ClientProtocol.CharacterSelectResponse:
                     var select = ClientProtocol.ParseCharacterSelect(body);
@@ -224,8 +434,15 @@ namespace DummyClientWinForms
                         _state.WorldHost = select.WorldHost;
                         _state.WorldPort = select.WorldPort;
                         _state.WorldToken = select.WorldToken;
+                        _state.WorldEnterCompleted = false;
+                        _state.CurrentStage = ClientStage.CharacterSelected;
+                        _state.LastStableStage = ClientStage.CharacterSelected;
                     }
                     AppendLog($"character_select ok={select.Ok} char_id={select.CharId} fail_reason={select.FailReason}");
+                    if (select.Ok && _state.ReconnectRequested && _state.ReconnectResumeStage >= ClientStage.InWorld)
+                    {
+                        _ = EnterWorldAsync();
+                    }
                     break;
                 default:
                     AppendLog($"unknown login packet type={type} size={body.Length}");
@@ -241,8 +458,63 @@ namespace DummyClientWinForms
                 case ClientProtocol.EnterWorldResult:
                     var enter = ClientProtocol.ParseEnterWorldResult(body);
                     _state.InWorld = enter.Ok;
+                    _state.EnterWorldRequested = false;
+                    _state.WorldEnterCompleted = enter.Ok;
+                    if (enter.Ok)
+                    {
+                        _state.CurrentStage = ClientStage.InWorld;
+                        _state.LastStableStage = ClientStage.InWorld;
+                        _state.ReconnectToken = enter.ReconnectToken ?? string.Empty;
+                    }
+                    else
+                    {
+                        _state.ReconnectToken = string.Empty;
+                    }
                     if (enter.CharId != 0) _state.SelectedCharId = enter.CharId;
-                    AppendLog($"enter_world ok={enter.Ok} reason={enter.Reason} char_id={enter.CharId}");
+                    EnsureSelfVisible();
+                    AppendLog($"enter_world ok={enter.Ok} reason={enter.Reason} char_id={enter.CharId} reconnect_token_len={(_state.ReconnectToken?.Length ?? 0)}");
+                    if (_state.ReconnectRequested && enter.Ok)
+                    {
+                        AppendLog("reconnect resume completed");
+                        _state.ReconnectRequested = false;
+                        _state.ReconnectResumeStage = ClientStage.None;
+                    }
+                    break;
+                case ClientProtocol.LogoutWorldResult:
+                    var logout = ClientProtocol.ParseLogoutWorldResult(body);
+                    AppendLog($"logout_world_result ok={logout.Ok} type={logout.Type} reason={logout.Reason} char_id={logout.CharId}");
+                    if (logout.Ok)
+                    {
+                        _state.ReconnectRequested = false;
+                        _state.ReconnectResumeStage = ClientStage.None;
+                        _state.LastReconnectTarget = ReconnectTarget.None;
+                        _ = _worldClient.DisconnectAsync("explicit_logout_world", true);
+                        ResetRuntimeStateAfterWorldLogout(logout.Type == 2);
+                        if (logout.Type == 2)
+                        {
+                            _ = _loginClient.DisconnectAsync("explicit_logout_login", true);
+                            ResetWorldState(clearCredentials: false);
+                            _state.CurrentStage = ClientStage.None;
+                        }
+                    }
+                    break;
+                case ClientProtocol.ReconnectWorldResult:
+                    var reconnect = ClientProtocol.ParseReconnectWorldResult(body);
+                    AppendLog($"reconnect_world_result ok={reconnect.Ok} reason={reconnect.Reason} char_id={reconnect.CharId} zone={reconnect.ZoneId} map={reconnect.MapId} pos=({reconnect.X},{reconnect.Y})");
+                    if (reconnect.Ok)
+                    {
+                        _state.InWorld = true;
+                        _state.WorldEnterCompleted = true;
+                        _state.CurrentStage = ClientStage.InWorld;
+                        _state.LastStableStage = ClientStage.InWorld;
+                        _state.ReconnectRequested = false;
+                        _state.ReconnectResumeStage = ClientStage.None;
+                        _state.LastReconnectTarget = ReconnectTarget.World;
+                        _state.ReconnectToken = reconnect.ReconnectToken ?? string.Empty;
+                        if (reconnect.CharId != 0) _state.SelectedCharId = reconnect.CharId;
+                        ApplyZoneMapState(new ZoneMapStateModel { CharId = reconnect.CharId, ZoneId = reconnect.ZoneId, MapId = reconnect.MapId, X = reconnect.X, Y = reconnect.Y, Reason = 0 });
+                        EnsureSelfVisible();
+                    }
                     break;
                 case ClientProtocol.ZoneMapState:
                     var zoneState = ClientProtocol.ParseZoneMapState(body);
@@ -257,7 +529,13 @@ namespace DummyClientWinForms
                     _state.Atk = stats.Atk;
                     _state.Def = stats.Def;
                     _state.Gold = stats.Gold;
+                    EnsureSelfVisible();
                     AppendLog($"stats hp={stats.Hp}/{stats.MaxHp} atk={stats.Atk} def={stats.Def} gold={stats.Gold}");
+                    break;
+                case ClientProtocol.AddGoldOk:
+                    var gold = ClientProtocol.ParseAddGoldResult(body);
+                    _state.Gold = gold.Gold;
+                    AppendLog($"add_gold ok={gold.Ok} gold={gold.Gold}");
                     break;
                 case ClientProtocol.SpawnMonsterOk:
                     var sm = ClientProtocol.ParseSpawnMonsterOk(body);
@@ -267,22 +545,22 @@ namespace DummyClientWinForms
                 case ClientProtocol.AttackResult:
                     var ar = ClientProtocol.ParseAttackResult(body);
                     _state.Gold = ar.AttackerGold;
-                    AppendLog($"attack_result target={ar.TargetId} dmg={ar.Damage} target_hp={ar.TargetHp} killed={ar.Killed}");
+                    AppendLog($"attack_result target={ar.TargetId} dmg={ar.Damage} target_hp={ar.TargetHp} killed={ar.Killed} drop={ar.DropItemId}x{ar.DropCount}");
                     break;
                 case ClientProtocol.PlayerSpawn:
-                    UpsertPlayer(ClientProtocol.ParsePlayerSpawn(body, PacketReader.ReadUInt64(body, 0) == _state.SelectedCharId));
+                    UpsertPlayer(ClientProtocol.ParsePlayerSpawn(body, _state.SelectedCharId));
                     break;
                 case ClientProtocol.PlayerMove:
-                    UpsertPlayer(ClientProtocol.ParsePlayerSpawn(body, PacketReader.ReadUInt64(body, 0) == _state.SelectedCharId));
+                    UpsertPlayer(ClientProtocol.ParsePlayerMove(body, _state.SelectedCharId));
                     break;
                 case ClientProtocol.PlayerSpawnBatch:
                     foreach (var p in ClientProtocol.ParsePlayerSpawnBatch(body, _state.SelectedCharId)) UpsertPlayer(p);
                     break;
                 case ClientProtocol.PlayerMoveBatch:
-                    foreach (var p in ClientProtocol.ParsePlayerSpawnBatch(body, _state.SelectedCharId)) UpsertPlayer(p);
+                    foreach (var p in ClientProtocol.ParsePlayerMoveBatch(body, _state.SelectedCharId)) UpsertPlayer(p);
                     break;
                 case ClientProtocol.PlayerDespawn:
-                    RemovePlayer(PacketReader.ReadUInt64(body, 0));
+                    RemovePlayer(ClientProtocol.ParsePlayerDespawn(body));
                     break;
                 case ClientProtocol.PlayerDespawnBatch:
                     foreach (var id in ClientProtocol.ParsePlayerDespawnBatch(body)) RemovePlayer(id);
@@ -302,12 +580,36 @@ namespace DummyClientWinForms
                 _state.PosY = obj.Y;
                 obj.IsSelf = true;
                 obj.Label = "Self";
+                obj.ZoneId = _state.ZoneId;
+                obj.MapId = _state.MapId;
             }
             _state.LiveObjects[obj.Id] = obj;
         }
 
+        private void EnsureSelfVisible()
+        {
+            if (_state.SelectedCharId == 0) return;
+            _state.LiveObjects["player:" + _state.SelectedCharId] = new PlayerObject
+            {
+                Kind = WorldObjectKind.Player,
+                CharId = _state.SelectedCharId,
+                Id = "player:" + _state.SelectedCharId,
+                X = _state.PosX,
+                Y = _state.PosY,
+                ZoneId = _state.ZoneId,
+                MapId = _state.MapId,
+                Label = "Self",
+                IsSelf = true,
+            };
+        }
+
         private void RemovePlayer(ulong charId)
         {
+            if (charId == _state.SelectedCharId)
+            {
+                EnsureSelfVisible();
+                return;
+            }
             _state.LiveObjects.Remove("player:" + charId);
         }
 
@@ -319,7 +621,46 @@ namespace DummyClientWinForms
             _state.PosX = zoneState.X;
             _state.PosY = zoneState.Y;
             _state.ZoneMapStateReason = zoneState.Reason;
+            EnsureSelfVisible();
             ApplyOverlaySelectionFromState();
+        }
+
+        private void ResetRuntimeStateAfterWorldLogout(bool hardLogout)
+        {
+            _state.ConnectedToWorld = false;
+            _state.InWorld = false;
+            _state.WorldEnterCompleted = false;
+            _state.EnterWorldRequested = false;
+            _state.ReconnectToken = string.Empty;
+            _state.ZoneMapStateReason = 0;
+            _state.PosX = 0;
+            _state.PosY = 0;
+            _state.Hp = 0;
+            _state.MaxHp = 0;
+            _state.Atk = 0;
+            _state.Def = 0;
+            _state.Gold = 0;
+            _state.LiveObjects.Clear();
+            _selectedObjectId = string.Empty;
+            _lastMonsterId = 0;
+
+            if (hardLogout)
+            {
+                _state.CurrentStage = ClientStage.None;
+                _state.LastStableStage = ClientStage.None;
+                _state.SelectedCharId = 0;
+                _state.SelectedWorldId = 0;
+                _state.WorldToken = string.Empty;
+                _state.Worlds.Clear();
+                _state.Characters.Clear();
+                _characterPanel.WorldListBox.DataSource = null;
+                _characterPanel.CharacterListBox.DataSource = null;
+            }
+            else
+            {
+                _state.CurrentStage = _state.SelectedCharId != 0 ? ClientStage.CharacterSelected : ClientStage.WorldSelected;
+                _state.LastStableStage = _state.CurrentStage;
+            }
         }
 
         private void ApplyOverlaySelectionFromState()
@@ -371,6 +712,39 @@ namespace DummyClientWinForms
             return dx * dx + dy * dy;
         }
 
+        private void ResetWorldState(bool clearCredentials)
+        {
+            _state.ConnectedToLogin = false;
+            _state.ConnectedToWorld = false;
+            _state.LoggedIn = false;
+            _state.InWorld = false;
+            _state.AccountId = 0;
+            _state.SelectedCharId = 0;
+            _state.SelectedWorldId = 0;
+            _state.SelectedChannelId = 0;
+            _state.LoginSession = string.Empty;
+            _state.WorldToken = string.Empty;
+            _state.ReconnectToken = string.Empty;
+            _state.WorldHost = string.Empty;
+            _state.WorldPort = 0;
+            _state.WorldEnterCompleted = false;
+            _state.EnterWorldRequested = false;
+            _state.CurrentStage = ClientStage.None;
+            _state.LastStableStage = ClientStage.None;
+            _state.ReconnectResumeStage = ClientStage.None;
+            _state.Worlds.Clear();
+            _state.Characters.Clear();
+            _state.LiveObjects.Clear();
+            _characterPanel.WorldListBox.DataSource = null;
+            _characterPanel.CharacterListBox.DataSource = null;
+            _lastMonsterId = 0;
+            if (clearCredentials)
+            {
+                _state.LoginId = string.Empty;
+                _state.Password = string.Empty;
+            }
+        }
+
         private void AppendLog(string message)
         {
             _logTextBox.AppendText($"[{DateTime.Now:HH:mm:ss}] {message}{Environment.NewLine}");
@@ -384,9 +758,16 @@ namespace DummyClientWinForms
                 $"Account: {_state.AccountId}{Environment.NewLine}" +
                 $"SelectedWorld: {_state.SelectedWorldId}/{_state.SelectedChannelId}{Environment.NewLine}" +
                 $"SelectedChar: {_state.SelectedCharId}{Environment.NewLine}" +
+                $"Stage: {_state.CurrentStage} stable={_state.LastStableStage}{Environment.NewLine}" +
                 $"LoggedIn: {_state.LoggedIn}{Environment.NewLine}" +
                 $"InWorld: {_state.InWorld}{Environment.NewLine}" +
                 $"World: {_state.WorldHost}:{_state.WorldPort}{Environment.NewLine}" +
+                $"ReconnectTarget: {_state.LastReconnectTarget}{Environment.NewLine}" +
+                $"ReconnectResumeStage: {_state.ReconnectResumeStage}{Environment.NewLine}" +
+                $"DisconnectReason: {_state.LastDisconnectReason}{Environment.NewLine}" +
+                $"DisconnectDetail: {_state.LastDisconnectDetail}{Environment.NewLine}" +
+                $"CoordScale: 1u={_state.CoordinateUnitMeters}m{Environment.NewLine}" +
+                $"AOIRadius: {_state.AoiRadiusMeters}m{Environment.NewLine}" +
                 $"Zone/Map: {_state.ZoneId}/{_state.MapId}{Environment.NewLine}" +
                 $"OverlayMode: {(_state.AutoOverlayZone ? "auto" : "manual")}{Environment.NewLine}" +
                 $"ZoneMapReason: {_state.ZoneMapStateReason}{Environment.NewLine}" +
@@ -402,4 +783,7 @@ namespace DummyClientWinForms
         }
     }
 }
+
+
+
 
