@@ -1,4 +1,4 @@
-﻿#include "server_common/data/zone_runtime_data.h"
+#include "server_common/data/zone_runtime_data.h"
 
 #include <algorithm>
 #include <cmath>
@@ -64,6 +64,26 @@ namespace {
         if (status.ready) {
             status.last_error_reason.clear();
         }
+    }
+
+    template <typename TRecord>
+    const TRecord* FindCircularRegion_(const std::vector<TRecord>& rows, std::uint32_t zone_id, std::uint32_t map_id, std::int32_t x, std::int32_t y)
+    {
+        for (const auto& row : rows) {
+            if (row.zone_id != zone_id) {
+                continue;
+            }
+            if (row.map_id != 0 && map_id != 0 && row.map_id != map_id) {
+                continue;
+            }
+            const auto dx = static_cast<double>(x - row.center_x);
+            const auto dy = static_cast<double>(y - row.center_z);
+            const auto rr = static_cast<double>(std::max(0, row.radius));
+            if ((dx * dx + dy * dy) <= (rr * rr)) {
+                return &row;
+            }
+        }
+        return nullptr;
     }
 }
 
@@ -194,25 +214,37 @@ std::vector<ZoneMapRecord> ZoneRuntimeDataStore::GetMapRecords(std::uint32_t zon
     return out;
 }
 
+bool ZoneRuntimeDataStore::HasMap(std::uint32_t zone_id, std::uint32_t map_id)
+{
+    auto& state = GetState();
+    std::lock_guard lk(state.mtx);
+    for (const auto& row : state.pack.maps) {
+        if (row.zone_id == zone_id && row.map_id == map_id) {
+            return true;
+        }
+    }
+    return false;
+}
+
 const ZonePortalRecord* ZoneRuntimeDataStore::FindTriggeredPortal(std::uint32_t zone_id, std::uint32_t map_id, std::int32_t x, std::int32_t y)
 {
     auto& state = GetState();
     std::lock_guard lk(state.mtx);
-    for (const auto& row : state.pack.portals) {
-        if (row.zone_id != zone_id) {
-            continue;
-        }
-        if (row.map_id != 0 && map_id != 0 && row.map_id != map_id) {
-            continue;
-        }
-        const auto dx = static_cast<double>(x - row.center_x);
-        const auto dy = static_cast<double>(y - row.center_z);
-        const auto rr = static_cast<double>(std::max(0, row.radius));
-        if ((dx * dx + dy * dy) <= (rr * rr)) {
-            return &row;
-        }
-    }
-    return nullptr;
+    return FindCircularRegion_(state.pack.portals, zone_id, map_id, x, y);
+}
+
+const ZoneSafeRecord* ZoneRuntimeDataStore::FindSafeRegion(std::uint32_t zone_id, std::uint32_t map_id, std::int32_t x, std::int32_t y)
+{
+    auto& state = GetState();
+    std::lock_guard lk(state.mtx);
+    return FindCircularRegion_(state.pack.safe_regions, zone_id, map_id, x, y);
+}
+
+const ZoneSpecialRecord* ZoneRuntimeDataStore::FindSpecialRegion(std::uint32_t zone_id, std::uint32_t map_id, std::int32_t x, std::int32_t y)
+{
+    auto& state = GetState();
+    std::lock_guard lk(state.mtx);
+    return FindCircularRegion_(state.pack.special_regions, zone_id, map_id, x, y);
 }
 
 std::vector<ZoneNpcRecord> ZoneRuntimeDataStore::GetNpcOverlay(std::uint32_t zone_id)
@@ -254,6 +286,32 @@ std::vector<ZonePortalRecord> ZoneRuntimeDataStore::GetPortalOverlay(std::uint32
     return out;
 }
 
+std::vector<ZoneNpcRecord> ZoneRuntimeDataStore::GetNpcRegions(std::uint32_t zone_id, std::uint32_t map_id)
+{
+    auto& state = GetState();
+    std::lock_guard lk(state.mtx);
+    std::vector<ZoneNpcRecord> out;
+    for (const auto& row : state.pack.npcs) {
+        if (row.zone_id == zone_id && (map_id == 0 || row.map_id == 0 || row.map_id == map_id)) {
+            out.push_back(row);
+        }
+    }
+    return out;
+}
+
+std::vector<ZoneMonsterRecord> ZoneRuntimeDataStore::GetMonsterRegions(std::uint32_t zone_id, std::uint32_t map_id)
+{
+    auto& state = GetState();
+    std::lock_guard lk(state.mtx);
+    std::vector<ZoneMonsterRecord> out;
+    for (const auto& row : state.pack.monsters) {
+        if (row.zone_id == zone_id && (map_id == 0 || row.map_id == 0 || row.map_id == map_id)) {
+            out.push_back(row);
+        }
+    }
+    return out;
+}
+
 ZoneRuntimeDataStatus ZoneRuntimeDataStore::SnapshotStatus()
 {
     auto& state = GetState();
@@ -262,5 +320,3 @@ ZoneRuntimeDataStatus ZoneRuntimeDataStore::SnapshotStatus()
 }
 
 } // namespace dc::zone
-
-

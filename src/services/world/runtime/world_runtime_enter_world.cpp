@@ -1,4 +1,4 @@
-﻿#include "services/world/runtime/world_runtime_private.h"
+#include "services/world/runtime/world_runtime_private.h"
 #include "services/world/db/item_template_repository.h"
 #include <fmt/format.h>
 #include "server_common/log/enter_flow_log.h"
@@ -89,16 +89,15 @@ namespace svr {
 			return;
 		}
 
-		pt_w::S2C_enter_world_result res{};
-		res.ok = 0;
-		res.reason = static_cast<std::uint16_t>(reason);
-		res.account_id = pending.account_id;
-		res.char_id = pending.char_id;
-
-		const auto h = proto::make_header(
-			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-			static_cast<std::uint16_t>(sizeof(res)));
-		handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+		handler->SendEnterWorldResult(
+			0,
+			pending.sid,
+			pending.serial,
+			false,
+			reason,
+			pending.account_id,
+			pending.char_id,
+			pending.use_protobuf);
 
 		spdlog::warn(
 			"{} request_id={} sid={} serial={} account_id={} char_id={} token={}",
@@ -322,16 +321,15 @@ namespace svr {
 			static_cast<std::uint16_t>(sizeof(bound)));
 		handler->Send(0, pending.sid, pending.serial, bh, reinterpret_cast<const char*>(&bound));
 
-		pt_w::S2C_enter_world_result res{};
-		res.ok = 1;
-		res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::success);
-		res.account_id = pending.account_id;
-		res.char_id = pending.char_id;
-
-		const auto h = proto::make_header(
-			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-			static_cast<std::uint16_t>(sizeof(res)));
-		handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+		handler->SendEnterWorldResult(
+			0,
+			pending.sid,
+			pending.serial,
+			true,
+			pt_w::EnterWorldResultCode::success,
+			pending.account_id,
+			pending.char_id,
+			pending.use_protobuf);
 
 		handler->SendZoneMapState(
 			0,
@@ -348,11 +346,10 @@ namespace svr {
 	bool WorldRuntime::RequestCharacterEnterSnapshotLoad_(
 		const PendingEnterWorldConsumeRequest& pending)
 	{
-		const std::uint32_t world_code = 0;
 		const auto request_id = next_world_auth_consume_request_id_.fetch_add(1, std::memory_order_relaxed);
 
 		svr::dqs_payload::WorldCharacterEnterSnapshot payload{};
-		payload.world_code = world_code;
+		payload.world_id = world_id_;
 		payload.sid = pending.sid;
 		payload.serial = pending.serial;
 		payload.trace_id = pending.trace_id;
@@ -360,7 +357,7 @@ namespace svr {
 		payload.account_id = pending.account_id;
 		payload.char_id = pending.char_id;
 
-		if (auto blob = TryLoadCharacterState(world_code, pending.char_id); blob.has_value()) {
+		if (auto blob = TryLoadCharacterState(world_id_, pending.char_id); blob.has_value()) {
 			const auto copy_size = static_cast<std::uint16_t>(std::min<std::size_t>(blob->size(), dc::k_character_state_blob_max_len));
 			payload.cached_state_blob_size = copy_size;
 			if (copy_size > 0) {
@@ -474,10 +471,6 @@ namespace svr {
 			return;
 		}
 
-		pt_w::S2C_enter_world_result res{};
-		res.account_id = pending.account_id;
-		res.char_id = pending.char_id;
-
 		const auto begin_result = TryBeginEnterWorldSession(
 			pending.sid,
 			pending.serial,
@@ -485,12 +478,15 @@ namespace svr {
 			pending.char_id);
 
 		if (!begin_result.started()) {
-			res.ok = 0;
-			res.reason = static_cast<std::uint16_t>(MapBeginEnterFailReason_(begin_result.kind));
-			const auto h = proto::make_header(
-				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-				static_cast<std::uint16_t>(sizeof(res)));
-			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			handler->SendEnterWorldResult(
+				0,
+				pending.sid,
+				pending.serial,
+				false,
+				MapBeginEnterFailReason_(begin_result.kind),
+				pending.account_id,
+				pending.char_id,
+				pending.use_protobuf);
 			dc::enterlog::LogEnterFlow(
 				spdlog::level::warn,
 				dc::enterlog::EnterStage::EnterFlowAborted,
@@ -511,12 +507,15 @@ namespace svr {
 
 		if (bind_result.kind == BindAuthedWorldSessionResultKind::InvalidInput) {
 			CancelPendingEnterWorldSession(pending.sid, pending.serial, pending.char_id);
-			res.ok = 0;
-			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::bind_invalid_input);
-			const auto h = proto::make_header(
-				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-				static_cast<std::uint16_t>(sizeof(res)));
-			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			handler->SendEnterWorldResult(
+				0,
+				pending.sid,
+				pending.serial,
+				false,
+				pt_w::EnterWorldResultCode::bind_invalid_input,
+				pending.account_id,
+				pending.char_id,
+				pending.use_protobuf);
 			dc::enterlog::LogEnterFlow(
 				spdlog::level::warn,
 				dc::enterlog::EnterStage::EnterFlowAborted,
@@ -532,7 +531,7 @@ namespace svr {
 			svr::CharacterDirtyFlags::position;
 		core_state.hot.version += 1;
 
-		const auto map_template_id = core_state.hot.position.map_id != 0 ? core_state.hot.position.map_id : 1001u;
+		const auto map_template_id = core_state.hot.position.map_id != 0 ? core_state.hot.position.map_id : 1;
 		const auto instance_id = 0u;
 		const auto map_assignment = AssignMapInstance(map_template_id, instance_id, true, false, pending.trace_id);
 
@@ -612,9 +611,10 @@ namespace svr {
 
 
 
-	bool WorldRuntime::RequestConsumeWorldAuthTicket(
+bool WorldRuntime::RequestConsumeWorldAuthTicket(
 		std::uint32_t sid,
 		std::uint32_t serial,
+		bool use_protobuf,
 		std::uint64_t trace_id,
 		std::uint64_t account_id,
 		std::string_view login_session,
@@ -648,6 +648,7 @@ namespace svr {
 				request_id,
 				sid,
 				serial,
+				use_protobuf,
 				account_id,
 				0,
 				std::string(login_session),
@@ -657,7 +658,7 @@ namespace svr {
 		}
 
 		const bool sent = world_account_handler_->SendWorldAuthTicketConsumeRequest(
-			100,
+			0,
 			account_sid_.load(std::memory_order_relaxed),
 			account_serial_.load(std::memory_order_relaxed),
 			trace_id,
@@ -727,10 +728,6 @@ namespace svr {
 			return;
 		}
 
-		pt_w::S2C_enter_world_result res{};
-		res.account_id = pending.account_id;
-		res.char_id = pending.char_id;
-
 		if (pending.account_id != account_id ||
 			pending.login_session != login_session ||
 			pending.world_token != world_token)
@@ -746,12 +743,15 @@ namespace svr {
 				pending.world_token,
 				world_token);
 
-			res.ok = 0;
-			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_mismatch);
-			const auto h = proto::make_header(
-				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-				static_cast<std::uint16_t>(sizeof(res)));
-			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			handler->SendEnterWorldResult(
+				0,
+				pending.sid,
+				pending.serial,
+				false,
+				pt_w::EnterWorldResultCode::auth_ticket_mismatch,
+				pending.account_id,
+				pending.char_id,
+				pending.use_protobuf);
 			dc::enterlog::LogEnterFlow(
 				spdlog::level::warn,
 				dc::enterlog::EnterStage::WorldTokenConsumeResult,
@@ -766,29 +766,34 @@ namespace svr {
 			world_token.empty() ? pending.world_token : std::string(world_token);
 
 		if (result_kind != ConsumePendingWorldAuthTicketResultKind::Ok) {
-			res.ok = 0;
+			auto reason = pt_w::EnterWorldResultCode::auth_ticket_not_found;
 			switch (result_kind) {
 			case ConsumePendingWorldAuthTicketResultKind::Expired:
-				res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_expired);
+				reason = pt_w::EnterWorldResultCode::auth_ticket_expired;
 				break;
 			case ConsumePendingWorldAuthTicketResultKind::ReplayDetected:
-				res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_replayed);
+				reason = pt_w::EnterWorldResultCode::auth_ticket_replayed;
 				break;
 			case ConsumePendingWorldAuthTicketResultKind::AccountMismatch:
 			case ConsumePendingWorldAuthTicketResultKind::CharMismatch:
 			case ConsumePendingWorldAuthTicketResultKind::LoginSessionMismatch:
-				res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_mismatch);
+				reason = pt_w::EnterWorldResultCode::auth_ticket_mismatch;
 				break;
 			case ConsumePendingWorldAuthTicketResultKind::TokenNotFound:
 			default:
-				res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::auth_ticket_not_found);
+				reason = pt_w::EnterWorldResultCode::auth_ticket_not_found;
 				break;
 			}
 
-			const auto h = proto::make_header(
-				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-				static_cast<std::uint16_t>(sizeof(res)));
-			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			handler->SendEnterWorldResult(
+				0,
+				pending.sid,
+				pending.serial,
+				false,
+				reason,
+				pending.account_id,
+				pending.char_id,
+				pending.use_protobuf);
 
 			spdlog::warn(
 				"[{}] sid={} serial={} request_id={} pending_account_id={} pending_char_id={} resp_account_id={} resp_char_id={} result_kind={}",
@@ -818,12 +823,15 @@ namespace svr {
 		pending.world_token = final_world_token;
 
 		if (!RequestCharacterEnterSnapshotLoad_(pending)) {
-			res.ok = 0;
-			res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::internal_error);
-			const auto h = proto::make_header(
-				static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-				static_cast<std::uint16_t>(sizeof(res)));
-			handler->Send(0, pending.sid, pending.serial, h, reinterpret_cast<const char*>(&res));
+			handler->SendEnterWorldResult(
+				0,
+				pending.sid,
+				pending.serial,
+				false,
+				pt_w::EnterWorldResultCode::internal_error,
+				pending.account_id,
+				pending.char_id,
+				pending.use_protobuf);
 		}
 	}
 

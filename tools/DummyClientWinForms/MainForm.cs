@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
@@ -82,7 +82,7 @@ namespace DummyClientWinForms
         private async Task SelectWorldAsync()
         {
             if (!(_characterPanel.WorldListBox.SelectedItem is WorldSummary item)) return;
-            await SendLoginPacketAsync(ClientProtocol.WorldSelectRequest, ClientProtocol.BuildWorldSelectRequest(item.WorldId, item.ChannelId));
+            await SendLoginPacketAsync(ClientProtocol.WorldSelectRequest, ClientProtocol.BuildWorldSelectRequest(item.WorldId, item.ServerCode));
         }
 
         private async Task SelectCharacterAsync()
@@ -176,7 +176,7 @@ namespace DummyClientWinForms
                     _state.Characters.Clear();
                     _characterPanel.WorldListBox.DataSource = null;
                     _characterPanel.CharacterListBox.DataSource = null;
-                    AppendLog($"login_result ok={login.Ok} account_id={login.AccountId} waiting_world_select=1");
+                    AppendLog($"login_result ok={login.Ok} account_id={login.AccountId} world_entries={login.WorldEntries} fail_reason={login.FailReason} waiting_world_select=1");
                     if (login.Ok)
                     {
                         _ = SendLoginPacketAsync(ClientProtocol.WorldListRequest, ClientProtocol.BuildWorldListRequest());
@@ -197,14 +197,14 @@ namespace DummyClientWinForms
                     if (worldSelect.Ok)
                     {
                         _state.SelectedWorldId = worldSelect.WorldId;
-                        _state.SelectedChannelId = worldSelect.ChannelId;
+                        _state.SelectedChannelId = 0;
                         _state.WorldHost = worldSelect.WorldHost;
                         _state.WorldPort = worldSelect.WorldPort;
                         _state.WorldToken = string.Empty;
                         _state.Characters.Clear();
                         _characterPanel.CharacterListBox.DataSource = null;
                     }
-                    AppendLog($"world_select ok={worldSelect.Ok} world={worldSelect.WorldId}:{worldSelect.ChannelId} fail_reason={worldSelect.FailReason}");
+                    AppendLog($"world_select ok={worldSelect.Ok} world={worldSelect.WorldId} server_code={worldSelect.ServerCode} fail_reason={worldSelect.FailReason}");
                     break;
                 case ClientProtocol.CharacterListResponse:
                     bool ok;
@@ -402,3 +402,4 @@ namespace DummyClientWinForms
         }
     }
 }
+

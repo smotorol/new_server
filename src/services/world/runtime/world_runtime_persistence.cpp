@@ -157,7 +157,7 @@ namespace svr {
 		}
 
 		svr::dqs_payload::WorldAccountCharacterListRequest payload{};
-		payload.world_code = world_id;
+		payload.world_id = world_id;
 		payload.sid = sid;
 		payload.serial = serial;
 		payload.trace_id = trace_id;
@@ -608,7 +608,7 @@ namespace svr {
 							std::memcpy(&payload, slot.data.data(), sizeof(payload));
 
 							svr::dqs_result::WorldCharacterEnterSnapshotResult r{};
-							r.world_code = payload.world_code;
+							r.world_id = payload.world_id;
 							r.sid = payload.sid;
 							r.serial = payload.serial;
 							r.trace_id = payload.trace_id;
@@ -616,7 +616,7 @@ namespace svr {
 							r.account_id = payload.account_id;
 							r.char_id = payload.char_id;
 
-							if (payload.world_code != world_id_ || !world_pool_ || world_pool_->conns.empty())
+							if (payload.world_id != world_id_ || !world_pool_ || world_pool_->conns.empty())
 							{
 								slot.result = svr::dqs::ResultCode::db_error;
 								std::memcpy(r.fail_reason, "world_db_not_ready", sizeof("world_db_not_ready"));
@@ -676,7 +676,7 @@ namespace svr {
 							std::memcpy(&payload, slot.data.data(), sizeof(payload));
 
 							svr::dqs_result::WorldAccountCharacterListResult r{};
-							r.world_code = payload.world_code;
+							r.world_code = payload.world_id;
 							r.sid = payload.sid;
 							r.serial = payload.serial;
 							r.trace_id = payload.trace_id;
@@ -684,7 +684,7 @@ namespace svr {
 							r.account_id = payload.account_id;
 							std::snprintf(r.login_session, sizeof(r.login_session), "%s", payload.login_session);
 
-							if (payload.world_code != world_id_ || !world_pool_ || world_pool_->conns.empty())
+							if (payload.world_id != world_id_ || !world_pool_ || world_pool_->conns.empty())
 							{
 								slot.result = svr::dqs::ResultCode::db_error;
 								std::memcpy(r.fail_reason, "world_db_not_ready", sizeof("world_db_not_ready"));

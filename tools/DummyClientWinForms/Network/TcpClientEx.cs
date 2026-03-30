@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.IO;
 using System.Net.Sockets;
 using System.Threading;
@@ -46,11 +46,12 @@ namespace DummyClientWinForms.Network
         {
             if (_stream == null) return;
             body = body ?? Array.Empty<byte>();
-            var total = (ushort)(4 + body.Length);
-            var header = new byte[4];
-            BitConverter.GetBytes(total).CopyTo(header, 0);
-            BitConverter.GetBytes(type).CopyTo(header, 2);
-            await _stream.WriteAsync(header, 0, header.Length).ConfigureAwait(false);
+            var header = new PacketHeader
+            {
+                Size = (ushort)(PacketHeader.SizeInBytes + body.Length),
+                Type = type,
+            };
+            await _stream.WriteAsync(header.ToBytes(), 0, PacketHeader.SizeInBytes).ConfigureAwait(false);
             if (body.Length > 0)
             {
                 await _stream.WriteAsync(body, 0, body.Length).ConfigureAwait(false);
@@ -61,19 +62,18 @@ namespace DummyClientWinForms.Network
         {
             try
             {
-                var header = new byte[4];
+                var headerBytes = new byte[PacketHeader.SizeInBytes];
                 while (!token.IsCancellationRequested && _stream != null)
                 {
-                    await ReadExactAsync(_stream, header, 4, token).ConfigureAwait(false);
-                    var size = BitConverter.ToUInt16(header, 0);
-                    var type = BitConverter.ToUInt16(header, 2);
-                    var bodyLen = Math.Max(0, size - 4);
+                    await ReadExactAsync(_stream, headerBytes, PacketHeader.SizeInBytes, token).ConfigureAwait(false);
+                    var header = PacketHeader.FromBytes(headerBytes);
+                    var bodyLen = Math.Max(0, header.Size - PacketHeader.SizeInBytes);
                     var body = new byte[bodyLen];
                     if (bodyLen > 0)
                     {
                         await ReadExactAsync(_stream, body, bodyLen, token).ConfigureAwait(false);
                     }
-                    PacketReceived?.Invoke(type, body);
+                    PacketReceived?.Invoke(header.Type, body);
                 }
             }
             catch (Exception ex)

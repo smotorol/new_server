@@ -1,4 +1,4 @@
-<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+﻿<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -19,7 +19,7 @@
     <DebugType>full</DebugType>
     <Optimize>false</Optimize>
     <OutputPath>bin\Debug\</OutputPath>
-    <DefineConstants>DEBUG;TRACE</DefineConstants>
+    <DefineConstants>TRACE;DEBUG</DefineConstants>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <PropertyGroup Condition=" '$(Configuration)|$(Platform)' == 'Release|AnyCPU' ">
@@ -27,7 +27,7 @@
     <DebugType>pdbonly</DebugType>
     <Optimize>true</Optimize>
     <OutputPath>bin\Release\</OutputPath>
-    <DefineConstants>TRACE</DefineConstants>
+    <DefineConstants>TRACE;GOOGLE_PROTOBUF_REFSTRUCT_COMPATIBILITY_MODE</DefineConstants>
     <WarningLevel>4</WarningLevel>
   </PropertyGroup>
   <ItemGroup>
@@ -35,6 +35,18 @@
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
     <Reference Include="System.Windows.Forms" />
+    <Reference Include="Google.Protobuf">
+      <HintPath>C:\Users\smotorol\.nuget\packages\google.protobuf\3.21.9\lib\net45\Google.Protobuf.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="System.Memory">
+      <HintPath>C:\Users\smotorol\.nuget\packages\system.memory\4.5.4\lib\net461\System.Memory.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
+    <Reference Include="System.Runtime.CompilerServices.Unsafe">
+      <HintPath>C:\Users\smotorol\.nuget\packages\system.runtime.compilerservices.unsafe\4.7.1\lib\net461\System.Runtime.CompilerServices.Unsafe.dll</HintPath>
+      <Private>true</Private>
+    </Reference>
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
@@ -45,6 +57,7 @@
       <DependentUpon>MainForm.cs</DependentUpon>
     </Compile>
     <Compile Include="Network\TcpClientEx.cs" />
+    <Compile Include="Network\PacketHeader.cs" />
     <Compile Include="Network\PacketReader.cs" />
     <Compile Include="Network\PacketWriter.cs" />
     <Compile Include="Network\ClientProtocol.cs" />
@@ -67,6 +80,15 @@
     <Compile Include="Services\DummyClientState.cs" />
     <Compile Include="Services\WorldRenderService.cs" />
     <Compile Include="Services\GameDataService.cs" />
+    <Compile Include="..\proto_generated\csharp\Common.cs">
+      <Link>ProtoGenerated\Common.cs</Link>
+    </Compile>
+    <Compile Include="..\proto_generated\csharp\ClientLogin.cs">
+      <Link>ProtoGenerated\ClientLogin.cs</Link>
+    </Compile>
+    <Compile Include="..\proto_generated\csharp\ClientWorld.cs">
+      <Link>ProtoGenerated\ClientWorld.cs</Link>
+    </Compile>
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="MainForm.resx">
@@ -75,4 +97,3 @@
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
-

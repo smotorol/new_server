@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <filesystem>
@@ -137,13 +137,16 @@ class ZoneRuntimeDataStore {
 public:
     static bool LoadFromBinary(const std::filesystem::path& path);
     static std::vector<ZoneMapRecord> GetMapRecords(std::uint32_t zone_id = 0);
+    static bool HasMap(std::uint32_t zone_id, std::uint32_t map_id);
     static const ZonePortalRecord* FindTriggeredPortal(std::uint32_t zone_id, std::uint32_t map_id, std::int32_t x, std::int32_t y);
+    static const ZoneSafeRecord* FindSafeRegion(std::uint32_t zone_id, std::uint32_t map_id, std::int32_t x, std::int32_t y);
+    static const ZoneSpecialRecord* FindSpecialRegion(std::uint32_t zone_id, std::uint32_t map_id, std::int32_t x, std::int32_t y);
     static std::vector<ZoneNpcRecord> GetNpcOverlay(std::uint32_t zone_id);
     static std::vector<ZoneMonsterRecord> GetMonsterOverlay(std::uint32_t zone_id);
     static std::vector<ZonePortalRecord> GetPortalOverlay(std::uint32_t zone_id);
+    static std::vector<ZoneNpcRecord> GetNpcRegions(std::uint32_t zone_id, std::uint32_t map_id);
+    static std::vector<ZoneMonsterRecord> GetMonsterRegions(std::uint32_t zone_id, std::uint32_t map_id);
     static ZoneRuntimeDataStatus SnapshotStatus();
 };
 
 } // namespace dc::zone
-
-

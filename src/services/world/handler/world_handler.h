@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <functional>
 #include <memory>
+#include <mutex>
+#include <unordered_map>
 #include <vector>
 #include <cstring>
 #include <string>
@@ -36,6 +38,18 @@ public:
         std::int32_t x,
         std::int32_t y,
         proto::ZoneMapStateReason reason);
+    void SendEnterWorldResult(
+        std::uint32_t dwProID,
+        std::uint32_t sid,
+        std::uint32_t serial,
+        bool ok,
+        proto::world::EnterWorldResultCode reason,
+        std::uint64_t account_id,
+        std::uint64_t char_id,
+        bool use_protobuf);
+    void SetSessionProtoMode(std::uint32_t sid, std::uint32_t serial, bool use_protobuf);
+    bool IsSessionProtoMode(std::uint32_t sid, std::uint32_t serial) const;
+    void ClearSessionProtoMode(std::uint32_t sid, std::uint32_t serial);
 protected:
 	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
 		_MSG_HEADER* pMsgHeader, char* pMsg) override;
@@ -63,14 +77,14 @@ private:
 		std::uint32_t sid,
 		std::uint64_t& out_char_id) const;
 
-	bool HandleEnterWorldWithToken(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleEnterWorldWithToken(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
 
 	bool HandleWorldOpenWorldNotice(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 	bool HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
-	bool HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t n);
+	bool HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t n, bool use_protobuf);
 	bool HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 
-	bool HandleWorldMove(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
+	bool HandleWorldMove(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf);
 	bool HandleWorldBenchMove(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len);
 	bool HandleWorldBenchReset();
 	bool HandleWorldBenchMeasure(const char* body, std::size_t body_len);
@@ -84,5 +98,6 @@ private:
 
 private:
 	svr::WorldRuntime& runtime_;
+	mutable std::mutex session_proto_mode_mtx_;
+	std::unordered_map<std::uint32_t, std::pair<std::uint32_t, bool>> session_proto_mode_;
 };
-

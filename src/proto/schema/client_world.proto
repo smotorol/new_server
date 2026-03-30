@@ -1,0 +1,42 @@
+syntax = "proto3";
+package dc.proto.client.world;
+
+import "common.proto";
+
+message EnterWorldWithTokenRequest {
+  uint64 account_id = 1;
+  string login_session = 2;
+  string world_token = 3;
+}
+
+message EnterWorldResult {
+  bool ok = 1;
+  uint32 reason = 2;
+  uint64 account_id = 3;
+  uint64 char_id = 4;
+}
+
+message GetStatsRequest {}
+
+message StatsResponse {
+  uint64 char_id = 1;
+  uint32 hp = 2;
+  uint32 max_hp = 3;
+  uint32 atk = 4;
+  uint32 def = 5;
+  uint32 gold = 6;
+}
+
+message MoveRequest {
+  sint32 x = 1;
+  sint32 y = 2;
+}
+
+message ZoneMapState {
+  uint64 char_id = 1;
+  uint32 zone_id = 2;
+  uint32 map_id = 3;
+  sint32 x = 4;
+  sint32 y = 5;
+  dc.proto.common.ZoneMapStateReason reason = 6;
+}

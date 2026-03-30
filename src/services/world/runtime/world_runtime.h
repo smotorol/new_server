@@ -121,6 +121,7 @@ namespace svr {
 		bool RequestConsumeWorldAuthTicket(
 			std::uint32_t sid,
 			std::uint32_t serial,
+			bool use_protobuf,
 			std::uint64_t trace_id,
 			std::uint64_t account_id,
 			std::string_view login_session,
@@ -693,5 +694,4 @@ namespace svr {
 	void ServerProgramExit(const char* call_site, bool save);
 
 } // namespace svr
-
 

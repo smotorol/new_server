@@ -2,32 +2,16 @@
 
 #include <algorithm>
 #include <cstdio>
-#include <utility>
-
 #include <spdlog/spdlog.h>
 
 #include "proto/common/packet_util.h"
 #include "proto/internal/login_account_proto.h"
+#include "services/login/runtime/login_line_runtime.h"
 
 namespace pt_la = proto::internal::login_account;
 
-LoginAccountHandler::LoginAccountHandler(
-    RegisterAckCallback on_register_ack,
-    DisconnectCallback on_disconnect,
-    AuthResultCallback on_auth_result,
-    WorldListResultCallback on_world_list_result,
-    WorldSelectResultCallback on_world_select_result,
-    CharacterListResultCallback on_character_list_result,
-    CharacterSelectResultCallback on_character_select_result,
-    EnterWorldSuccessCallback on_enter_world_success)
-    : on_register_ack_(std::move(on_register_ack))
-    , on_disconnect_(std::move(on_disconnect))
-    , on_auth_result_(std::move(on_auth_result))
-    , on_world_list_result_(std::move(on_world_list_result))
-    , on_world_select_result_(std::move(on_world_select_result))
-    , on_character_list_result_(std::move(on_character_list_result))
-    , on_character_select_result_(std::move(on_character_select_result))
-    , on_enter_world_success_(std::move(on_enter_world_success))
+LoginAccountHandler::LoginAccountHandler(dc::LoginLineRuntime& runtime)
+    : runtime_(runtime)
 {
 }
 
@@ -207,9 +191,12 @@ bool LoginAccountHandler::DataAnalysis(
                 return true;
             }
 
-            if (on_register_ack_) {
-                on_register_ack_(n, GetLatestSerial(n), ack->server_id, ack->server_name, ack->listen_port);
-            }
+            runtime_.OnAccountRegistered(
+                n,
+                GetLatestSerial(n),
+                ack->server_id,
+                ack->server_name,
+                ack->listen_port);
             return true;
         }
 
@@ -221,19 +208,17 @@ bool LoginAccountHandler::DataAnalysis(
                 return false;
             }
 
-            if (on_auth_result_) {
-                on_auth_result_(
-                    res->trace_id,
-                    res->request_id,
-                    res->ok != 0,
-                    res->account_id,
-                    res->char_id,
-                    res->login_session,
-                    res->world_token,
-                    res->world_host,
-                    res->world_port,
-                    res->fail_reason);
-            }
+            runtime_.OnAccountAuthResult(
+                res->trace_id,
+                res->request_id,
+                res->ok != 0,
+                res->account_id,
+                res->char_id,
+                res->login_session,
+                res->world_token,
+                res->world_host,
+                res->world_port,
+                res->fail_reason);
             return true;
         }
     case pt_la::Msg::world_list_response:
@@ -243,16 +228,14 @@ bool LoginAccountHandler::DataAnalysis(
                 spdlog::error("LoginAccountHandler invalid world_list_response sid={}", n);
                 return false;
             }
-            if (on_world_list_result_) {
-                on_world_list_result_(
-                    res->trace_id,
-                    res->request_id,
-                    res->ok != 0,
-                    res->account_id,
-                    res->count,
-                    res->worlds,
-                    res->fail_reason);
-            }
+            runtime_.OnWorldListResult(
+                res->trace_id,
+                res->request_id,
+                res->ok != 0,
+                res->account_id,
+                res->count,
+                res->worlds,
+                res->fail_reason);
             return true;
         }
     case pt_la::Msg::world_select_response:
@@ -262,18 +245,16 @@ bool LoginAccountHandler::DataAnalysis(
                 spdlog::error("LoginAccountHandler invalid world_select_response sid={}", n);
                 return false;
             }
-            if (on_world_select_result_) {
-                on_world_select_result_(
-                    res->trace_id,
-                    res->request_id,
-                    res->ok != 0,
-                    res->account_id,
-                    res->world_id,
-                    res->login_session,
-                    res->world_host,
-                    res->world_port,
-                    res->fail_reason);
-            }
+            runtime_.OnWorldSelectResult(
+                res->trace_id,
+                res->request_id,
+                res->ok != 0,
+                res->account_id,
+                res->world_id,
+                res->login_session,
+                res->world_host,
+                res->world_port,
+                res->fail_reason);
             return true;
         }
     case pt_la::Msg::character_list_response:
@@ -283,16 +264,14 @@ bool LoginAccountHandler::DataAnalysis(
                 spdlog::error("LoginAccountHandler invalid character_list_response sid={}", n);
                 return false;
             }
-            if (on_character_list_result_) {
-                on_character_list_result_(
-                    res->trace_id,
-                    res->request_id,
-                    res->ok != 0,
-                    res->account_id,
-                    res->count,
-                    res->characters,
-                    res->fail_reason);
-            }
+            runtime_.OnCharacterListResult(
+                res->trace_id,
+                res->request_id,
+                res->ok != 0,
+                res->account_id,
+                res->count,
+                res->characters,
+                res->fail_reason);
             return true;
         }
     case pt_la::Msg::character_select_response:
@@ -302,19 +281,17 @@ bool LoginAccountHandler::DataAnalysis(
                 spdlog::error("LoginAccountHandler invalid character_select_response sid={}", n);
                 return false;
             }
-            if (on_character_select_result_) {
-                on_character_select_result_(
-                    res->trace_id,
-                    res->request_id,
-                    res->ok != 0,
-                    res->account_id,
-                    res->char_id,
-                    res->login_session,
-                    res->world_token,
-                    res->world_host,
-                    res->world_port,
-                    res->fail_reason);
-            }
+            runtime_.OnCharacterSelectResult(
+                res->trace_id,
+                res->request_id,
+                res->ok != 0,
+                res->account_id,
+                res->char_id,
+                res->login_session,
+                res->world_token,
+                res->world_host,
+                res->world_port,
+                res->fail_reason);
             return true;
         }
     case pt_la::Msg::world_enter_success_notify:
@@ -325,14 +302,12 @@ bool LoginAccountHandler::DataAnalysis(
                 return false;
             }
 
-            if (on_enter_world_success_) {
-                on_enter_world_success_(
-                    req->trace_id,
-                    req->account_id,
-                    req->char_id,
-                    req->login_session,
-                    req->world_token);
-            }
+            runtime_.OnWorldEnterSuccessNotify(
+                req->trace_id,
+                req->account_id,
+                req->char_id,
+                req->login_session,
+                req->world_token);
             return true;
         }
 
@@ -366,7 +341,5 @@ void LoginAccountHandler::OnLineClosed(
 {
     (void)dwProID;
 
-    if (on_disconnect_) {
-        on_disconnect_(dwIndex, dwSerial);
-    }
+    runtime_.OnAccountDisconnected(dwIndex, dwSerial);
 }

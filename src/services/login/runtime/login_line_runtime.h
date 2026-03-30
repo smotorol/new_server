@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <atomic>
 #include <chrono>
@@ -35,28 +35,104 @@ namespace dc {
             std::uint32_t sid,
             std::uint32_t serial,
             std::string_view login_id,
-            std::string_view password);
+            std::string_view password,
+            bool use_protobuf);
 
         bool IssueWorldListRequest(
             std::uint32_t sid,
-            std::uint32_t serial);
+            std::uint32_t serial,
+            bool use_protobuf);
 
         bool IssueWorldSelectRequest(
             std::uint32_t sid,
             std::uint32_t serial,
             std::uint16_t world_id,
-            std::uint16_t channel_id);
+            std::uint16_t channel_id,
+            bool use_protobuf);
 
         bool IssueCharacterListRequest(
             std::uint32_t sid,
-            std::uint32_t serial);
+            std::uint32_t serial,
+            bool use_protobuf);
 
         bool IssueCharacterSelectRequest(
             std::uint32_t sid,
             std::uint32_t serial,
-            std::uint64_t char_id);
+            std::uint64_t char_id,
+            bool use_protobuf);
 
         void RemoveLoginSession(std::uint32_t sid, std::uint32_t serial);
+
+        void OnAccountRegistered(
+            std::uint32_t sid,
+            std::uint32_t serial,
+            std::uint32_t server_id,
+            std::string_view server_name,
+            std::uint16_t listen_port);
+
+        void OnAccountDisconnected(
+            std::uint32_t sid,
+            std::uint32_t serial);
+
+        void OnAccountAuthResult(
+            std::uint64_t trace_id,
+            std::uint64_t request_id,
+            bool ok,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view world_token,
+            std::string_view world_host,
+            std::uint16_t world_port,
+            std::string_view fail_reason);
+
+        void OnWorldListResult(
+            std::uint64_t trace_id,
+            std::uint64_t request_id,
+            bool ok,
+            std::uint64_t account_id,
+            std::uint16_t count,
+            const ::proto::internal::login_account::WorldSummary* worlds,
+            std::string_view fail_reason);
+
+        void OnWorldSelectResult(
+            std::uint64_t trace_id,
+            std::uint64_t request_id,
+            bool ok,
+            std::uint64_t account_id,
+            std::uint16_t world_id,
+            std::string_view login_session,
+            std::string_view world_host,
+            std::uint16_t world_port,
+            std::string_view fail_reason);
+
+        void OnCharacterListResult(
+            std::uint64_t trace_id,
+            std::uint64_t request_id,
+            bool ok,
+            std::uint64_t account_id,
+            std::uint16_t count,
+            const ::proto::internal::login_account::CharacterSummary* characters,
+            std::string_view fail_reason);
+
+        void OnCharacterSelectResult(
+            std::uint64_t trace_id,
+            std::uint64_t request_id,
+            bool ok,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view world_token,
+            std::string_view world_host,
+            std::uint16_t world_port,
+            std::string_view fail_reason);
+
+        void OnWorldEnterSuccessNotify(
+            std::uint64_t trace_id,
+            std::uint64_t account_id,
+            std::uint64_t char_id,
+            std::string_view login_session,
+            std::string_view world_token);
 
     private:
         struct DuplicateSessionRef
@@ -84,6 +160,7 @@ namespace dc {
             std::uint64_t request_id = 0;
             std::uint32_t client_sid = 0;
             std::uint32_t client_serial = 0;
+            bool use_protobuf = false;
             std::string login_id;
             std::string password;
             std::chrono::steady_clock::time_point issued_at{};
@@ -95,6 +172,7 @@ namespace dc {
             std::uint64_t request_id = 0;
             std::uint32_t client_sid = 0;
             std::uint32_t client_serial = 0;
+            bool use_protobuf = false;
             std::uint64_t account_id = 0;
             std::string login_session;
             std::chrono::steady_clock::time_point issued_at{};
@@ -106,6 +184,7 @@ namespace dc {
             std::uint64_t request_id = 0;
             std::uint32_t client_sid = 0;
             std::uint32_t client_serial = 0;
+            bool use_protobuf = false;
             std::uint64_t account_id = 0;
             std::uint16_t world_id = 0;
             std::uint16_t channel_id = 0;
@@ -119,6 +198,7 @@ namespace dc {
             std::uint64_t request_id = 0;
             std::uint32_t client_sid = 0;
             std::uint32_t client_serial = 0;
+            bool use_protobuf = false;
             std::uint64_t account_id = 0;
             std::uint16_t world_id = 0;
             std::string login_session;
@@ -131,89 +211,20 @@ namespace dc {
             std::uint64_t request_id = 0;
             std::uint32_t client_sid = 0;
             std::uint32_t client_serial = 0;
+            bool use_protobuf = false;
             std::uint64_t account_id = 0;
             std::uint64_t char_id = 0;
             std::string login_session;
             std::chrono::steady_clock::time_point issued_at{};
         };
 
-        void MarkAccountRegistered(
-            std::uint32_t sid,
-            std::uint32_t serial,
-            std::uint32_t server_id,
-            std::string_view server_name,
-            std::uint16_t listen_port);
-
-        void MarkAccountDisconnected(
-            std::uint32_t sid,
-            std::uint32_t serial);
-
+    private:
         bool IsAccountReady() const noexcept;
         bool SendAccountAuthRequest_(const PendingLoginRequest& pending);
         bool SendWorldListRequest_(const PendingWorldListRequest& pending);
         bool SendWorldSelectRequest_(const PendingWorldSelectRequest& pending);
         bool SendCharacterListRequest_(const PendingCharacterListRequest& pending);
         bool SendCharacterSelectRequest_(const PendingCharacterSelectRequest& pending);
-
-        void OnAccountAuthResult(
-            std::uint64_t trace_id,
-            std::uint64_t request_id,
-            bool ok,
-            std::uint64_t account_id,
-            std::uint64_t char_id,
-            std::string_view login_session,
-            std::string_view world_token,
-            std::string_view world_host,
-            std::uint16_t world_port,
-            std::string_view fail_reason);
-
-        void OnWorldListResult(
-            std::uint64_t trace_id,
-            std::uint64_t request_id,
-            bool ok,
-            std::uint64_t account_id,
-            std::uint16_t count,
-            const proto::internal::login_account::WorldSummary* worlds,
-            std::string_view fail_reason);
-
-        void OnWorldSelectResult(
-            std::uint64_t trace_id,
-            std::uint64_t request_id,
-            bool ok,
-            std::uint64_t account_id,
-            std::uint16_t world_id,
-            std::string_view login_session,
-            std::string_view world_host,
-            std::uint16_t world_port,
-            std::string_view fail_reason);
-
-        void OnCharacterListResult(
-            std::uint64_t trace_id,
-            std::uint64_t request_id,
-            bool ok,
-            std::uint64_t account_id,
-            std::uint16_t count,
-            const proto::internal::login_account::CharacterSummary* characters,
-            std::string_view fail_reason);
-
-        void OnCharacterSelectResult(
-            std::uint64_t trace_id,
-            std::uint64_t request_id,
-            bool ok,
-            std::uint64_t account_id,
-            std::uint64_t char_id,
-            std::string_view login_session,
-            std::string_view world_token,
-            std::string_view world_host,
-            std::uint16_t world_port,
-            std::string_view fail_reason);
-
-        void OnWorldEnterSuccessNotify(
-            std::uint64_t trace_id,
-            std::uint64_t account_id,
-            std::uint64_t char_id,
-            std::string_view login_session,
-            std::string_view world_token);
 
         void CompleteLoginRequest_(
             PendingLoginRequest pending,
@@ -238,15 +249,17 @@ namespace dc {
             std::string_view login_session,
             std::string_view token,
             std::string_view world_host,
-            std::uint16_t world_port);
+            std::uint16_t world_port,
+            bool use_protobuf);
 
         bool SendWorldListResult_(
             std::uint32_t sid,
             std::uint32_t serial,
             bool ok,
             std::uint16_t count,
-            const proto::internal::login_account::WorldSummary* worlds,
-            std::string_view fail_reason);
+            const ::proto::internal::login_account::WorldSummary* worlds,
+            std::string_view fail_reason,
+            bool use_protobuf);
 
         bool SendWorldSelectResult_(
             std::uint32_t sid,
@@ -255,15 +268,17 @@ namespace dc {
             std::uint16_t world_id,
             std::string_view world_host,
             std::uint16_t world_port,
-            proto::login::WorldSelectFailReason fail_reason);
+            ::proto::login::WorldSelectFailReason fail_reason,
+            bool use_protobuf);
 
         bool SendCharacterListResult_(
             std::uint32_t sid,
             std::uint32_t serial,
             bool ok,
             std::uint16_t count,
-            const proto::internal::login_account::CharacterSummary* characters,
-            std::string_view fail_reason);
+            const ::proto::internal::login_account::CharacterSummary* characters,
+            std::string_view fail_reason,
+            bool use_protobuf);
 
         bool SendCharacterSelectResult_(
             std::uint32_t sid,
@@ -274,14 +289,16 @@ namespace dc {
             std::string_view world_token,
             std::string_view world_host,
             std::uint16_t world_port,
-            proto::login::CharacterSelectFailReason fail_reason);
+            ::proto::login::CharacterSelectFailReason fail_reason,
+            bool use_protobuf);
 
         void ExpirePendingLoginRequests_(std::chrono::steady_clock::time_point now);
 
         bool SendLoginResultFail_(
             std::uint32_t sid,
             std::uint32_t serial,
-            const char* reason);
+            const char* reason,
+            bool use_protobuf);
 
     private:
         bool OnRuntimeInit() override;
@@ -345,3 +362,8 @@ namespace dc {
     };
 
 } // namespace dc
+
+
+
+
+

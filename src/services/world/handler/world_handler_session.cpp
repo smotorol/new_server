@@ -12,6 +12,7 @@
 #include "core/util/string_utils.h"
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "proto/common/protobuf_packet_codec.h"
 #include "proto/client/world_proto.h"
 #include "db/core/dqs_payloads.h"
 #include "server_common/log/enter_flow_log.h"
@@ -25,6 +26,13 @@
 #include "server_common/session/session_key.h"
 
 namespace pt_w = proto::world;
+
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+#include "proto/generated/cpp/client_world.pb.h"
+#define DC_WORLD_CLIENT_PROTOBUF 1
+#else
+#define DC_WORLD_CLIENT_PROTOBUF 0
+#endif
 
 namespace {
 
@@ -78,47 +86,100 @@ namespace {
 
 } // namespace
 
-bool WorldHandler::HandleEnterWorldWithToken(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len)
+void WorldHandler::SendEnterWorldResult(
+	std::uint32_t dwProID,
+	std::uint32_t sid,
+	std::uint32_t serial,
+	bool ok,
+	pt_w::EnterWorldResultCode reason,
+	std::uint64_t account_id,
+	std::uint64_t char_id,
+	bool use_protobuf)
 {
-	auto* req = proto::as<pt_w::C2S_enter_world_with_token>(body, body_len);
-	if (!req) return false;
+#if DC_WORLD_CLIENT_PROTOBUF
+	if (use_protobuf) {
+		dc::proto::client::world::EnterWorldResult res;
+		res.set_ok(ok);
+		res.set_reason(static_cast<std::uint32_t>(reason));
+		res.set_account_id(account_id);
+		res.set_char_id(char_id);
+		std::vector<char> framed;
+		if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result), res, framed)) {
+			_MSG_HEADER header{};
+			std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+			Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+			return;
+		}
+	}
+#endif
+
+	pt_w::S2C_enter_world_result res{};
+	res.ok = ok ? 1 : 0;
+	res.reason = static_cast<std::uint16_t>(reason);
+	res.account_id = account_id;
+	res.char_id = char_id;
+	const auto h = proto::make_header(
+		static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
+		static_cast<std::uint16_t>(sizeof(res)));
+	Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+}
+
+bool WorldHandler::HandleEnterWorldWithToken(std::uint32_t dwProID, std::uint32_t n, const char* body, std::size_t body_len, bool use_protobuf)
+{
+	std::uint64_t account_id = 0;
+	std::string login_session;
+	std::string world_token;
+
+#if DC_WORLD_CLIENT_PROTOBUF
+	if (use_protobuf) {
+		dc::proto::client::world::EnterWorldWithTokenRequest req;
+		if (!req.ParseFromArray(body, static_cast<int>(body_len))) {
+			return false;
+		}
+		account_id = req.account_id();
+		login_session = req.login_session();
+		world_token = req.world_token();
+	}
+	else
+#endif
+	{
+		auto* req = proto::as<pt_w::C2S_enter_world_with_token>(body, body_len);
+		if (!req) return false;
+		account_id = req->account_id;
+		login_session = req->login_session;
+		world_token = req->world_token;
+	}
 
 	const std::uint32_t serial = GetLatestSerial(n);
+	SetSessionProtoMode(n, serial, use_protobuf);
 	dc::enterlog::LogEnterFlow(
 		spdlog::level::info,
 		dc::enterlog::EnterStage::ClientWorldEnterRequestReceived,
-		{ 0, req->account_id, 0, n, serial, req->login_session, req->world_token },
+		{ 0, account_id, 0, n, serial, login_session, world_token },
 		{},
-		req->char_id != 0 ? "client_char_id_ignored" : "");
+		use_protobuf ? "protobuf_enter_world_request" : "");
 
 	if (serial == 0) {
 		spdlog::warn(
 			"HandleEnterWorldWithToken ignored because session serial is stale. sid={} account_id={}",
 			n,
-			req->account_id);
+			account_id);
 		return true;
 	}
 
 	if (!runtime().RequestConsumeWorldAuthTicket(
 		n,
 		serial,
+		use_protobuf,
 		0,
-		req->account_id,
-		req->login_session,
-		req->world_token)) {
-		pt_w::S2C_enter_world_result res{};
-		res.ok = 0;
-		res.reason = static_cast<std::uint16_t>(pt_w::EnterWorldResultCode::internal_error);
-		res.account_id = req->account_id;
-		res.char_id = 0;
-		const auto h = proto::make_header(
-			static_cast<std::uint16_t>(pt_w::WorldS2CMsg::enter_world_result),
-			static_cast<std::uint16_t>(sizeof(res)));
-		Send(dwProID, n, serial, h, reinterpret_cast<const char*>(&res));
+		account_id,
+		login_session,
+		world_token)) {
+		SendEnterWorldResult(dwProID, n, serial, false, pt_w::EnterWorldResultCode::internal_error, account_id, 0, use_protobuf);
 		dc::enterlog::LogEnterFlow(
 			spdlog::level::warn,
 			dc::enterlog::EnterStage::EnterFlowAborted,
-			{ 0, req->account_id, 0, n, serial, req->login_session, req->world_token },
+			{ 0, account_id, 0, n, serial, login_session, world_token },
 			"world_consume_request_send_failed");
 		return true;
 	}
@@ -127,9 +188,9 @@ bool WorldHandler::HandleEnterWorldWithToken(std::uint32_t dwProID, std::uint32_
 		"HandleEnterWorldWithToken consume requested. sid={} serial={} account_id={} login_session={} token={}",
 		n,
 		serial,
-		req->account_id,
-		req->login_session,
-		req->world_token);
+		account_id,
+		login_session,
+		world_token);
 
 	return true;
 }
@@ -157,6 +218,7 @@ bool WorldHandler::ShouldHandleClose(std::uint32_t dwIndex, std::uint32_t dwSeri
 void WorldHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial)
 {
 	(void)dwProID;
+	ClearSessionProtoMode(dwIndex, dwSerial);
 
 	runtime().HandleWorldSessionClosed(dwIndex, dwSerial);
 
@@ -238,7 +300,7 @@ bool WorldHandler::HandleWorldAddGold(std::uint32_t dwProID, std::uint32_t sid, 
 	return true;
 }
 
-bool WorldHandler::HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t sid)
+bool WorldHandler::HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t sid, bool use_protobuf)
 {
 	std::uint64_t char_id = 0;
 	if (!ResolveAuthenticatedCharIdOrReject_("get_stats", sid, char_id)) {
@@ -257,12 +319,35 @@ bool WorldHandler::HandleWorldGetStats(std::uint32_t dwProID, std::uint32_t sid)
 	res.def = a.GetDefense();
 	res.gold = a.GetGold();
 
-	auto h = proto::make_header((std::uint16_t)proto::S2CMsg::stats,
-		(std::uint16_t)sizeof(res));
-
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (serial != 0) {
-		Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+		SetSessionProtoMode(sid, serial, use_protobuf || IsSessionProtoMode(sid, serial));
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (IsSessionProtoMode(sid, serial)) {
+			dc::proto::client::world::StatsResponse msg;
+			msg.set_char_id(char_id);
+			msg.set_hp(res.hp);
+			msg.set_max_hp(res.max_hp);
+			msg.set_atk(res.atk);
+			msg.set_def(res.def);
+			msg.set_gold(res.gold);
+			std::vector<char> framed;
+			if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::stats), msg, framed)) {
+				_MSG_HEADER header{};
+				std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+				Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+			}
+			else {
+				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::stats, (std::uint16_t)sizeof(res));
+				Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+			}
+		}
+		else
+#endif
+		{
+			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::stats, (std::uint16_t)sizeof(res));
+			Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+		}
  	}
 	
 	if (const auto* core = a.CoreState()) {
@@ -316,12 +401,34 @@ bool WorldHandler::HandleWorldHealSelf(std::uint32_t dwProID, std::uint32_t sid,
 	res.def = a.GetDefense();
 	res.gold = a.GetGold();
 
-	auto h = proto::make_header((std::uint16_t)proto::S2CMsg::stats,
-		(std::uint16_t)sizeof(res));
-
 	const std::uint32_t serial = GetLatestSerial(sid);
 	if (serial != 0) {
-		Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+#if DC_WORLD_CLIENT_PROTOBUF
+		if (IsSessionProtoMode(sid, serial)) {
+			dc::proto::client::world::StatsResponse msg;
+			msg.set_char_id(char_id);
+			msg.set_hp(res.hp);
+			msg.set_max_hp(res.max_hp);
+			msg.set_atk(res.atk);
+			msg.set_def(res.def);
+			msg.set_gold(res.gold);
+			std::vector<char> framed;
+			if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::stats), msg, framed)) {
+				_MSG_HEADER header{};
+				std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+				Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+			}
+			else {
+				auto h = proto::make_header((std::uint16_t)proto::S2CMsg::stats, (std::uint16_t)sizeof(res));
+				Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+			}
+		}
+		else
+#endif
+		{
+			auto h = proto::make_header((std::uint16_t)proto::S2CMsg::stats, (std::uint16_t)sizeof(res));
+			Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+		}
  	}
 	return true;
 }

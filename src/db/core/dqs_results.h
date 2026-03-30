@@ -55,7 +55,7 @@ namespace svr::dqs_result {
 	};
 
 	struct WorldCharacterEnterSnapshotResult final {
-		std::uint32_t world_code = 0;
+		std::uint32_t world_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
 		std::uint64_t trace_id = 0;

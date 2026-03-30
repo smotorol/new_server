@@ -201,9 +201,6 @@ BEGIN
         [slot_no]                 TINYINT           NOT NULL,
         [char_state]              TINYINT           NOT NULL CONSTRAINT [DF_game_character_state] DEFAULT (1), -- 1:정상,2:삭제대기,9:삭제
         [level]                   INT               NOT NULL CONSTRAINT [DF_game_character_level] DEFAULT (1),
-        [job]                     SMALLINT          NOT NULL CONSTRAINT [DF_game_character_job] DEFAULT (0),
-        [tribe]                   SMALLINT          NOT NULL CONSTRAINT [DF_game_character_tribe] DEFAULT (0),
-        [appearance_code]         INT               NOT NULL CONSTRAINT [DF_game_character_appearance_code] DEFAULT (0),
         [exp]                     BIGINT            NOT NULL CONSTRAINT [DF_game_character_exp] DEFAULT (0),
         [gold]                    BIGINT            NOT NULL CONSTRAINT [DF_game_character_gold] DEFAULT (0),
         [zone_id]                 INT               NOT NULL CONSTRAINT [DF_game_character_zone_id] DEFAULT (1),
@@ -290,31 +287,6 @@ BEGIN
 END
 GO
 
-IF OBJECT_ID(''game.item_template'', ''U'') IS NULL
-BEGIN
-    CREATE TABLE [game].[item_template]
-    (
-        [item_id]                 INT               NOT NULL,
-        [equip_part]              SMALLINT          NOT NULL CONSTRAINT [DF_game_item_template_equip_part] DEFAULT (0),
-        [equip_tribe]             SMALLINT          NOT NULL CONSTRAINT [DF_game_item_template_equip_tribe] DEFAULT (0),
-        [attack]                  INT               NOT NULL CONSTRAINT [DF_game_item_template_attack] DEFAULT (0),
-        [defense]                 INT               NOT NULL CONSTRAINT [DF_game_item_template_defense] DEFAULT (0),
-        [life]                    INT               NOT NULL CONSTRAINT [DF_game_item_template_life] DEFAULT (0),
-        [mana]                    INT               NOT NULL CONSTRAINT [DF_game_item_template_mana] DEFAULT (0),
-        [vitality]                INT               NOT NULL CONSTRAINT [DF_game_item_template_vitality] DEFAULT (0),
-        [ki]                      INT               NOT NULL CONSTRAINT [DF_game_item_template_ki] DEFAULT (0),
-        [is_deleted]              BIT               NOT NULL CONSTRAINT [DF_game_item_template_is_deleted] DEFAULT (0),
-        [source_tag]              VARCHAR(32)       NOT NULL CONSTRAINT [DF_game_item_template_source_tag] DEFAULT ('manual'),
-        [created_at_utc]          DATETIME2(3)      NOT NULL CONSTRAINT [DF_game_item_template_created_at] DEFAULT (SYSUTCDATETIME()),
-        [updated_at_utc]          DATETIME2(3)      NOT NULL CONSTRAINT [DF_game_item_template_updated_at] DEFAULT (SYSUTCDATETIME()),
-        [row_ver]                 ROWVERSION,
-        CONSTRAINT [PK_game_item_template] PRIMARY KEY CLUSTERED ([item_id])
-    );
-
-    CREATE INDEX [IX_game_item_template_live]
-        ON [game].[item_template]([is_deleted], [equip_part], [equip_tribe], [item_id]);
-END
-GO
 IF OBJECT_ID('game.character_wallet', 'U') IS NULL
 BEGIN
     CREATE TABLE [game].[character_wallet]

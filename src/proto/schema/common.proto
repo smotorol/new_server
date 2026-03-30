@@ -1,0 +1,49 @@
+syntax = "proto3";
+package dc.proto.common;
+
+enum PacketRouteKind {
+  PACKET_ROUTE_KIND_UNSPECIFIED = 0;
+  PACKET_ROUTE_KIND_CLIENT = 1;
+  PACKET_ROUTE_KIND_INTERNAL = 2;
+}
+
+enum ServiceStatus {
+  SERVICE_STATUS_UNSPECIFIED = 0;
+  SERVICE_STATUS_UP = 1;
+  SERVICE_STATUS_BUSY = 2;
+  SERVICE_STATUS_FULL = 3;
+  SERVICE_STATUS_DOWN = 4;
+  SERVICE_STATUS_MAINTENANCE = 5;
+}
+
+enum TransferPolicy {
+  TRANSFER_POLICY_UNSPECIFIED = 0;
+  TRANSFER_POLICY_DIRECT_WORLD = 1;
+  TRANSFER_POLICY_WORLD_FRONT = 2;
+}
+
+enum ZoneMapStateReason {
+  ZONE_MAP_STATE_REASON_ENTER_SUCCESS = 0;
+  ZONE_MAP_STATE_REASON_POSITION_UPDATE = 1;
+  ZONE_MAP_STATE_REASON_ZONE_CHANGED = 2;
+  ZONE_MAP_STATE_REASON_PORTAL_MOVED = 3;
+}
+
+message Endpoint {
+  string host = 1;
+  uint32 port = 2;
+  string region = 3;
+}
+
+message WorldEntryNode {
+  uint32 world_id = 1;
+  string server_code = 2;
+  string display_name = 3;
+  string region = 4;
+  ServiceStatus status = 5;
+  bool recommended = 6;
+  uint32 population = 7;
+  uint32 capacity = 8;
+  TransferPolicy transfer_policy = 9;
+  repeated Endpoint endpoints = 10;
+}

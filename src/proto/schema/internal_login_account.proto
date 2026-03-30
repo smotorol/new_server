@@ -1,0 +1,27 @@
+syntax = "proto3";
+package dc.proto.internal.login_account;
+
+import "common.proto";
+
+message AuthResult {
+  bool ok = 1;
+  uint64 account_id = 2;
+  string login_session = 3;
+  repeated dc.proto.common.WorldEntryNode world_entries = 4;
+  string fail_reason = 5;
+}
+
+message WorldListRequest {
+  uint64 trace_id = 1;
+  uint64 request_id = 2;
+  uint64 account_id = 3;
+  string login_session = 4;
+}
+
+message WorldListResponse {
+  uint64 trace_id = 1;
+  uint64 request_id = 2;
+  bool ok = 3;
+  repeated dc.proto.common.WorldEntryNode world_entries = 4;
+  string fail_reason = 5;
+}

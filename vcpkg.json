@@ -1,9 +1,7 @@
 {
   "name": "project-dc-server",
   "version-string": "0.1.0",
-
   "builtin-baseline": "36fb57eb3878cc3422351a91d3e87c328388dabd",
-
   "dependencies": [
     "boost-asio",
     "boost-system",
@@ -11,9 +9,9 @@
     "spdlog",
     "hiredis",
     "redis-plus-plus",
-    "nlohmann-json"
+    "nlohmann-json",
+    "protobuf"
   ],
-
   "overrides": [
     {
       "name": "boost-asio",
@@ -25,7 +23,6 @@
       "version": "1.90.0",
       "port-version": 1
     },
-
     {
       "name": "fmt",
       "version": "12.1.0"

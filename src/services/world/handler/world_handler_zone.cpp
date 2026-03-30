@@ -9,6 +9,7 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "proto/common/protobuf_packet_codec.h"
 #include "server_common/data/zone_runtime_data.h"
 #include "server_common/session/session_key.h"
 #include "services/world/actors/world_actors.h"
@@ -47,6 +48,13 @@ namespace {
     }
 }
 
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+#include "proto/generated/cpp/client_world.pb.h"
+#define DC_WORLD_CLIENT_PROTOBUF 1
+#else
+#define DC_WORLD_CLIENT_PROTOBUF 0
+#endif
+
 void WorldHandler::SendZoneMapState(
     std::uint32_t dwProID,
     std::uint32_t sid,
@@ -58,17 +66,51 @@ void WorldHandler::SendZoneMapState(
     std::int32_t y,
     proto::ZoneMapStateReason reason)
 {
-    proto::S2C_zone_map_state res{};
-    res.char_id = char_id;
-    res.zone_id = zone_id;
-    res.map_id = map_id;
-    res.x = x;
-    res.y = y;
-    res.reason = static_cast<proto::u16>(reason);
-    auto h = proto::make_header(
-        static_cast<std::uint16_t>(proto::S2CMsg::zone_map_state),
-        static_cast<std::uint16_t>(sizeof(res)));
-    Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+    SetSessionProtoMode(sid, serial, IsSessionProtoMode(sid, serial));
+#if DC_WORLD_CLIENT_PROTOBUF
+    if (IsSessionProtoMode(sid, serial)) {
+        dc::proto::client::world::ZoneMapState msg;
+        msg.set_char_id(char_id);
+        msg.set_zone_id(zone_id);
+        msg.set_map_id(map_id);
+        msg.set_x(x);
+        msg.set_y(y);
+        msg.set_reason(static_cast<dc::proto::common::ZoneMapStateReason>(reason));
+        std::vector<char> framed;
+        if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::zone_map_state), msg, framed)) {
+            _MSG_HEADER header{};
+            std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+            Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+        }
+        else {
+            proto::S2C_zone_map_state res{};
+            res.char_id = char_id;
+            res.zone_id = zone_id;
+            res.map_id = map_id;
+            res.x = x;
+            res.y = y;
+            res.reason = static_cast<proto::u16>(reason);
+            auto h = proto::make_header(
+                static_cast<std::uint16_t>(proto::S2CMsg::zone_map_state),
+                static_cast<std::uint16_t>(sizeof(res)));
+            Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+        }
+    }
+    else
+#endif
+    {
+        proto::S2C_zone_map_state res{};
+        res.char_id = char_id;
+        res.zone_id = zone_id;
+        res.map_id = map_id;
+        res.x = x;
+        res.y = y;
+        res.reason = static_cast<proto::u16>(reason);
+        auto h = proto::make_header(
+            static_cast<std::uint16_t>(proto::S2CMsg::zone_map_state),
+            static_cast<std::uint16_t>(sizeof(res)));
+        Send(dwProID, sid, serial, h, reinterpret_cast<const char*>(&res));
+    }
 
     spdlog::debug(
         "zone_map_state sent. sid={} serial={} char_id={} zone_id={} map_id={} pos=({}, {}) reason={}",
@@ -82,21 +124,42 @@ void WorldHandler::SendZoneMapState(
         static_cast<std::uint16_t>(reason));
 }
 
-bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
+bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len, bool use_protobuf)
 {
-    auto* req = proto::as<proto::C2S_move>(body, body_len);
-    if (!req) return false;
+    std::int32_t move_x = 0;
+    std::int32_t move_y = 0;
+
+#if DC_WORLD_CLIENT_PROTOBUF
+    if (use_protobuf) {
+        dc::proto::client::world::MoveRequest req;
+        if (!req.ParseFromArray(body, static_cast<int>(body_len))) {
+            return false;
+        }
+        move_x = req.x();
+        move_y = req.y();
+    }
+    else
+#endif
+    {
+        auto* req = proto::as<proto::C2S_move>(body, body_len);
+        if (!req) return false;
+        move_x = req->x;
+        move_y = req->y;
+    }
 
     std::uint64_t char_id = 0;
     if (!ResolveAuthenticatedCharIdOrReject_("move", sid, char_id)) {
         return true;
     }
     auto& a = runtime().GetOrCreatePlayerActor(char_id);
+    if (const auto serial = GetLatestSerial(sid); serial != 0) {
+        SetSessionProtoMode(sid, serial, use_protobuf || IsSessionProtoMode(sid, serial));
+    }
     const auto before = CaptureZoneMapState_(a);
     const std::uint32_t serial = GetLatestSerial(sid);
     if (serial == 0) return true;
 
-    if (before.x == req->x && before.y == req->y) {
+    if (before.x == move_x && before.y == move_y) {
         spdlog::debug(
             "move skipped identical position_update. sid={} serial={} char_id={} zone_id={} map_id={} pos=({}, {})",
             sid,
@@ -109,9 +172,9 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
         return true;
     }
 
-    a.SetWorldPosition(before.zone_id, before.map_id, before.instance_id, req->x, req->y);
+    a.SetWorldPosition(before.zone_id, before.map_id, before.instance_id, move_x, move_y);
 
-    if (const auto* portal = dc::zone::ZoneRuntimeDataStore::FindTriggeredPortal(before.zone_id, before.map_id, req->x, req->y); portal != nullptr) {
+    if (const auto* portal = dc::zone::ZoneRuntimeDataStore::FindTriggeredPortal(before.zone_id, before.map_id, move_x, move_y); portal != nullptr) {
         const auto dest_zone_id = (portal->dest_zone_id != 0) ? portal->dest_zone_id : before.zone_id;
         const auto dest_map_id = (portal->dest_map_id != 0) ? portal->dest_map_id : before.map_id;
         const auto dest_x = (portal->dest_x != 0) ? portal->dest_x : portal->center_x;

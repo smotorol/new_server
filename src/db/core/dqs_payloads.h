@@ -39,7 +39,7 @@ namespace svr::dqs_payload {
 
 	struct WorldCharacterEnterSnapshot final
 	{
-		std::uint32_t world_code = 0;
+		std::uint32_t world_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
 		std::uint64_t trace_id = 0;
@@ -54,7 +54,7 @@ namespace svr::dqs_payload {
 
 	struct WorldAccountCharacterListRequest final
 	{
-		std::uint32_t world_code = 0;
+		std::uint32_t world_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
 		std::uint64_t trace_id = 0;

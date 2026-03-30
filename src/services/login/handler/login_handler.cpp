@@ -1,10 +1,20 @@
-#include "services/login/handler/login_handler.h"
+﻿#include "services/login/handler/login_handler.h"
 
+#include <cstring>
+#include <vector>
 #include <spdlog/spdlog.h>
 
 #include "proto/client/login_proto.h"
 #include "proto/common/packet_util.h"
+#include "proto/common/protobuf_packet_codec.h"
 #include "services/login/runtime/login_line_runtime.h"
+
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_login.pb.h")
+#include "proto/generated/cpp/client_login.pb.h"
+#define DC_LOGIN_FIRST_PATH_PROTOBUF 1
+#else
+#define DC_LOGIN_FIRST_PATH_PROTOBUF 0
+#endif
 
 namespace pt_l = proto::login;
 
@@ -29,6 +39,34 @@ bool LoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
     switch (static_cast<pt_l::LoginC2SMsg>(msg_type)) {
     case pt_l::LoginC2SMsg::login_request:
         {
+#if DC_LOGIN_FIRST_PATH_PROTOBUF
+            dc::proto::client::login::LoginRequest proto_req;
+            if (dc::proto::ParseBody(std::string_view(pMsg, body_len), proto_req)) {
+                if (!runtime_.IssueLoginRequest(
+                    n,
+                    GetLatestSerial(n),
+                    proto_req.login_id(),
+                    proto_req.password(),
+                    true))
+                {
+                    dc::proto::client::login::LoginResult res;
+                    res.set_ok(false);
+                    res.set_fail_reason("account_route_not_ready");
+                    std::vector<char> framed;
+                    if (!dc::proto::BuildFramedMessage(
+                        static_cast<std::uint16_t>(pt_l::LoginS2CMsg::login_result),
+                        res,
+                        framed)) {
+                        return false;
+                    }
+                    _MSG_HEADER header{};
+                    std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+                    return Send(0, n, GetLatestSerial(n), header, framed.data() + MSG_HEADER_SIZE);
+                }
+                return true;
+            }
+#endif
+
             const auto* req = proto::as<pt_l::C2S_login_request>(pMsg, body_len);
             if (!req) {
                 spdlog::error("LoginHandler invalid login_request packet sid={}", n);
@@ -39,7 +77,8 @@ bool LoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
                 n,
                 GetLatestSerial(n),
                 req->login_id,
-                req->password))
+                req->password,
+                false))
             {
                 pt_l::S2C_login_result res{};
                 res.ok = 0;
@@ -55,41 +94,75 @@ bool LoginHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n,
         }
     case pt_l::LoginC2SMsg::world_list_request:
         {
+#if DC_LOGIN_FIRST_PATH_PROTOBUF
+            dc::proto::client::login::WorldListRequest proto_req;
+            if (dc::proto::ParseBody(std::string_view(pMsg, body_len), proto_req)) {
+                (void)proto_req;
+                return runtime_.IssueWorldListRequest(n, GetLatestSerial(n), true);
+            }
+#endif
             const auto* req = proto::as<pt_l::C2S_world_list_request>(pMsg, body_len);
             if (!req) {
                 spdlog::error("LoginHandler invalid world_list_request packet sid={}", n);
                 return false;
             }
             (void)req;
-            return runtime_.IssueWorldListRequest(n, GetLatestSerial(n));
+            return runtime_.IssueWorldListRequest(n, GetLatestSerial(n), false);
         }
     case pt_l::LoginC2SMsg::world_select_request:
         {
+#if DC_LOGIN_FIRST_PATH_PROTOBUF
+            dc::proto::client::login::WorldSelectRequest proto_req;
+            if (dc::proto::ParseBody(std::string_view(pMsg, body_len), proto_req)) {
+                return runtime_.IssueWorldSelectRequest(
+                    n,
+                    GetLatestSerial(n),
+                    static_cast<std::uint16_t>(proto_req.world_id()),
+                    0,
+                    true);
+            }
+#endif
             const auto* req = proto::as<pt_l::C2S_world_select_request>(pMsg, body_len);
             if (!req) {
                 spdlog::error("LoginHandler invalid world_select_request packet sid={}", n);
                 return false;
             }
-            return runtime_.IssueWorldSelectRequest(n, GetLatestSerial(n), req->world_id, req->channel_id);
+            return runtime_.IssueWorldSelectRequest(n, GetLatestSerial(n), req->world_id, req->channel_id, false);
         }
     case pt_l::LoginC2SMsg::character_list_request:
         {
+#if DC_LOGIN_FIRST_PATH_PROTOBUF
+            dc::proto::client::login::CharacterListRequest proto_req;
+            if (dc::proto::ParseBody(std::string_view(pMsg, body_len), proto_req)) {
+                return runtime_.IssueCharacterListRequest(n, GetLatestSerial(n), true);
+            }
+#endif
             const auto* req = proto::as<pt_l::C2S_character_list_request>(pMsg, body_len);
             if (!req) {
                 spdlog::error("LoginHandler invalid character_list_request packet sid={}", n);
                 return false;
             }
             (void)req;
-            return runtime_.IssueCharacterListRequest(n, GetLatestSerial(n));
+            return runtime_.IssueCharacterListRequest(n, GetLatestSerial(n), false);
         }
     case pt_l::LoginC2SMsg::character_select_request:
         {
+#if DC_LOGIN_FIRST_PATH_PROTOBUF
+            dc::proto::client::login::CharacterSelectRequest proto_req;
+            if (dc::proto::ParseBody(std::string_view(pMsg, body_len), proto_req)) {
+                return runtime_.IssueCharacterSelectRequest(
+                    n,
+                    GetLatestSerial(n),
+                    proto_req.char_id(),
+                    true);
+            }
+#endif
             const auto* req = proto::as<pt_l::C2S_character_select_request>(pMsg, body_len);
             if (!req) {
                 spdlog::error("LoginHandler invalid character_select_request packet sid={}", n);
                 return false;
             }
-            return runtime_.IssueCharacterSelectRequest(n, GetLatestSerial(n), req->char_id);
+            return runtime_.IssueCharacterSelectRequest(n, GetLatestSerial(n), req->char_id, false);
         }
 
     default:
@@ -119,3 +192,4 @@ void LoginHandler::OnLineClosed(std::uint32_t dwProID, std::uint32_t dwIndex, st
     runtime_.RemoveLoginSession(dwIndex, dwSerial);
     spdlog::info("LoginHandler::OnLoginDisconnected index={} serial={}", dwIndex, dwSerial);
 }
+

@@ -1,0 +1,72 @@
+syntax = "proto3";
+package dc.proto.client.login;
+
+import "common.proto";
+
+message LoginRequest {
+  string login_id = 1;
+  string password = 2;
+  string client_version = 3;
+}
+
+message LoginResult {
+  bool ok = 1;
+  uint64 account_id = 2;
+  string login_session = 3;
+  repeated dc.proto.common.WorldEntryNode world_entries = 4;
+  string fail_reason = 5;
+}
+
+message WorldListRequest {
+  uint64 account_id = 1;
+  string login_session = 2;
+}
+
+message WorldListResponse {
+  bool ok = 1;
+  repeated dc.proto.common.WorldEntryNode world_entries = 2;
+  string fail_reason = 3;
+}
+
+message WorldSelectRequest {
+  uint32 world_id = 1;
+  string server_code = 2;
+}
+
+message WorldSelectResponse {
+  bool ok = 1;
+  uint32 world_id = 2;
+  string server_code = 3;
+  dc.proto.common.WorldEntryNode selected_entry = 4;
+  string fail_reason = 5;
+}
+
+message CharacterSummary {
+  uint64 char_id = 1;
+  string name = 2;
+  uint32 level = 3;
+  uint32 job = 4;
+  uint32 appearance_code = 5;
+  uint64 last_login_at_epoch_sec = 6;
+}
+
+message CharacterListRequest {}
+
+message CharacterListResponse {
+  bool ok = 1;
+  repeated CharacterSummary characters = 2;
+  string fail_reason = 3;
+}
+
+message CharacterSelectRequest {
+  uint64 char_id = 1;
+}
+
+message CharacterSelectResponse {
+  bool ok = 1;
+  uint64 account_id = 2;
+  uint64 char_id = 3;
+  string world_token = 4;
+  dc.proto.common.WorldEntryNode selected_entry = 5;
+  string fail_reason = 6;
+}

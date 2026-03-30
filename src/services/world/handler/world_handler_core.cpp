@@ -4,15 +4,45 @@
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "proto/common/protobuf_packet_codec.h"
 #include "proto/client/world_proto.h"
 #include "services/world/runtime/world_runtime.h"
 #include "services/world/metrics/world_metrics.h"
 
 namespace pt_w = proto::world;
 
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+#include "proto/generated/cpp/client_world.pb.h"
+#define DC_WORLD_CLIENT_PROTOBUF 1
+#else
+#define DC_WORLD_CLIENT_PROTOBUF 0
+#endif
+
 std::uint64_t WorldHandler::GetActorIdBySession(std::uint32_t sid) const
 {
 	return runtime().FindCharIdBySession(sid);
+}
+
+void WorldHandler::SetSessionProtoMode(std::uint32_t sid, std::uint32_t serial, bool use_protobuf)
+{
+	std::lock_guard lk(session_proto_mode_mtx_);
+	session_proto_mode_[sid] = { serial, use_protobuf };
+}
+
+bool WorldHandler::IsSessionProtoMode(std::uint32_t sid, std::uint32_t serial) const
+{
+	std::lock_guard lk(session_proto_mode_mtx_);
+	const auto it = session_proto_mode_.find(sid);
+	return it != session_proto_mode_.end() && it->second.first == serial && it->second.second;
+}
+
+void WorldHandler::ClearSessionProtoMode(std::uint32_t sid, std::uint32_t serial)
+{
+	std::lock_guard lk(session_proto_mode_mtx_);
+	const auto it = session_proto_mode_.find(sid);
+	if (it != session_proto_mode_.end() && it->second.first == serial) {
+		session_proto_mode_.erase(it);
+	}
 }
 
 bool WorldHandler::ResolveAuthenticatedCharIdOrReject_(
@@ -74,17 +104,44 @@ bool WorldHandler::DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEA
 	switch (type)
 	{
 	case static_cast<std::uint16_t>(pt_w::WorldC2SMsg::enter_world_with_token):
-		return HandleEnterWorldWithToken(dwProID, n, pMsg, body_len);
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		dc::proto::client::world::EnterWorldWithTokenRequest req;
+		if (req.ParseFromArray(pMsg, static_cast<int>(body_len))) {
+			SetSessionProtoMode(n, GetLatestSerial(n), true);
+			return HandleEnterWorldWithToken(dwProID, n, pMsg, body_len, true);
+		}
+#endif
+		return HandleEnterWorldWithToken(dwProID, n, pMsg, body_len, false);
+	}
 	case proto::C2SMsg::open_world_notice:
 		return HandleWorldOpenWorldNotice(dwProID, n, pMsg, body_len);
 	case proto::C2SMsg::add_gold:
 		return HandleWorldAddGold(dwProID, n, pMsg, body_len);
 	case proto::C2SMsg::get_stats:
-		return HandleWorldGetStats(dwProID, n);
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		dc::proto::client::world::GetStatsRequest req;
+		if (req.ParseFromArray(pMsg, static_cast<int>(body_len))) {
+			SetSessionProtoMode(n, GetLatestSerial(n), true);
+			return HandleWorldGetStats(dwProID, n, true);
+		}
+#endif
+		return HandleWorldGetStats(dwProID, n, false);
+	}
 	case proto::C2SMsg::heal_self:
 		return HandleWorldHealSelf(dwProID, n, pMsg, body_len);
 	case proto::C2SMsg::move:
-		return HandleWorldMove(dwProID, n, pMsg, body_len);
+	{
+#if DC_WORLD_CLIENT_PROTOBUF
+		dc::proto::client::world::MoveRequest req;
+		if (req.ParseFromArray(pMsg, static_cast<int>(body_len))) {
+			SetSessionProtoMode(n, GetLatestSerial(n), true);
+			return HandleWorldMove(dwProID, n, pMsg, body_len, true);
+		}
+#endif
+		return HandleWorldMove(dwProID, n, pMsg, body_len, false);
+	}
 	case proto::C2SMsg::bench_move:
 		return HandleWorldBenchMove(dwProID, n, pMsg, body_len);
 	case proto::C2SMsg::bench_reset:

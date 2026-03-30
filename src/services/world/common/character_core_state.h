@@ -29,7 +29,7 @@ namespace svr {
 		state.hot.resources.current_hp = state.combat_stats.max_hp;
 		state.hot.resources.current_mp = state.combat_stats.max_mp;
 		state.hot.resources.gold = 1000;
-		state.hot.position.map_id = 1001;
+		state.hot.position.map_id = 1;
 		state.hot.position.zone_id = 1;
 		return state;
 	}
