@@ -455,6 +455,8 @@ class ZoneMapState final : public ::google::protobuf::Message
     kXFieldNumber = 4,
     kYFieldNumber = 5,
     kReasonFieldNumber = 6,
+    kChannelIdFieldNumber = 7,
+    kZoneServerIdFieldNumber = 8,
   };
   // uint64 char_id = 1;
   void clear_char_id() ;
@@ -516,11 +518,31 @@ class ZoneMapState final : public ::google::protobuf::Message
   void _internal_set_reason(::dc::proto::common::ZoneMapStateReason value);
 
   public:
+  // uint32 channel_id = 7;
+  void clear_channel_id() ;
+  ::uint32_t channel_id() const;
+  void set_channel_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_channel_id() const;
+  void _internal_set_channel_id(::uint32_t value);
+
+  public:
+  // uint32 zone_server_id = 8;
+  void clear_zone_server_id() ;
+  ::uint32_t zone_server_id() const;
+  void set_zone_server_id(::uint32_t value);
+
+  private:
+  ::uint32_t _internal_zone_server_id() const;
+  void _internal_set_zone_server_id(::uint32_t value);
+
+  public:
   // @@protoc_insertion_point(class_scope:dc.proto.client.world.ZoneMapState)
  private:
   class _Internal;
   friend class ::google::protobuf::internal::TcParser;
-  static const ::google::protobuf::internal::TcParseTable<3, 6,
+  static const ::google::protobuf::internal::TcParseTable<3, 8,
                                    0, 0,
                                    2>
       _table_;
@@ -548,6 +570,8 @@ class ZoneMapState final : public ::google::protobuf::Message
     ::int32_t x_;
     ::int32_t y_;
     int reason_;
+    ::uint32_t channel_id_;
+    ::uint32_t zone_server_id_;
     PROTOBUF_TSAN_DECLARE_MEMBER
   };
   union { Impl_ _impl_; };
@@ -7821,6 +7845,56 @@ inline ::dc::proto::common::ZoneMapStateReason ZoneMapState::_internal_reason() 
 inline void ZoneMapState::_internal_set_reason(::dc::proto::common::ZoneMapStateReason value) {
   ::google::protobuf::internal::TSanWrite(&_impl_);
   _impl_.reason_ = value;
+}
+
+// uint32 channel_id = 7;
+inline void ZoneMapState::clear_channel_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.channel_id_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0],
+                  0x00000040U);
+}
+inline ::uint32_t ZoneMapState::channel_id() const {
+  // @@protoc_insertion_point(field_get:dc.proto.client.world.ZoneMapState.channel_id)
+  return _internal_channel_id();
+}
+inline void ZoneMapState::set_channel_id(::uint32_t value) {
+  _internal_set_channel_id(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000040U);
+  // @@protoc_insertion_point(field_set:dc.proto.client.world.ZoneMapState.channel_id)
+}
+inline ::uint32_t ZoneMapState::_internal_channel_id() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.channel_id_;
+}
+inline void ZoneMapState::_internal_set_channel_id(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.channel_id_ = value;
+}
+
+// uint32 zone_server_id = 8;
+inline void ZoneMapState::clear_zone_server_id() {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.zone_server_id_ = 0u;
+  ClearHasBit(_impl_._has_bits_[0],
+                  0x00000080U);
+}
+inline ::uint32_t ZoneMapState::zone_server_id() const {
+  // @@protoc_insertion_point(field_get:dc.proto.client.world.ZoneMapState.zone_server_id)
+  return _internal_zone_server_id();
+}
+inline void ZoneMapState::set_zone_server_id(::uint32_t value) {
+  _internal_set_zone_server_id(value);
+  SetHasBit(_impl_._has_bits_[0], 0x00000080U);
+  // @@protoc_insertion_point(field_set:dc.proto.client.world.ZoneMapState.zone_server_id)
+}
+inline ::uint32_t ZoneMapState::_internal_zone_server_id() const {
+  ::google::protobuf::internal::TSanRead(&_impl_);
+  return _impl_.zone_server_id_;
+}
+inline void ZoneMapState::_internal_set_zone_server_id(::uint32_t value) {
+  ::google::protobuf::internal::TSanWrite(&_impl_);
+  _impl_.zone_server_id_ = value;
 }
 
 #ifdef __GNUC__

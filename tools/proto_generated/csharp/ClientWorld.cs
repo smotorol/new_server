@@ -63,21 +63,22 @@ namespace Dc.Proto.Client.World {
             "cm90by5jbGllbnQud29ybGQuUGxheWVyU25hcHNob3QiJgoSUGxheWVyRGVz",
             "cGF3bkJhdGNoEhAKCGNoYXJfaWRzGAEgAygEIkcKD1BsYXllck1vdmVCYXRj",
             "aBI0CgVpdGVtcxgBIAMoCzIlLmRjLnByb3RvLmNsaWVudC53b3JsZC5QbGF5",
-            "ZXJTbmFwc2hvdCKLAQoMWm9uZU1hcFN0YXRlEg8KB2NoYXJfaWQYASABKAQS",
+            "ZXJTbmFwc2hvdCK3AQoMWm9uZU1hcFN0YXRlEg8KB2NoYXJfaWQYASABKAQS",
             "DwoHem9uZV9pZBgCIAEoDRIOCgZtYXBfaWQYAyABKA0SCQoBeBgEIAEoERIJ",
             "CgF5GAUgASgREjMKBnJlYXNvbhgGIAEoDjIjLmRjLnByb3RvLmNvbW1vbi5a",
-            "b25lTWFwU3RhdGVSZWFzb24qVQoKTG9nb3V0VHlwZRIbChdMT0dPVVRfVFlQ",
-            "RV9VTlNQRUNJRklFRBAAEhQKEExPR09VVF9UWVBFX1NPRlQQARIUChBMT0dP",
-            "VVRfVFlQRV9IQVJEEAIqbwoQTG9nb3V0UmVzdWx0Q29kZRIZChVMT0dPVVRf",
-            "UkVTVUxUX1NVQ0NFU1MQABIeChpMT0dPVVRfUkVTVUxUX05PVF9JTl9XT1JM",
-            "RBABEiAKHExPR09VVF9SRVNVTFRfSU5URVJOQUxfRVJST1IQAiqYAgoYUmVj",
-            "b25uZWN0V29ybGRSZXN1bHRDb2RlEiIKHlJFQ09OTkVDVF9XT1JMRF9SRVNV",
-            "TFRfU1VDQ0VTUxAAEioKJlJFQ09OTkVDVF9XT1JMRF9SRVNVTFRfVE9LRU5f",
-            "Tk9UX0ZPVU5EEAESKwonUkVDT05ORUNUX1dPUkxEX1JFU1VMVF9BQ0NPVU5U",
-            "X01JU01BVENIEAISKAokUkVDT05ORUNUX1dPUkxEX1JFU1VMVF9DSEFSX01J",
-            "U01BVENIEAMSKgomUkVDT05ORUNUX1dPUkxEX1JFU1VMVF9TRVNTSU9OX0VY",
-            "UElSRUQQBBIpCiVSRUNPTk5FQ1RfV09STERfUkVTVUxUX0lOVEVSTkFMX0VS",
-            "Uk9SEAViBnByb3RvMw=="));
+            "b25lTWFwU3RhdGVSZWFzb24SEgoKY2hhbm5lbF9pZBgHIAEoDRIWCg56b25l",
+            "X3NlcnZlcl9pZBgIIAEoDSpVCgpMb2dvdXRUeXBlEhsKF0xPR09VVF9UWVBF",
+            "X1VOU1BFQ0lGSUVEEAASFAoQTE9HT1VUX1RZUEVfU09GVBABEhQKEExPR09V",
+            "VF9UWVBFX0hBUkQQAipvChBMb2dvdXRSZXN1bHRDb2RlEhkKFUxPR09VVF9S",
+            "RVNVTFRfU1VDQ0VTUxAAEh4KGkxPR09VVF9SRVNVTFRfTk9UX0lOX1dPUkxE",
+            "EAESIAocTE9HT1VUX1JFU1VMVF9JTlRFUk5BTF9FUlJPUhACKpgCChhSZWNv",
+            "bm5lY3RXb3JsZFJlc3VsdENvZGUSIgoeUkVDT05ORUNUX1dPUkxEX1JFU1VM",
+            "VF9TVUNDRVNTEAASKgomUkVDT05ORUNUX1dPUkxEX1JFU1VMVF9UT0tFTl9O",
+            "T1RfRk9VTkQQARIrCidSRUNPTk5FQ1RfV09STERfUkVTVUxUX0FDQ09VTlRf",
+            "TUlTTUFUQ0gQAhIoCiRSRUNPTk5FQ1RfV09STERfUkVTVUxUX0NIQVJfTUlT",
+            "TUFUQ0gQAxIqCiZSRUNPTk5FQ1RfV09STERfUkVTVUxUX1NFU1NJT05fRVhQ",
+            "SVJFRBAEEikKJVJFQ09OTkVDVF9XT1JMRF9SRVNVTFRfSU5URVJOQUxfRVJS",
+            "T1IQBWIGcHJvdG8z"));
       descriptor = pbr::FileDescriptor.FromGeneratedCode(descriptorData,
           new pbr::FileDescriptor[] { global::Dc.Proto.Common.CommonReflection.Descriptor, },
           new pbr::GeneratedClrTypeInfo(new[] {typeof(global::Dc.Proto.Client.World.LogoutType), typeof(global::Dc.Proto.Client.World.LogoutResultCode), typeof(global::Dc.Proto.Client.World.ReconnectWorldResultCode), }, null, new pbr::GeneratedClrTypeInfo[] {
@@ -105,7 +106,7 @@ namespace Dc.Proto.Client.World {
             new pbr::GeneratedClrTypeInfo(typeof(global::Dc.Proto.Client.World.PlayerSpawnBatch), global::Dc.Proto.Client.World.PlayerSpawnBatch.Parser, new[]{ "Items" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Dc.Proto.Client.World.PlayerDespawnBatch), global::Dc.Proto.Client.World.PlayerDespawnBatch.Parser, new[]{ "CharIds" }, null, null, null, null),
             new pbr::GeneratedClrTypeInfo(typeof(global::Dc.Proto.Client.World.PlayerMoveBatch), global::Dc.Proto.Client.World.PlayerMoveBatch.Parser, new[]{ "Items" }, null, null, null, null),
-            new pbr::GeneratedClrTypeInfo(typeof(global::Dc.Proto.Client.World.ZoneMapState), global::Dc.Proto.Client.World.ZoneMapState.Parser, new[]{ "CharId", "ZoneId", "MapId", "X", "Y", "Reason" }, null, null, null, null)
+            new pbr::GeneratedClrTypeInfo(typeof(global::Dc.Proto.Client.World.ZoneMapState), global::Dc.Proto.Client.World.ZoneMapState.Parser, new[]{ "CharId", "ZoneId", "MapId", "X", "Y", "Reason", "ChannelId", "ZoneServerId" }, null, null, null, null)
           }));
     }
     #endregion
@@ -6452,6 +6453,8 @@ namespace Dc.Proto.Client.World {
       x_ = other.x_;
       y_ = other.y_;
       reason_ = other.reason_;
+      channelId_ = other.channelId_;
+      zoneServerId_ = other.zoneServerId_;
       _unknownFields = pb::UnknownFieldSet.Clone(other._unknownFields);
     }
 
@@ -6533,6 +6536,30 @@ namespace Dc.Proto.Client.World {
       }
     }
 
+    /// <summary>Field number for the "channel_id" field.</summary>
+    public const int ChannelIdFieldNumber = 7;
+    private uint channelId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ChannelId {
+      get { return channelId_; }
+      set {
+        channelId_ = value;
+      }
+    }
+
+    /// <summary>Field number for the "zone_server_id" field.</summary>
+    public const int ZoneServerIdFieldNumber = 8;
+    private uint zoneServerId_;
+    [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
+    [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
+    public uint ZoneServerId {
+      get { return zoneServerId_; }
+      set {
+        zoneServerId_ = value;
+      }
+    }
+
     [global::System.Diagnostics.DebuggerNonUserCodeAttribute]
     [global::System.CodeDom.Compiler.GeneratedCode("protoc", null)]
     public override bool Equals(object other) {
@@ -6554,6 +6581,8 @@ namespace Dc.Proto.Client.World {
       if (X != other.X) return false;
       if (Y != other.Y) return false;
       if (Reason != other.Reason) return false;
+      if (ChannelId != other.ChannelId) return false;
+      if (ZoneServerId != other.ZoneServerId) return false;
       return Equals(_unknownFields, other._unknownFields);
     }
 
@@ -6567,6 +6596,8 @@ namespace Dc.Proto.Client.World {
       if (X != 0) hash ^= X.GetHashCode();
       if (Y != 0) hash ^= Y.GetHashCode();
       if (Reason != global::Dc.Proto.Common.ZoneMapStateReason.EnterSuccess) hash ^= Reason.GetHashCode();
+      if (ChannelId != 0) hash ^= ChannelId.GetHashCode();
+      if (ZoneServerId != 0) hash ^= ZoneServerId.GetHashCode();
       if (_unknownFields != null) {
         hash ^= _unknownFields.GetHashCode();
       }
@@ -6609,6 +6640,14 @@ namespace Dc.Proto.Client.World {
         output.WriteRawTag(48);
         output.WriteEnum((int) Reason);
       }
+      if (ChannelId != 0) {
+        output.WriteRawTag(56);
+        output.WriteUInt32(ChannelId);
+      }
+      if (ZoneServerId != 0) {
+        output.WriteRawTag(64);
+        output.WriteUInt32(ZoneServerId);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(output);
       }
@@ -6643,6 +6682,14 @@ namespace Dc.Proto.Client.World {
         output.WriteRawTag(48);
         output.WriteEnum((int) Reason);
       }
+      if (ChannelId != 0) {
+        output.WriteRawTag(56);
+        output.WriteUInt32(ChannelId);
+      }
+      if (ZoneServerId != 0) {
+        output.WriteRawTag(64);
+        output.WriteUInt32(ZoneServerId);
+      }
       if (_unknownFields != null) {
         _unknownFields.WriteTo(ref output);
       }
@@ -6670,6 +6717,12 @@ namespace Dc.Proto.Client.World {
       }
       if (Reason != global::Dc.Proto.Common.ZoneMapStateReason.EnterSuccess) {
         size += 1 + pb::CodedOutputStream.ComputeEnumSize((int) Reason);
+      }
+      if (ChannelId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ChannelId);
+      }
+      if (ZoneServerId != 0) {
+        size += 1 + pb::CodedOutputStream.ComputeUInt32Size(ZoneServerId);
       }
       if (_unknownFields != null) {
         size += _unknownFields.CalculateSize();
@@ -6700,6 +6753,12 @@ namespace Dc.Proto.Client.World {
       }
       if (other.Reason != global::Dc.Proto.Common.ZoneMapStateReason.EnterSuccess) {
         Reason = other.Reason;
+      }
+      if (other.ChannelId != 0) {
+        ChannelId = other.ChannelId;
+      }
+      if (other.ZoneServerId != 0) {
+        ZoneServerId = other.ZoneServerId;
       }
       _unknownFields = pb::UnknownFieldSet.MergeFrom(_unknownFields, other._unknownFields);
     }
@@ -6744,6 +6803,14 @@ namespace Dc.Proto.Client.World {
             Reason = (global::Dc.Proto.Common.ZoneMapStateReason) input.ReadEnum();
             break;
           }
+          case 56: {
+            ChannelId = input.ReadUInt32();
+            break;
+          }
+          case 64: {
+            ZoneServerId = input.ReadUInt32();
+            break;
+          }
         }
       }
     #endif
@@ -6785,6 +6852,14 @@ namespace Dc.Proto.Client.World {
           }
           case 48: {
             Reason = (global::Dc.Proto.Common.ZoneMapStateReason) input.ReadEnum();
+            break;
+          }
+          case 56: {
+            ChannelId = input.ReadUInt32();
+            break;
+          }
+          case 64: {
+            ZoneServerId = input.ReadUInt32();
             break;
           }
         }

@@ -1,4 +1,4 @@
-﻿<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
@@ -68,6 +68,7 @@
     <Compile Include="Models\MonsterObject.cs" />
     <Compile Include="Models\NpcObject.cs" />
     <Compile Include="Models\PortalObject.cs" />
+    <Compile Include="Models\SafeZoneObject.cs" />
     <Compile Include="Scenes\LoginPanel.cs">
       <SubType>UserControl</SubType>
     </Compile>
@@ -79,6 +80,8 @@
     </Compile>
     <Compile Include="Services\DummyClientState.cs" />
     <Compile Include="Services\WorldRenderService.cs" />
+    <Compile Include="Services\WmGeometryLoader.cs" />
+    <Compile Include="Services\MapGeometryOverlayService.cs" />
     <Compile Include="Services\GameDataService.cs" />
     <Compile Include="..\proto_generated\csharp\Common.cs">
       <Link>ProtoGenerated\Common.cs</Link>
@@ -97,3 +100,8 @@
   </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
 </Project>
+
+
+
+
+

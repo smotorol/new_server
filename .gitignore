@@ -31,3 +31,6 @@
 /tools/DummyClientWinForms/.vs
 /out
 /tools/DummyClientWinForms/bin
+/tools/DummyClientUnity/Library
+/tools/DummyClientUnity/Logs
+/tools/DummyClientUnity/UserSettings

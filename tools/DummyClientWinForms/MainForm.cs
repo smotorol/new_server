@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
 using System.Threading.Tasks;
@@ -11,19 +12,35 @@ namespace DummyClientWinForms
 {
     public partial class MainForm : Form
     {
+        private const int WasdMoveIntervalMs = 100;
+        private const int WasdMoveStepUnits = 2;
+
         private readonly DummyClientState _state = new DummyClientState();
         private readonly TcpClientEx _loginClient = new TcpClientEx();
         private readonly TcpClientEx _worldClient = new TcpClientEx();
         private readonly WorldRenderService _renderService = new WorldRenderService();
         private readonly GameDataService _gameDataService = new GameDataService();
+        private readonly MapGeometryOverlayService _geometryOverlayService = new MapGeometryOverlayService();
+        private IReadOnlyList<GeometryCellSample> _geometryOverlaySamples = Array.Empty<GeometryCellSample>();
+        private MiniMapSnapshot _miniMapSnapshot;
+        private readonly HashSet<Keys> _pressedMovementKeys = new HashSet<Keys>();
+        private readonly Timer _movementInputTimer = new Timer { Interval = WasdMoveIntervalMs };
         private string _selectedObjectId = string.Empty;
         private ulong _lastMonsterId;
 
         public MainForm()
         {
             InitializeComponent();
+            KeyPreview = true;
             WireEvents();
+            _movementInputTimer.Tick += async (s, e) => await HandleMovementInputTickAsync();
             _worldPanel.AutoOverlayCheckBox.Checked = true;
+            _worldPanel.GeometryOverlayCheckBox.Checked = true;
+            _worldPanel.PortalMarkersCheckBox.Checked = true;
+            _worldPanel.SafeZoneMarkersCheckBox.Checked = true;
+            _worldPanel.SpawnMarkersCheckBox.Checked = true;
+            _worldPanel.MiniMapCheckBox.Checked = true;
+            _worldPanel.MiniMapLegendCheckBox.Checked = true;
             LoadZoneOverlay(1, false);
             RefreshUi();
         }
@@ -55,8 +72,36 @@ namespace DummyClientWinForms
                 }
                 RefreshUi();
             };
-            _worldPanel.Canvas.Paint += (s, e) => _renderService.Render(e.Graphics, _worldPanel.Canvas.ClientRectangle, _state, _selectedObjectId);
-            _worldPanel.Canvas.MouseClick += (s, e) => SelectNearestObject(e.Location);
+            _worldPanel.GeometryOverlayChanged += enabled =>
+            {
+                _state.GeometryOverlayEnabled = enabled;
+                RefreshUi();
+            };
+            _worldPanel.MarkerOverlayChanged += () =>
+            {
+                _state.PortalMarkersEnabled = _worldPanel.PortalMarkersCheckBox.Checked;
+                _state.SafeZoneMarkersEnabled = _worldPanel.SafeZoneMarkersCheckBox.Checked;
+                _state.SpawnMarkersEnabled = _worldPanel.SpawnMarkersCheckBox.Checked;
+                RefreshUi();
+            };
+            _worldPanel.MiniMapChanged += enabled =>
+            {
+                _state.MiniMapEnabled = enabled;
+                RefreshUi();
+            };
+            _worldPanel.MiniMapLegendChanged += enabled =>
+            {
+                _state.MiniMapLegendEnabled = enabled;
+                RefreshUi();
+            };
+            _worldPanel.Canvas.Paint += (s, e) => _renderService.Render(e.Graphics, _worldPanel.Canvas.ClientRectangle, _state, _selectedObjectId, _geometryOverlaySamples);
+            _worldPanel.MiniMapCanvas.Paint += (s, e) => _renderService.RenderMiniMap(e.Graphics, _worldPanel.MiniMapCanvas.ClientRectangle, _state, _miniMapSnapshot, _selectedObjectId);
+            _worldPanel.Canvas.MouseDown += (s, e) => _worldPanel.Canvas.Focus();
+            _worldPanel.Canvas.MouseClick += async (s, e) => await HandleWorldCanvasMouseClickAsync(e);
+            _worldPanel.Canvas.Resize += (s, e) => RefreshUi();
+            _worldPanel.MiniMapCanvas.Resize += (s, e) => RefreshUi();
+            KeyDown += HandleMainFormKeyDown;
+            KeyUp += HandleMainFormKeyUp;
 
             _loginClient.PacketReceived += (type, body) => BeginInvoke((Action)(() => HandleLoginPacket(type, body)));
             _worldClient.PacketReceived += (type, body) => BeginInvoke((Action)(() => HandleWorldPacket(type, body)));
@@ -135,15 +180,319 @@ namespace DummyClientWinForms
 
         private async Task MoveAsync()
         {
-            var x = (int)_characterPanel.MoveX.Value;
-            var y = (int)_characterPanel.MoveY.Value;
-            _state.PosX = x;
-            _state.PosY = y;
-            EnsureSelfVisible();
-            await SendWorldPacketAsync(ClientProtocol.Move, ClientProtocol.BuildMove(x, y));
-            RefreshUi();
+            await RequestMoveToAsync((int)_characterPanel.MoveX.Value, (int)_characterPanel.MoveY.Value, "Manual", logToConsole: true);
         }
 
+        private async Task HandleWorldCanvasMouseClickAsync(MouseEventArgs e)
+        {
+            if (e.Button == MouseButtons.Right)
+            {
+                SelectNearestObject(e.Location);
+                return;
+            }
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            _worldPanel.Canvas.Focus();
+            var target = _renderService.ScreenToWorld(new Point(_state.PosX, _state.PosY), _worldPanel.Canvas.ClientRectangle, e.Location);
+            await RequestMoveToAsync(target.X, target.Y, "Click", logToConsole: true);
+        }
+
+        private async void HandleMainFormKeyDown(object sender, KeyEventArgs e)
+        {
+            if (!IsMovementKey(e.KeyCode) || !CanAcceptKeyboardMovement())
+            {
+                return;
+            }
+
+            if (_pressedMovementKeys.Add(e.KeyCode))
+            {
+                _state.WasdActive = _pressedMovementKeys.Count > 0;
+                if (!_movementInputTimer.Enabled)
+                {
+                    _movementInputTimer.Start();
+                    AppendLog("wasd movement started");
+                }
+                RefreshUi();
+            }
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+            await HandleMovementInputTickAsync();
+        }
+
+        private void HandleMainFormKeyUp(object sender, KeyEventArgs e)
+        {
+            if (!IsMovementKey(e.KeyCode))
+            {
+                return;
+            }
+
+            if (_pressedMovementKeys.Remove(e.KeyCode))
+            {
+                if (_pressedMovementKeys.Count == 0)
+                {
+                    _movementInputTimer.Stop();
+                    _state.WasdActive = false;
+                    AppendLog("wasd movement stopped");
+                }
+                RefreshUi();
+            }
+            e.Handled = true;
+            e.SuppressKeyPress = true;
+        }
+
+        private async Task HandleMovementInputTickAsync()
+        {
+            if (_pressedMovementKeys.Count == 0)
+            {
+                _movementInputTimer.Stop();
+                _state.WasdActive = false;
+                RefreshUi();
+                return;
+            }
+            if (!CanAcceptKeyboardMovement())
+            {
+                _movementInputTimer.Stop();
+                _pressedMovementKeys.Clear();
+                _state.WasdActive = false;
+                RefreshUi();
+                return;
+            }
+
+            var dx = (_pressedMovementKeys.Contains(Keys.D) ? 1f : 0f) - (_pressedMovementKeys.Contains(Keys.A) ? 1f : 0f);
+            var dy = (_pressedMovementKeys.Contains(Keys.S) ? 1f : 0f) - (_pressedMovementKeys.Contains(Keys.W) ? 1f : 0f);
+            if (Math.Abs(dx) < float.Epsilon && Math.Abs(dy) < float.Epsilon)
+            {
+                return;
+            }
+
+            var magnitude = (float)Math.Sqrt(dx * dx + dy * dy);
+            dx /= magnitude;
+            dy /= magnitude;
+            var targetX = _state.PosX + (int)Math.Round(dx * WasdMoveStepUnits);
+            var targetY = _state.PosY + (int)Math.Round(dy * WasdMoveStepUnits);
+            await RequestMoveToAsync(targetX, targetY, "WASD", logToConsole: false);
+        }
+
+        private bool TryValidateMovementAgainstGeometry(int x, int y, string inputSource, bool logToConsole, out string reason)
+        {
+            _state.LastGeometryCheckX = x;
+            _state.LastGeometryCheckY = y;
+            bool walkable;
+            string geometryReason;
+            if (!_geometryOverlayService.TryCheckPoint(_state.MapId, x, y, out walkable, out geometryReason))
+            {
+                _state.GeometryOverlayLoaded = false;
+                _state.GeometryLoadedMapId = 0;
+                _state.LastGeometryCheck = "unavailable";
+                reason = string.Empty;
+                return true;
+            }
+
+            _state.GeometryOverlayLoaded = true;
+            _state.GeometryLoadedMapId = _state.MapId;
+            _state.LastGeometryCheck = walkable ? "walkable" : "blocked";
+            if (walkable)
+            {
+                reason = string.Empty;
+                return true;
+            }
+
+            reason = "geometry_blocked";
+            _state.LastMoveBlockedReason = reason;
+            if (logToConsole || string.Equals(inputSource, "Click", StringComparison.OrdinalIgnoreCase))
+            {
+                AppendLog($"move blocked input={inputSource} reason={reason} target=({x},{y}) map={_state.MapId}");
+            }
+            return false;
+        }
+
+        private void RefreshGeometryOverlayState(bool logFailures)
+        {
+            if (_state.MapId <= 0)
+            {
+                _state.GeometryOverlayLoaded = false;
+                _state.GeometryLoadedMapId = 0;
+                _state.MiniMapMapId = 0;
+                _state.MiniMapSampleSizeMeters = 40;
+                _state.GeometrySampleSizeMeters = _geometryOverlayService.ResolveSampleSizeMeters(_renderService.Zoom);
+                _geometryOverlaySamples = Array.Empty<GeometryCellSample>();
+                _miniMapSnapshot = null;
+                return;
+            }
+
+            MapGeometryData geometry;
+            string reason;
+            if (!_geometryOverlayService.TryEnsureLoaded(_state.MapId, out geometry, out reason))
+            {
+                _state.GeometryOverlayLoaded = false;
+                _state.GeometryLoadedMapId = 0;
+                _state.MiniMapMapId = 0;
+                _state.MiniMapSampleSizeMeters = 40;
+                _state.GeometrySampleSizeMeters = _geometryOverlayService.ResolveSampleSizeMeters(_renderService.Zoom);
+                _geometryOverlaySamples = Array.Empty<GeometryCellSample>();
+                _miniMapSnapshot = null;
+                if (logFailures)
+                {
+                    AppendLog($"geometry overlay load failed map={_state.MapId} reason={reason}");
+                }
+                return;
+            }
+
+            _state.GeometryOverlayLoaded = true;
+            _state.GeometryLoadedMapId = _state.MapId;
+            if (_state.GeometryOverlayEnabled)
+            {
+                int sampleSizeMeters;
+                _geometryOverlaySamples = _geometryOverlayService.BuildViewportSamples(
+                    _state.MapId,
+                    new Point(_state.PosX, _state.PosY),
+                    _worldPanel.Canvas.ClientRectangle,
+                    _renderService.Zoom,
+                    out sampleSizeMeters);
+                _state.GeometrySampleSizeMeters = sampleSizeMeters;
+            }
+            else
+            {
+                _state.GeometrySampleSizeMeters = _geometryOverlayService.ResolveSampleSizeMeters(_renderService.Zoom);
+                _geometryOverlaySamples = Array.Empty<GeometryCellSample>();
+            }
+
+            MiniMapSnapshot miniMap;
+            string miniMapReason = string.Empty;
+            if (_state.MiniMapEnabled && _geometryOverlayService.TryGetMiniMapSnapshot(_state.MapId, out miniMap, out miniMapReason))
+            {
+                _miniMapSnapshot = miniMap;
+                _state.MiniMapMapId = miniMap.MapId;
+                _state.MiniMapSampleSizeMeters = miniMap.SampleSizeMeters;
+            }
+            else
+            {
+                _miniMapSnapshot = null;
+                _state.MiniMapMapId = 0;
+                _state.MiniMapSampleSizeMeters = 40;
+                if (_state.MiniMapEnabled && logFailures && !string.IsNullOrWhiteSpace(miniMapReason))
+                {
+                    AppendLog($"minimap load failed map={_state.MapId} reason={miniMapReason}");
+                }
+            }
+        }
+        private async Task<bool> RequestMoveToAsync(int x, int y, string inputSource, bool logToConsole)
+        {
+            string blockedReason;
+            if (!CanIssueWorldMovement(inputSource, out blockedReason))
+            {
+                _state.LastMoveBlockedReason = blockedReason;
+                _state.AwaitingAuthoritativeMoveResult = false;
+                _state.LastMoveLocalWalkable = false;
+                if (logToConsole)
+                {
+                    AppendLog($"move blocked input={inputSource} reason={blockedReason}");
+                }
+                RefreshUi();
+                return false;
+            }
+            if (!TryValidateMovementAgainstGeometry(x, y, inputSource, logToConsole, out blockedReason))
+            {
+                _state.AwaitingAuthoritativeMoveResult = false;
+                _state.LastMoveLocalWalkable = false;
+                RefreshUi();
+                return false;
+            }
+
+            _state.HasMoveTarget = true;
+            _state.MoveTargetX = x;
+            _state.MoveTargetY = y;
+            _state.LastMoveRequestX = x;
+            _state.LastMoveRequestY = y;
+            _state.LastMoveInputSource = inputSource;
+            _state.LastMoveBlockedReason = string.Empty;
+            _state.LastMoveLocalWalkable = true;
+            _state.AwaitingAuthoritativeMoveResult = true;
+            UpdateMoveInputs(x, y);
+            await SendWorldPacketAsync(ClientProtocol.Move, ClientProtocol.BuildMove(x, y));
+            if (logToConsole)
+            {
+                AppendLog($"move_request input={inputSource} target=({x},{y}) geometry={_state.LastGeometryCheck}");
+            }
+            RefreshUi();
+            return true;
+        }
+
+        private bool CanIssueWorldMovement(string inputSource, out string reason)
+        {
+            if (!_state.ConnectedToWorld || !_state.InWorld || _state.CurrentStage != ClientStage.InWorld)
+            {
+                reason = "world_not_ready";
+                return false;
+            }
+            if (_state.ReconnectRequested || _state.EnterWorldRequested)
+            {
+                reason = "transition_pending";
+                return false;
+            }
+            if (_state.ExplicitLogoutRequested || _state.HardLogoutRequested)
+            {
+                reason = "logout_pending";
+                return false;
+            }
+            if (inputSource == "WASD" && !CanAcceptKeyboardMovement())
+            {
+                reason = "keyboard_focus_blocked";
+                return false;
+            }
+            reason = string.Empty;
+            return true;
+        }
+
+        private bool CanAcceptKeyboardMovement()
+        {
+            if (!_worldPanel.Canvas.Focused && !ReferenceEquals(ActiveControl, _worldPanel.Canvas) && !_worldPanel.ContainsFocus)
+            {
+                return false;
+            }
+
+            var active = ActiveControl;
+            if (active is TextBoxBase || active is NumericUpDown || active is ComboBox)
+            {
+                return false;
+            }
+            return true;
+        }
+
+        private static bool IsMovementKey(Keys key)
+        {
+            return key == Keys.W || key == Keys.A || key == Keys.S || key == Keys.D;
+        }
+
+        private void UpdateMoveInputs(int x, int y)
+        {
+            var clampedX = Math.Max((int)_characterPanel.MoveX.Minimum, Math.Min((int)_characterPanel.MoveX.Maximum, x));
+            var clampedY = Math.Max((int)_characterPanel.MoveY.Minimum, Math.Min((int)_characterPanel.MoveY.Maximum, y));
+            _characterPanel.MoveX.Value = clampedX;
+            _characterPanel.MoveY.Value = clampedY;
+        }
+
+        private void ClearMovementInputState(bool clearTarget)
+        {
+            _pressedMovementKeys.Clear();
+            _movementInputTimer.Stop();
+            _state.WasdActive = false;
+            _state.LastMoveBlockedReason = string.Empty;
+            _state.AwaitingAuthoritativeMoveResult = false;
+            _state.LastMoveLocalWalkable = false;
+            if (clearTarget)
+            {
+                _state.HasMoveTarget = false;
+                _state.MoveTargetX = 0;
+                _state.MoveTargetY = 0;
+                _state.LastMoveRequestX = 0;
+                _state.LastMoveRequestY = 0;
+                _state.LastMoveInputSource = "None";
+            }
+        }
         private async Task AttackAsync()
         {
             if (!string.IsNullOrWhiteSpace(_selectedObjectId) && _state.LiveObjects.TryGetValue(_selectedObjectId, out var selected))
@@ -310,6 +659,7 @@ namespace DummyClientWinForms
 
         private void HandleSocketClosed(bool isWorld, string reason, bool expected)
         {
+            ClearMovementInputState(clearTarget: !isWorld || !_state.InWorld);
             var mapped = MapDisconnectReason(reason, expected);
             _state.LastDisconnectReason = mapped;
             _state.LastDisconnectDetail = reason ?? string.Empty;
@@ -536,7 +886,7 @@ namespace DummyClientWinForms
                 case ClientProtocol.ZoneMapState:
                     var zoneState = ClientProtocol.ParseZoneMapState(body);
                     ApplyZoneMapState(zoneState);
-                    AppendLog($"zone_map_state char_id={zoneState.CharId} zone={zoneState.ZoneId} map={zoneState.MapId} pos=({zoneState.X},{zoneState.Y}) reason={zoneState.Reason}");
+                    AppendLog($"zone_map_state char_id={zoneState.CharId} zone={zoneState.ZoneId} map={zoneState.MapId} pos=({zoneState.X},{zoneState.Y}) channel={zoneState.ChannelId} zone_server={zoneState.ZoneServerId} reason={zoneState.Reason}");
                     break;
                 case ClientProtocol.Stats:
                     var stats = ClientProtocol.ParseStats(body);
@@ -598,12 +948,41 @@ namespace DummyClientWinForms
             RefreshUi();
         }
 
+        private void ResolveAuthoritativeMoveResult(int authoritativeX, int authoritativeY, string source)
+        {
+            if (!_state.AwaitingAuthoritativeMoveResult)
+            {
+                return;
+            }
+
+            var matched = authoritativeX == _state.LastMoveRequestX && authoritativeY == _state.LastMoveRequestY;
+            if (!matched && _state.LastMoveLocalWalkable)
+            {
+                _state.GeometryMismatchCount++;
+                _state.LastGeometryMismatch = $"{source}: target=({_state.LastMoveRequestX},{_state.LastMoveRequestY}) actual=({authoritativeX},{authoritativeY})";
+                AppendLog($"geometry/server mismatch source={source} target=({_state.LastMoveRequestX},{_state.LastMoveRequestY}) actual=({authoritativeX},{authoritativeY}) local={_state.LastGeometryCheck}");
+            }
+            else
+            {
+                _state.LastGeometryMismatch = matched
+                    ? $"{source}: match"
+                    : string.Empty;
+            }
+
+            _state.AwaitingAuthoritativeMoveResult = false;
+        }
         private void UpsertPlayer(PlayerObject obj)
         {
             if (obj.CharId == _state.SelectedCharId)
             {
+                ResolveAuthoritativeMoveResult(obj.X, obj.Y, "player_move");
                 _state.PosX = obj.X;
                 _state.PosY = obj.Y;
+                if (_state.HasMoveTarget && _state.MoveTargetX == obj.X && _state.MoveTargetY == obj.Y)
+                {
+                    _state.HasMoveTarget = false;
+                }
+                UpdateMoveInputs(obj.X, obj.Y);
                 obj.IsSelf = true;
                 obj.Label = "Self";
                 obj.ZoneId = _state.ZoneId;
@@ -642,13 +1021,22 @@ namespace DummyClientWinForms
         private void ApplyZoneMapState(ZoneMapStateModel zoneState)
         {
             if (zoneState.CharId != 0) _state.SelectedCharId = zoneState.CharId;
+            ResolveAuthoritativeMoveResult(zoneState.X, zoneState.Y, "zone_map_state");
             _state.ZoneId = (int)zoneState.ZoneId;
             _state.MapId = (int)zoneState.MapId;
             _state.PosX = zoneState.X;
             _state.PosY = zoneState.Y;
             _state.ZoneMapStateReason = zoneState.Reason;
+            _state.CurrentChannelId = (int)zoneState.ChannelId;
+            _state.CurrentZoneServerId = (int)zoneState.ZoneServerId;
+            if (_state.HasMoveTarget && _state.MoveTargetX == zoneState.X && _state.MoveTargetY == zoneState.Y)
+            {
+                _state.HasMoveTarget = false;
+            }
+            UpdateMoveInputs(zoneState.X, zoneState.Y);
             EnsureSelfVisible();
             ApplyOverlaySelectionFromState();
+            RefreshGeometryOverlayState(logFailures: true);
         }
 
         private void ResetRuntimeStateAfterWorldLogout(bool hardLogout)
@@ -659,6 +1047,8 @@ namespace DummyClientWinForms
             _state.EnterWorldRequested = false;
             _state.ReconnectToken = string.Empty;
             _state.ZoneMapStateReason = 0;
+            _state.CurrentChannelId = 0;
+            _state.CurrentZoneServerId = 0;
             _state.PosX = 0;
             _state.PosY = 0;
             _state.Hp = 0;
@@ -667,6 +1057,17 @@ namespace DummyClientWinForms
             _state.Def = 0;
             _state.Gold = 0;
             _state.LiveObjects.Clear();
+            _state.GeometryOverlayLoaded = false;
+            _state.GeometryLoadedMapId = 0;
+            _state.LastGeometryCheck = "unknown";
+            _state.LastGeometryMismatch = string.Empty;
+            _state.GeometryMismatchCount = 0;
+            _state.GeometrySampleSizeMeters = _geometryOverlayService.ResolveSampleSizeMeters(_renderService.Zoom);
+            _state.MiniMapMapId = 0;
+            _state.MiniMapSampleSizeMeters = 40;
+            _geometryOverlaySamples = Array.Empty<GeometryCellSample>();
+            _miniMapSnapshot = null;
+            ClearMovementInputState(clearTarget: true);
             _selectedObjectId = string.Empty;
             _lastMonsterId = 0;
 
@@ -716,6 +1117,7 @@ namespace DummyClientWinForms
             }
             _state.StaticObjects.Clear();
             _state.StaticObjects.AddRange(_gameDataService.LoadZoneOverlay(zoneId));
+            RefreshGeometryOverlayState(logFailures: true);
             AppendLog($"zone overlay loaded zone={zoneId} static_objects={_state.StaticObjects.Count} mode={(_state.AutoOverlayZone ? "auto" : "manual")} data_root={_gameDataService.DataRoot}");
             RefreshUi();
         }
@@ -761,6 +1163,17 @@ namespace DummyClientWinForms
             _state.Worlds.Clear();
             _state.Characters.Clear();
             _state.LiveObjects.Clear();
+            _state.GeometryOverlayLoaded = false;
+            _state.GeometryLoadedMapId = 0;
+            _state.LastGeometryCheck = "unknown";
+            _state.LastGeometryMismatch = string.Empty;
+            _state.GeometryMismatchCount = 0;
+            _state.GeometrySampleSizeMeters = _geometryOverlayService.ResolveSampleSizeMeters(_renderService.Zoom);
+            _state.MiniMapMapId = 0;
+            _state.MiniMapSampleSizeMeters = 40;
+            _geometryOverlaySamples = Array.Empty<GeometryCellSample>();
+            _miniMapSnapshot = null;
+            ClearMovementInputState(clearTarget: true);
             _characterPanel.WorldListBox.DataSource = null;
             _characterPanel.CharacterListBox.DataSource = null;
             _lastMonsterId = 0;
@@ -779,6 +1192,7 @@ namespace DummyClientWinForms
 
         private void RefreshUi()
         {
+            RefreshGeometryOverlayState(logFailures: false);
             _loginPanel.StatusLabel.Text = $"login={(_state.ConnectedToLogin ? "connected" : "down")}, world={(_state.ConnectedToWorld ? "connected" : "down")}";
             _stateTextBox.Text =
                 $"Account: {_state.AccountId}{Environment.NewLine}" +
@@ -795,9 +1209,24 @@ namespace DummyClientWinForms
                 $"CoordScale: 1u={_state.CoordinateUnitMeters}m{Environment.NewLine}" +
                 $"AOIRadius: {_state.AoiRadiusMeters}m{Environment.NewLine}" +
                 $"Zone/Map: {_state.ZoneId}/{_state.MapId}{Environment.NewLine}" +
+                $"Channel/ZoneServer: {_state.CurrentChannelId}/{_state.CurrentZoneServerId}{Environment.NewLine}" +
                 $"OverlayMode: {(_state.AutoOverlayZone ? "auto" : "manual")}{Environment.NewLine}" +
                 $"ZoneMapReason: {_state.ZoneMapStateReason}{Environment.NewLine}" +
                 $"Pos: {_state.PosX}, {_state.PosY}{Environment.NewLine}" +
+                $"MoveTarget: {(_state.HasMoveTarget ? $"{_state.MoveTargetX}, {_state.MoveTargetY}" : "none")}{Environment.NewLine}" +
+                $"LastMove: {_state.LastMoveInputSource} -> {_state.LastMoveRequestX}, {_state.LastMoveRequestY}{Environment.NewLine}" +
+                $"MoveBlocked: {_state.LastMoveBlockedReason}{Environment.NewLine}" +
+                $"WASD: {(_state.WasdActive ? "active" : "idle")}{Environment.NewLine}" +
+                $"Geometry: {(_state.GeometryOverlayLoaded ? $"loaded(map={_state.GeometryLoadedMapId})" : "not_loaded")}{Environment.NewLine}" +
+                $"GeometryOverlay: {(_state.GeometryOverlayEnabled ? "on" : "off")}{Environment.NewLine}" +
+                $"GeometrySample: {_state.GeometrySampleSizeMeters}m{Environment.NewLine}" +
+                $"GeomCheck: {_state.LastGeometryCheck} @ {_state.LastGeometryCheckX}, {_state.LastGeometryCheckY}{Environment.NewLine}" +
+                $"GeometryMismatch: {_state.GeometryMismatchCount} / {_state.LastGeometryMismatch}{Environment.NewLine}" +
+                $"Markers: portal={(_state.PortalMarkersEnabled ? "on" : "off")}, safe={(_state.SafeZoneMarkersEnabled ? "on" : "off")}, spawn={(_state.SpawnMarkersEnabled ? "on" : "off")}{Environment.NewLine}" +
+                $"MiniMapOn: {(_state.MiniMapEnabled ? "on" : "off")}{Environment.NewLine}" +
+                $"MiniMapMapId: {_state.MiniMapMapId}{Environment.NewLine}" +
+                $"MiniMapLegendOn: {(_state.MiniMapLegendEnabled ? "on" : "off")}{Environment.NewLine}" +
+                $"MiniMapSample: {_state.MiniMapSampleSizeMeters}m{Environment.NewLine}" +
                 $"HP: {_state.Hp}/{_state.MaxHp}{Environment.NewLine}" +
                 $"ATK/DEF: {_state.Atk}/{_state.Def}{Environment.NewLine}" +
                 $"Gold: {_state.Gold}{Environment.NewLine}" +
@@ -806,9 +1235,54 @@ namespace DummyClientWinForms
                 $"StaticObjects: {_state.StaticObjects.Count}{Environment.NewLine}" +
                 $"DataRoot: {_gameDataService.DataRoot}";
             _worldPanel.Canvas.Invalidate();
+            _worldPanel.MiniMapCanvas.Invalidate();
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 

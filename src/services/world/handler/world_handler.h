@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #include <cstdint>
 #include <functional>
@@ -39,7 +39,9 @@ public:
         std::uint32_t map_id,
         std::int32_t x,
         std::int32_t y,
-        proto::ZoneMapStateReason reason);
+        proto::ZoneMapStateReason reason,
+        std::uint16_t channel_id = 0,
+        std::uint32_t zone_server_id = 0);
     void SendEnterWorldResult(
         std::uint32_t dwProID,
         std::uint32_t sid,
@@ -138,4 +140,5 @@ private:
 	mutable std::mutex session_proto_mode_mtx_;
 	std::unordered_map<std::uint32_t, std::pair<std::uint32_t, bool>> session_proto_mode_;
 };
+
 

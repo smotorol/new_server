@@ -103,6 +103,25 @@ namespace svr {
 		std::chrono::steady_clock::time_point issued_at{};
 	};
 
+	struct PendingPortalTransfer
+	{
+		std::uint64_t trace_id = 0;
+		std::uint64_t assign_request_id = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t char_id = 0;
+		std::uint16_t source_zone_id = 0;
+		std::uint32_t source_map_template_id = 0;
+		std::uint32_t source_instance_id = 0;
+		std::int32_t source_x = 0;
+		std::int32_t source_y = 0;
+		std::uint32_t target_map_template_id = 0;
+		std::uint32_t target_instance_id = 0;
+		std::int32_t target_x = 0;
+		std::int32_t target_y = 0;
+		std::chrono::steady_clock::time_point issued_at{};
+	};
+
 	struct PendingCharacterEnterSnapshotRequest
 	{
 		std::uint64_t trace_id = 0;

@@ -1,11 +1,14 @@
-#include "services/world/runtime/world_runtime_private.h"
+﻿#include "services/world/runtime/world_runtime_private.h"
 
 #include <algorithm>
+#include <cstring>
 #include <fmt/format.h>
 #include <fmt/ranges.h>
 
 #include "server_common/config/server_topology.h"
 #include "server_common/log/enter_flow_log.h"
+#include "services/world/handler/world_handler.h"
+#include "services/world/common/aoi_broadcast_sanitize.h"
 
 namespace svr {
 
@@ -45,11 +48,212 @@ namespace svr {
 
 			return std::find(route.served_map_ids.begin(), route.served_map_ids.end(), map_template_id) != route.served_map_ids.end();
 		}
+
+		static void SendPortalSpawnPacket_(
+			WorldHandler& handler,
+			std::uint32_t dwProID,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id,
+			std::int32_t x,
+			std::int32_t y)
+		{
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+			if (handler.IsSessionProtoMode(sid, serial)) {
+				dc::proto::client::world::PlayerSpawn msg;
+				msg.set_char_id(char_id);
+				msg.set_x(x);
+				msg.set_y(y);
+				std::vector<char> framed;
+				if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn), msg, framed)) {
+					_MSG_HEADER header{};
+					std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+					handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+					return;
+				}
+			}
+#endif
+			proto::S2C_player_spawn legacy{};
+			legacy.char_id = char_id;
+			legacy.x = x;
+			legacy.y = y;
+			auto header = proto::make_header(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn), static_cast<std::uint16_t>(sizeof(legacy)));
+			handler.Send(dwProID, sid, serial, header, reinterpret_cast<const char*>(&legacy));
+		}
+
+		static void SendPortalDespawnPacket_(
+			WorldHandler& handler,
+			std::uint32_t dwProID,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id)
+		{
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+			if (handler.IsSessionProtoMode(sid, serial)) {
+				dc::proto::client::world::PlayerDespawn msg;
+				msg.set_char_id(char_id);
+				std::vector<char> framed;
+				if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::player_despawn), msg, framed)) {
+					_MSG_HEADER header{};
+					std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+					handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+					return;
+				}
+			}
+#endif
+			proto::S2C_player_despawn legacy{};
+			legacy.char_id = char_id;
+			auto header = proto::make_header(static_cast<std::uint16_t>(proto::S2CMsg::player_despawn), static_cast<std::uint16_t>(sizeof(legacy)));
+			handler.Send(dwProID, sid, serial, header, reinterpret_cast<const char*>(&legacy));
+		}
+
+		static void SendPortalSpawnBatchPacket_(
+			WorldHandler& handler,
+			std::uint32_t dwProID,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			const std::vector<proto::S2C_player_spawn_item>& items)
+		{
+#if DC_HAS_PROTOBUF_RUNTIME && __has_include("proto/generated/cpp/client_world.pb.h")
+			if (handler.IsSessionProtoMode(sid, serial)) {
+				dc::proto::client::world::PlayerSpawnBatch msg;
+				for (const auto& item : items) {
+					auto* out = msg.add_items();
+					out->set_char_id(item.char_id);
+					out->set_x(item.x);
+					out->set_y(item.y);
+				}
+				std::vector<char> framed;
+				if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn_batch), msg, framed)) {
+					_MSG_HEADER header{};
+					std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+					handler.Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+					return;
+				}
+			}
+#endif
+			const auto count = svr::aoi::ClampBatchEntityCount(items.size());
+			const auto body_size = svr::aoi::SpawnBatchBodySize(count);
+			std::vector<char> body(body_size);
+			auto* pkt = reinterpret_cast<proto::S2C_player_spawn_batch*>(body.data());
+			pkt->count = count;
+			for (std::size_t i = 0; i < count; ++i) {
+				pkt->items[i] = items[i];
+			}
+			auto header = proto::make_header(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn_batch), static_cast<std::uint16_t>(body_size));
+			handler.Send(dwProID, sid, serial, header, body.data());
+		}
 	}
 
 	std::uint64_t WorldRuntime::MakeMapAssignmentKey_(std::uint32_t map_template_id, std::uint32_t instance_id) const noexcept
 	{
 		return (static_cast<std::uint64_t>(map_template_id) << 32) | static_cast<std::uint64_t>(instance_id);
+	}
+
+	bool WorldRuntime::BeginPortalTransfer(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id,
+		std::uint16_t source_zone_id,
+		std::uint32_t source_map_template_id,
+		std::uint32_t source_instance_id,
+		std::int32_t source_x,
+		std::int32_t source_y,
+		std::uint32_t target_map_template_id,
+		std::uint32_t target_instance_id,
+		std::int32_t target_x,
+		std::int32_t target_y,
+		std::uint64_t trace_id)
+	{
+		const auto resolved_target_instance_id = ResolvePortalTargetInstanceId_(target_map_template_id, target_instance_id);
+
+		auto assign = AssignMapInstance(
+			target_map_template_id,
+			resolved_target_instance_id,
+			true,
+			IsDungeonMapTemplate_(target_map_template_id),
+			trace_id);
+
+		if (assign.kind == AssignMapInstanceResultKind::Pending) {
+			PendingPortalTransfer pending{};
+			pending.trace_id = trace_id;
+			pending.assign_request_id = assign.request_id;
+			pending.sid = sid;
+			pending.serial = serial;
+			pending.char_id = char_id;
+			pending.source_zone_id = source_zone_id;
+			pending.source_map_template_id = source_map_template_id;
+			pending.source_instance_id = source_instance_id;
+			pending.source_x = source_x;
+			pending.source_y = source_y;
+			pending.target_map_template_id = target_map_template_id;
+			pending.target_instance_id = resolved_target_instance_id;
+			pending.target_x = target_x;
+			pending.target_y = target_y;
+			pending.issued_at = std::chrono::steady_clock::now();
+			pending_portal_transfer_by_assign_request_[assign.request_id] = pending;
+			spdlog::info(
+				"portal transfer pending. sid={} serial={} char_id={} from_zone={} from_map={} to_map={} target_pos=({}, {}) assign_request_id={}",
+				sid,
+				serial,
+				char_id,
+				source_zone_id,
+				source_map_template_id,
+				target_map_template_id,
+				target_x,
+				target_y,
+				assign.request_id);
+			return true;
+		}
+
+		if (assign.kind != AssignMapInstanceResultKind::Ok) {
+			spdlog::warn(
+				"portal transfer route selection failed. sid={} serial={} char_id={} from_zone={} from_map={} to_map={} result_kind={}",
+				sid,
+				serial,
+				char_id,
+				source_zone_id,
+				source_map_template_id,
+				target_map_template_id,
+				static_cast<std::uint32_t>(assign.kind));
+			return false;
+		}
+
+		const auto key = MakeMapAssignmentKey_(target_map_template_id, resolved_target_instance_id);
+		const auto it = map_assignments_.find(key);
+		if (it == map_assignments_.end()) {
+			spdlog::warn(
+				"portal transfer route missing after immediate assignment. sid={} serial={} char_id={} to_map={} instance_id={}",
+				sid,
+				serial,
+				char_id,
+				target_map_template_id,
+				resolved_target_instance_id);
+			return false;
+		}
+
+		PendingPortalTransfer pending{};
+		pending.trace_id = trace_id;
+		pending.sid = sid;
+		pending.serial = serial;
+		pending.char_id = char_id;
+		pending.source_zone_id = source_zone_id;
+		pending.source_map_template_id = source_map_template_id;
+		pending.source_instance_id = source_instance_id;
+		pending.source_x = source_x;
+		pending.source_y = source_y;
+		pending.target_map_template_id = target_map_template_id;
+		pending.target_instance_id = resolved_target_instance_id;
+		pending.target_x = target_x;
+		pending.target_y = target_y;
+		CompletePortalTransfer_(
+			pending,
+			it->second.zone_id,
+			it->second.channel_id,
+			it->second.zone_server_id,
+			target_map_template_id,
+			resolved_target_instance_id);
+		return true;
 	}
 
 	void WorldRuntime::LoadServerTopology_()
@@ -97,6 +301,12 @@ namespace svr {
 			finalize_list = std::move(finalize_it->second);
 			pending_enter_world_finalize_by_assign_request_.erase(finalize_it);
 		}
+		auto portal_it = pending_portal_transfer_by_assign_request_.find(res.request_id);
+		std::optional<PendingPortalTransfer> pending_portal;
+		if (portal_it != pending_portal_transfer_by_assign_request_.end()) {
+			pending_portal = portal_it->second;
+			pending_portal_transfer_by_assign_request_.erase(portal_it);
+		}
 
 		if (pending_assign.map_template_id != res.map_template_id ||
 			pending_assign.instance_id != res.instance_id) {
@@ -133,6 +343,9 @@ namespace svr {
 					finalize.enter_pending,
 					pt_w::EnterWorldResultCode::zone_assign_route_lost,
 					"OnZoneMapAssignResponse map key mismatch.");
+			}
+			if (pending_portal.has_value()) {
+				FailPendingPortalTransfer_(*pending_portal, "zone_assign_response_map_key_mismatch");
 			}
 			return;
 		}
@@ -180,6 +393,9 @@ namespace svr {
 					finalize.enter_pending,
 					reject_reason,
 					"OnZoneMapAssignResponse rejected.");
+			}
+			if (pending_portal.has_value()) {
+				FailPendingPortalTransfer_(*pending_portal, fmt::format("zone_assign_rejected result_code={}", res.result_code));
 			}
 			return;
 		}
@@ -236,6 +452,16 @@ namespace svr {
 				finalize.map_template_id,
 				finalize.instance_id,
 				finalize.core_state);
+		}
+
+		if (pending_portal.has_value()) {
+			CompletePortalTransfer_(
+				*pending_portal,
+				res.zone_id,
+				pending_assign.target_channel_id,
+				pending_assign.target_zone_server_id,
+				res.map_template_id,
+				res.instance_id);
 		}
 	}
 
@@ -379,6 +605,187 @@ namespace svr {
 		CompleteEnterWorldSuccessAfterZoneAck_(pending_enter);
 	}
 
+	void WorldRuntime::FailPendingPortalTransfer_(
+		const PendingPortalTransfer& pending,
+		std::string_view reason)
+	{
+		auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+		if (handler) {
+			handler->SendZoneMapState(
+				0,
+				pending.sid,
+				pending.serial,
+				pending.char_id,
+				pending.source_zone_id,
+				pending.source_map_template_id,
+				pending.source_x,
+				pending.source_y,
+				proto::ZoneMapStateReason::position_update);
+		}
+
+		spdlog::warn(
+			"portal transfer failed. sid={} serial={} char_id={} from_zone={} from_map={} to_map={} reason={}",
+			pending.sid,
+			pending.serial,
+			pending.char_id,
+			pending.source_zone_id,
+			pending.source_map_template_id,
+			pending.target_map_template_id,
+			reason);
+	}
+
+	void WorldRuntime::CompletePortalTransfer_(
+		const PendingPortalTransfer& pending,
+		std::uint16_t assigned_zone_id,
+		std::uint16_t assigned_channel_id,
+		std::uint32_t assigned_zone_server_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id)
+	{
+		auto session = TryGetAuthenticatedWorldSession(pending.sid, pending.serial);
+		if (!session.has_value() || session->char_id != pending.char_id) {
+			spdlog::warn(
+				"portal transfer dropped for stale session. sid={} serial={} char_id={} zone_server={} channel={} map_id={}",
+				pending.sid,
+				pending.serial,
+				pending.char_id,
+				assigned_zone_server_id,
+				assigned_channel_id,
+				map_template_id);
+			return;
+		}
+
+		auto* handler = lines_.host(svr::WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			return;
+		}
+
+		const auto source_zone_id = pending.source_zone_id;
+		const auto char_id = pending.char_id;
+		const auto sid = pending.sid;
+		const auto serial = pending.serial;
+		const auto target_x = pending.target_x;
+		const auto target_y = pending.target_y;
+
+		SendZonePlayerLeave_(pending.source_zone_id, pending.char_id, pending.source_map_template_id, pending.source_instance_id);
+		SendZonePlayerEnter_(pending.trace_id, assigned_zone_id, 0, pending.char_id, map_template_id, instance_id);
+
+		PostActor(
+			char_id,
+			[this, char_id, sid, serial, assigned_zone_id, map_template_id, instance_id, target_x, target_y]() {
+				auto& actor = GetOrCreatePlayerActor(char_id);
+				actor.SetWorldPosition(assigned_zone_id, map_template_id, instance_id, target_x, target_y);
+			});
+
+		PostActor(
+			svr::MakeZoneActorId(source_zone_id),
+			[this, char_id, sid, serial, source_zone_id, handler]() {
+				auto& old_zone = GetOrCreateZoneActor(source_zone_id);
+				std::vector<std::pair<std::uint32_t, std::uint32_t>> receivers;
+				if (const auto self_it = old_zone.players.find(char_id); self_it != old_zone.players.end()) {
+					auto visible_ids = old_zone.GatherNeighborsVec(self_it->second.cx, self_it->second.cy);
+					visible_ids.erase(
+						std::remove(visible_ids.begin(), visible_ids.end(), char_id),
+						visible_ids.end());
+					for (const auto other_char_id : visible_ids) {
+						auto it = old_zone.players.find(other_char_id);
+						if (it == old_zone.players.end()) {
+							continue;
+						}
+						if (it->second.sid != 0 && it->second.serial != 0) {
+							receivers.emplace_back(it->second.sid, it->second.serial);
+						}
+					}
+				}
+
+				old_zone.Leave(char_id);
+				for (const auto& [receiver_sid, receiver_serial] : receivers) {
+					SendPortalDespawnPacket_(*handler, 0, receiver_sid, receiver_serial, char_id);
+				}
+			});
+
+		PostActor(
+			svr::MakeZoneActorId(assigned_zone_id),
+			[this, char_id, sid, serial, assigned_zone_id, target_x, target_y, handler]() {
+				auto& new_zone = GetOrCreateZoneActor(assigned_zone_id);
+				new_zone.JoinOrUpdate(char_id, { target_x, target_y }, sid, serial);
+
+				std::vector<proto::S2C_player_spawn_item> initial_spawn_items;
+				std::vector<std::pair<std::uint32_t, std::uint32_t>> remote_receivers;
+				if (const auto self_it = new_zone.players.find(char_id); self_it != new_zone.players.end()) {
+					auto visible_ids = new_zone.GatherNeighborsVec(self_it->second.cx, self_it->second.cy);
+					visible_ids.erase(
+						std::remove(visible_ids.begin(), visible_ids.end(), char_id),
+						visible_ids.end());
+					for (const auto other_char_id : visible_ids) {
+						auto it = new_zone.players.find(other_char_id);
+						if (it == new_zone.players.end()) {
+							continue;
+						}
+
+						proto::S2C_player_spawn_item item{};
+						item.char_id = other_char_id;
+						item.x = it->second.pos.x;
+						item.y = it->second.pos.y;
+						initial_spawn_items.push_back(item);
+
+						if (it->second.sid != 0 && it->second.serial != 0) {
+							remote_receivers.emplace_back(it->second.sid, it->second.serial);
+						}
+					}
+				}
+
+				if (!initial_spawn_items.empty()) {
+					SendPortalSpawnBatchPacket_(*handler, 0, sid, serial, initial_spawn_items);
+				}
+
+				for (const auto& [receiver_sid, receiver_serial] : remote_receivers) {
+					SendPortalSpawnPacket_(*handler, 0, receiver_sid, receiver_serial, char_id, target_x, target_y);
+				}
+			});
+
+		handler->SendZoneMapState(
+			0,
+			pending.sid,
+			pending.serial,
+			pending.char_id,
+			assigned_zone_id,
+			map_template_id,
+			pending.target_x,
+			pending.target_y,
+			proto::ZoneMapStateReason::portal_moved,
+			assigned_channel_id,
+			assigned_zone_server_id);
+		if (assigned_zone_id != pending.source_zone_id || map_template_id != pending.source_map_template_id) {
+			handler->SendZoneMapState(
+				0,
+				pending.sid,
+				pending.serial,
+				pending.char_id,
+				assigned_zone_id,
+				map_template_id,
+				pending.target_x,
+				pending.target_y,
+				proto::ZoneMapStateReason::zone_changed,
+				assigned_channel_id,
+				assigned_zone_server_id);
+		}
+
+		spdlog::info(
+			"portal transfer completed. sid={} serial={} char_id={} source_zone={} source_map={} target_zone={} target_map={} target_zone_server={} target_channel={} pos=({}, {})",
+			pending.sid,
+			pending.serial,
+			pending.char_id,
+			pending.source_zone_id,
+			pending.source_map_template_id,
+			assigned_zone_id,
+			map_template_id,
+			assigned_zone_server_id,
+			assigned_channel_id,
+			pending.target_x,
+			pending.target_y);
+	}
+
 	std::optional<ZoneRouteInfo> WorldRuntime::TrySelectZoneRoute_(bool dungeon_instance) const
 	{
 		std::lock_guard lk(service_line_mtx_);
@@ -415,6 +822,7 @@ namespace svr {
 	{
 		std::lock_guard lk(service_line_mtx_);
 		std::optional<ZoneRouteInfo> best;
+		std::vector<std::string> candidates;
 		for (const auto& [_, route] : zone_routes_by_sid_) {
 			if (!route.registered || route.serial == 0 || route.zone_id == 0) {
 				continue;
@@ -424,6 +832,7 @@ namespace svr {
 			}
 
 			auto current = MakeZoneRouteInfo_(route);
+			candidates.push_back(fmt::format("sid={} server_id={} zone_id={} channel_id={} load={} players={} maps={}", current.sid, current.zone_server_id, current.zone_id, current.channel_id, current.load_score, current.active_player_count, current.active_map_instance_count));
 			if (!best.has_value()) {
 				best = current;
 				continue;
@@ -451,9 +860,26 @@ namespace svr {
 				best = current;
 			}
 		}
+
+		if (!candidates.empty()) {
+			if (best.has_value()) {
+				spdlog::info("route select for map. map_id={} dungeon_instance={} candidates={} selected_server={} selected_zone={} selected_channel={} load={} players={} maps={}",
+					map_template_id,
+					dungeon_instance ? 1 : 0,
+					fmt::join(candidates, " | "),
+					best->zone_server_id,
+					best->zone_id,
+					best->channel_id,
+					best->load_score,
+					best->active_player_count,
+					best->active_map_instance_count);
+			}
+		}
+		else {
+			spdlog::warn("route select for map failed. map_id={} dungeon_instance={} reason=no_candidates", map_template_id, dungeon_instance ? 1 : 0);
+		}
 		return best;
 	}
-
 
 
 	std::optional<ZoneRouteInfo> WorldRuntime::FindZoneRouteByZoneId_(std::uint16_t zone_id) const
@@ -652,6 +1078,12 @@ namespace svr {
 					RollbackBoundEnterWorld_(finalize.enter_pending, rollback_log);
 					FailPendingEnterWorldConsumeRequest_(finalize.enter_pending, reason, log_text);
 				}
+			}
+
+			auto portal_it = pending_portal_transfer_by_assign_request_.find(request_id);
+			if (portal_it != pending_portal_transfer_by_assign_request_.end()) {
+				FailPendingPortalTransfer_(portal_it->second, log_text);
+				pending_portal_transfer_by_assign_request_.erase(portal_it);
 			}
 
 			it = pending_zone_assign_requests_.erase(it);
@@ -892,6 +1324,16 @@ namespace svr {
 					++it;
 				}
 			}
+			for (auto it = pending_portal_transfer_by_assign_request_.begin(); it != pending_portal_transfer_by_assign_request_.end();) {
+				if (now - it->second.issued_at > dc::k_pending_portal_transfer_requests) {
+					auto pending = it->second;
+					it = pending_portal_transfer_by_assign_request_.erase(it);
+					FailPendingPortalTransfer_(pending, "portal_transfer_timeout");
+				}
+				else {
+					++it;
+				}
+			}
 		}
 
 		// stale route는 registry에서만 지우면 zone 쪽 reconnect/hello-register가 다시 돌지 않을 수 있다.
@@ -914,3 +1356,10 @@ namespace svr {
 	}
 
 } // namespace svr
+
+
+
+
+
+
+

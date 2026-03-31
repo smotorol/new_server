@@ -265,6 +265,19 @@ class PlayerActor final : public net::IActor {
 			SyncProjectionFromCoreState();
 		}
 
+		bool IsPortalTransferCoolingDown(
+			std::chrono::steady_clock::time_point now,
+			std::chrono::milliseconds cooldown) const noexcept
+		{
+			return last_portal_transfer_at_ != std::chrono::steady_clock::time_point{} &&
+				(now - last_portal_transfer_at_) < cooldown;
+		}
+
+		void MarkPortalTransferAt(std::chrono::steady_clock::time_point now) noexcept
+		{
+			last_portal_transfer_at_ = now;
+		}
+
 		std::string SerializePersistentState() const {
 			if (core_state.has_value()) {
 				return demo::SerializeDemo(*core_state);
@@ -342,6 +355,7 @@ class PlayerActor final : public net::IActor {
 		CharCombatState combat{};
 		std::unordered_map<std::uint32_t, std::uint32_t> items; // item_id -> count
 		std::unordered_set<std::uint64_t> committed_loot_txs;    // 멱등 보장
+		std::chrono::steady_clock::time_point last_portal_transfer_at_{};
 	};
 } // namespace svr
 

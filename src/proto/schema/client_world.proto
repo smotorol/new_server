@@ -1,4 +1,4 @@
-﻿syntax = "proto3";
+syntax = "proto3";
 package dc.proto.client.world;
 
 import "common.proto";
@@ -168,5 +168,8 @@ message ZoneMapState {
   sint32 x = 4;
   sint32 y = 5;
   dc.proto.common.ZoneMapStateReason reason = 6;
+  uint32 channel_id = 7;
+  uint32 zone_server_id = 8;
 }
+
 

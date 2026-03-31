@@ -29,9 +29,11 @@ namespace dc {
 	inline constexpr std::chrono::seconds k_next_stat_tp_{ 600 };
 	inline constexpr std::chrono::seconds k_ExpireStaleZoneRoutes{ 600 };
 	inline constexpr std::chrono::seconds k_pending_zone_player_enter_requests{ 600 };
+	inline constexpr std::chrono::seconds k_pending_portal_transfer_requests{ 600 };
 	inline constexpr std::chrono::seconds k_next_world_heartbeat_tp{ 2 };
 	inline constexpr std::chrono::seconds k_next_reap_tp{ 10 };
 	inline constexpr std::chrono::seconds k_ReapEmptyDungeonInstances_{ 30 };
+	inline constexpr std::chrono::milliseconds k_portal_transfer_cooldown{ 500 };
 #else
 	inline constexpr std::chrono::seconds k_login_request_timeout{ 5 };
 	inline constexpr std::chrono::seconds k_account_world_expire{ 30 };
@@ -43,8 +45,10 @@ namespace dc {
 	inline constexpr std::chrono::seconds k_next_stat_tp_{ 1 };
 	inline constexpr std::chrono::seconds k_ExpireStaleZoneRoutes{ 8 };
 	inline constexpr std::chrono::seconds k_pending_zone_player_enter_requests{ 3 };
+	inline constexpr std::chrono::seconds k_pending_portal_transfer_requests{ 3 };
 	inline constexpr std::chrono::seconds k_next_world_heartbeat_tp{ 2 };
 	inline constexpr std::chrono::seconds k_next_reap_tp{ 10 };
 	inline constexpr std::chrono::seconds k_ReapEmptyDungeonInstances_{ 30 };
+	inline constexpr std::chrono::milliseconds k_portal_transfer_cooldown{ 750 };
 #endif
 };

@@ -1,4 +1,4 @@
-﻿#include "services/world/handler/world_handler.h"
+#include "services/world/handler/world_handler.h"
 
 #include <algorithm>
 #include <iterator>
@@ -224,7 +224,9 @@ void WorldHandler::SendZoneMapState(
     std::uint32_t map_id,
     std::int32_t x,
     std::int32_t y,
-    proto::ZoneMapStateReason reason)
+    proto::ZoneMapStateReason reason,
+    std::uint16_t channel_id,
+    std::uint32_t zone_server_id)
 {
     SetSessionProtoMode(sid, serial, IsSessionProtoMode(sid, serial));
 #if DC_WORLD_CLIENT_PROTOBUF
@@ -236,6 +238,8 @@ void WorldHandler::SendZoneMapState(
         msg.set_x(x);
         msg.set_y(y);
         msg.set_reason(static_cast<dc::proto::common::ZoneMapStateReason>(reason));
+        msg.set_channel_id(channel_id);
+        msg.set_zone_server_id(zone_server_id);
         std::vector<char> framed;
         if (dc::proto::BuildFramedMessage(static_cast<std::uint16_t>(proto::S2CMsg::zone_map_state), msg, framed)) {
             _MSG_HEADER header{};
@@ -332,15 +336,62 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
         return true;
     }
 
-    a.SetWorldPosition(before.zone_id, before.map_id, before.instance_id, move_x, move_y);
-
+    const auto now_tp = std::chrono::steady_clock::now();
     if (const auto* portal = dc::zone::ZoneRuntimeDataStore::FindTriggeredPortal(before.zone_id, before.map_id, move_x, move_y); portal != nullptr) {
+        if (a.IsPortalTransferCoolingDown(now_tp, dc::k_portal_transfer_cooldown)) {
+            spdlog::debug("portal trigger ignored by cooldown. sid={} serial={} char_id={} zone_id={} map_id={} pos=({}, {}) cooldown_ms={}", sid, serial, char_id, before.zone_id, before.map_id, move_x, move_y, dc::k_portal_transfer_cooldown.count());
+            SendZoneMapState(dwProID, sid, serial, char_id, before.zone_id, before.map_id, before.x, before.y, proto::ZoneMapStateReason::position_update);
+            return true;
+        }
         const auto dest_zone_id = (portal->dest_zone_id != 0) ? portal->dest_zone_id : before.zone_id;
         const auto dest_map_id = (portal->dest_map_id != 0) ? portal->dest_map_id : before.map_id;
         const auto dest_x = (portal->dest_x != 0) ? portal->dest_x : portal->center_x;
         const auto dest_y = (portal->dest_y != 0) ? portal->dest_y : portal->center_z;
         const bool zone_changed = (dest_zone_id != before.zone_id) || (dest_map_id != before.map_id);
 
+        if (zone_changed) {
+            const auto target_instance_id = portal->value02 != 0 ? static_cast<std::uint32_t>(portal->value02) : 0u;
+            const bool started = runtime().BeginPortalTransfer(
+                sid,
+                serial,
+                char_id,
+                static_cast<std::uint16_t>(before.zone_id),
+                before.map_id,
+                before.instance_id,
+                before.x,
+                before.y,
+                dest_map_id,
+                target_instance_id,
+                dest_x,
+                dest_y,
+                0);
+
+            spdlog::info(
+                "portal handoff requested. sid={} serial={} char_id={} source_zone={} source_map={} source_instance={} target_zone={} target_map={} target_instance={} target_pos=({}, {}) started={} portal_value02={}",
+                sid,
+                serial,
+                char_id,
+                before.zone_id,
+                before.map_id,
+                before.instance_id,
+                dest_zone_id,
+                dest_map_id,
+                target_instance_id,
+                dest_x,
+                dest_y,
+                started ? 1 : 0,
+                portal->value02);
+
+            if (started) {
+                a.MarkPortalTransferAt(now_tp);
+            }
+            if (!started) {
+                SendZoneMapState(dwProID, sid, serial, char_id, before.zone_id, before.map_id, before.x, before.y, proto::ZoneMapStateReason::position_update);
+            }
+            return true;
+        }
+
+        a.MarkPortalTransferAt(now_tp);
         a.SetWorldPosition(dest_zone_id, dest_map_id, before.instance_id, dest_x, dest_y);
         const auto after = CaptureZoneMapState_(a);
         const auto self = shared_from_this();
@@ -381,6 +432,8 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
             portal->value02);
         return true;
     }
+
+    a.SetWorldPosition(before.zone_id, before.map_id, before.instance_id, move_x, move_y);
 
     const auto after = CaptureZoneMapState_(a);
     if (IsSameZoneMapState_(before, after)) {
@@ -662,6 +715,8 @@ bool WorldHandler::HandleWorldSpawnMonster(std::uint32_t dwProID, std::uint32_t 
 	});
 	return true;
 }
+
+
 
 
 

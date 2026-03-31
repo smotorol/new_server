@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using DummyClientWinForms.Models;
 using Google.Protobuf;
@@ -500,10 +500,14 @@ namespace DummyClientWinForms.Network
     public sealed class ReconnectWorldResultModel { public bool Ok; public ushort Reason; public ulong AccountId; public ulong CharId; public string ReconnectToken; public uint ZoneId; public uint MapId; public int X; public int Y; }
     public sealed class StatsModel { public ulong CharId; public uint Hp; public uint MaxHp; public uint Atk; public uint Def; public uint Gold; }
     public sealed class AddGoldResultModel { public bool Ok; public uint Gold; }
-    public sealed class ZoneMapStateModel { public ulong CharId; public uint ZoneId; public uint MapId; public int X; public int Y; public ushort Reason; }
+    public sealed class ZoneMapStateModel { public ulong CharId; public uint ZoneId; public uint MapId; public int X; public int Y; public ushort Reason; public uint ChannelId; public uint ZoneServerId; }
     public sealed class MonsterSpawnResult { public ulong MonsterId; public uint Hp; public uint Atk; public uint Def; }
     public sealed class AttackResultModel { public ulong AttackerId; public ulong TargetId; public uint Damage; public uint TargetHp; public bool Killed; public uint DropItemId; public uint DropCount; public uint AttackerGold; }
 }
+
+
+
+
 
 
 

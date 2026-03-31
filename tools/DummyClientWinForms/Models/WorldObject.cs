@@ -1,4 +1,4 @@
-﻿using System.Drawing;
+using System.Drawing;
 
 namespace DummyClientWinForms.Models
 {
@@ -8,6 +8,7 @@ namespace DummyClientWinForms.Models
         Monster,
         Npc,
         Portal,
+        SafeZone,
     }
 
     public class WorldObject

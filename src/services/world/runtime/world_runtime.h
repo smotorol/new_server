@@ -237,6 +237,25 @@ namespace svr {
 			bool dungeon_instance,
 			std::uint64_t trace_id = 0);
 
+
+		std::optional<MapAssignmentEntry> TryGetMapAssignment(
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id) const;
+		bool BeginPortalTransfer(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id,
+			std::uint16_t source_zone_id,
+			std::uint32_t source_map_template_id,
+			std::uint32_t source_instance_id,
+			std::int32_t source_x,
+			std::int32_t source_y,
+			std::uint32_t target_map_template_id,
+			std::uint32_t target_instance_id,
+			std::int32_t target_x,
+			std::int32_t target_y,
+			std::uint64_t trace_id = 0);
+
 		void OnMapAssignRequest(
 			std::uint32_t sid,
 			std::uint32_t serial,
@@ -469,6 +488,18 @@ namespace svr {
 		std::optional<ZoneRouteInfo> TrySelectZoneRouteForMap_(std::uint32_t map_template_id, bool dungeon_instance) const;
 		std::optional<ZoneRouteInfo> FindZoneRouteByZoneId_(std::uint16_t zone_id) const;
 		std::optional<ZoneRouteInfo> FindZoneRouteByServerChannel_(std::uint32_t zone_server_id, std::uint16_t channel_id) const;
+		std::uint32_t ResolvePortalTargetInstanceId_(std::uint32_t map_template_id, std::uint32_t requested_instance_id);
+		static bool IsDungeonMapTemplate_(std::uint32_t map_template_id) noexcept;
+		void CompletePortalTransfer_(
+			const PendingPortalTransfer& pending,
+			std::uint16_t assigned_zone_id,
+			std::uint16_t assigned_channel_id,
+			std::uint32_t assigned_zone_server_id,
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id);
+		void FailPendingPortalTransfer_(
+			const PendingPortalTransfer& pending,
+			std::string_view reason);
 		bool SendZonePlayerEnter_(std::uint64_t trace_id, std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		bool SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		void LoadServerTopology_();
@@ -581,9 +612,11 @@ namespace svr {
 		std::unordered_map<std::uint64_t, PendingEnterWorldConsumeRequest> pending_enter_world_consume_;
 		std::unordered_map<std::uint64_t, MapAssignmentEntry> map_assignments_;
 		std::unordered_map<std::uint64_t, PendingZoneAssignRequest> pending_zone_assign_requests_;
+		std::unordered_map<std::uint32_t, std::uint32_t> next_dynamic_instance_id_by_map_;
 		std::unordered_map<std::uint64_t, std::uint64_t> pending_zone_assign_request_id_by_map_key_;
 		std::unordered_map<std::uint64_t, PendingCharacterEnterSnapshotRequest> pending_character_enter_snapshot_requests_;
 		std::unordered_map<std::uint64_t, std::vector<PendingEnterWorldFinalize>> pending_enter_world_finalize_by_assign_request_;
+		std::unordered_map<std::uint64_t, PendingPortalTransfer> pending_portal_transfer_by_assign_request_;
 		std::unordered_map<std::uint64_t, PendingZonePlayerEnterRequest> pending_zone_player_enter_requests_;
 		std::uint64_t next_zone_assign_request_id_ = 1;
 		std::uint64_t next_zone_player_enter_request_id_ = 1;
@@ -719,6 +752,7 @@ namespace svr {
 	void ServerProgramExit(const char* call_site, bool save);
 
 } // namespace svr
+
 
 
 

@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -24,7 +24,7 @@ namespace DummyClientWinForms.Services
             _binaryPath = !string.IsNullOrWhiteSpace(binaryPath)
                 ? binaryPath
                 : (Environment.GetEnvironmentVariable("DC_ZONE_RUNTIME_DATA_PATH")
-                    ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "resources", "zone_runtime.bin"));
+                    ?? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "..", "..", "..", "..", "resources", "zone_runtime.bin"));
             _binaryPath = Path.GetFullPath(_binaryPath);
             TryLoad();
         }
@@ -34,6 +34,18 @@ namespace DummyClientWinForms.Services
         public List<WorldObject> LoadZoneOverlay(int zoneId)
         {
             var list = new List<WorldObject>();
+            list.AddRange(_safe.Where(x => x.ZoneId == zoneId).Select((r, i) => new SafeZoneObject
+            {
+                Id = $"safe:{zoneId}:{r.RegionId}:{i}",
+                Kind = WorldObjectKind.SafeZone,
+                Label = $"Safe {r.RegionId}",
+                ZoneId = (int)r.ZoneId,
+                MapId = (int)r.MapId,
+                X = r.CenterX,
+                Y = r.CenterZ,
+                Radius = r.Radius,
+                IsStaticOverlay = true,
+            }));
             list.AddRange(_npcs.Where(x => x.ZoneId == zoneId).Select((r, i) => new NpcObject
             {
                 Id = $"npc:{zoneId}:{r.RegionId}:{i}",

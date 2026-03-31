@@ -57,8 +57,36 @@ namespace DummyClientWinForms.Services
         public bool AutoOverlayZone { get; set; } = true;
         public int ZoneId { get; set; } = 1;
         public int MapId { get; set; } = 1;
+        public int CurrentChannelId { get; set; }
+        public int CurrentZoneServerId { get; set; }
         public int PosX { get; set; }
         public int PosY { get; set; }
+        public bool HasMoveTarget { get; set; }
+        public int MoveTargetX { get; set; }
+        public int MoveTargetY { get; set; }
+        public int LastMoveRequestX { get; set; }
+        public int LastMoveRequestY { get; set; }
+        public string LastMoveInputSource { get; set; } = "None";
+        public string LastMoveBlockedReason { get; set; } = string.Empty;
+        public bool LastMoveLocalWalkable { get; set; }
+        public bool AwaitingAuthoritativeMoveResult { get; set; }
+        public bool WasdActive { get; set; }
+        public bool GeometryOverlayEnabled { get; set; } = true;
+        public bool PortalMarkersEnabled { get; set; } = true;
+        public bool SafeZoneMarkersEnabled { get; set; } = true;
+        public bool SpawnMarkersEnabled { get; set; } = true;
+        public bool MiniMapEnabled { get; set; } = true;
+        public bool MiniMapLegendEnabled { get; set; } = true;
+        public bool GeometryOverlayLoaded { get; set; }
+        public int GeometryLoadedMapId { get; set; }
+        public int GeometrySampleSizeMeters { get; set; } = 5;
+        public int MiniMapMapId { get; set; }
+        public int MiniMapSampleSizeMeters { get; set; } = 40;
+        public int GeometryMismatchCount { get; set; }
+        public string LastGeometryCheck { get; set; } = "unknown";
+        public int LastGeometryCheckX { get; set; }
+        public int LastGeometryCheckY { get; set; }
+        public string LastGeometryMismatch { get; set; } = string.Empty;
         public int CoordinateUnitMeters { get; set; } = 1;
         public int AoiRadiusMeters { get; set; } = 50;
         public ushort ZoneMapStateReason { get; set; }
