@@ -1,0 +1,10 @@
+﻿file_path,symbol,topic,summary
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\S08_MyGameSystem.cpp,LEVELSYSTEM::ReturnLevelFactorAttackPower,LEVEL,returns lAttackPowerInfo[tTribe] from loaded LEVEL rows
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\S08_MyGameSystem.cpp,LEVELSYSTEM::ReturnLevelFactorDefensePower,LEVEL,returns lDefensePowerInfo[tTribe] from loaded LEVEL rows
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\S08_MyGameSystem.cpp,LEVELSYSTEM::ReturnLevelFactorLife,LEVEL,returns lLifeInfo[tTribe] from loaded LEVEL rows
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\S08_MyGameSystem.cpp,LEVELSYSTEM::ReturnLevelFactorMana,LEVEL,returns lManaInfo[tTribe] from loaded LEVEL rows
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\S06_MyGame02.cpp,AVATAR_OBJECT::SetBasicAbilityFromEquip,ITEM,aggregates equip item stats including attack defense life mana vitality ki and level factors
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\S04_MyWork02.cpp,mAVATAR_OBJECT[tUserIndex].mDATA.aTribe,TRIBE,copies tribe from user/avatar info into zone runtime object on enter
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\S04_MyWork02.cpp,mAVATAR_OBJECT[tUserIndex].mDATA.aEquip,EQUIP,copies equip matrix into zone runtime object on enter
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\H05_MyTransfer.h,B_EQUIP_STATE_RECV,EQUIP,defines aEquip[MAX_EQUIP_SLOT_NUM][3] packet shape for equip state sync
+G:\Programing\Work\12sky1\12sky1\S07_TS_ZONE\H08_MyGameSystem.h,ITEMSYSTEM::Search/Return,ITEM,provides item template lookup by item index and equip tribe filters

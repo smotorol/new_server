@@ -2,11 +2,13 @@
 
 #include <chrono>
 #include <thread>
+#include <unordered_map>
 
 #include <spdlog/spdlog.h>
 
 #include "proto/common/packet_util.h"
 #include "proto/common/proto_base.h"
+#include "services/world/runtime/world_runtime.h"
 #include "server_common/session/session_key.h"
 
 bool WorldHandler::HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t sid, const char* body, std::size_t body_len)
@@ -44,7 +46,7 @@ bool WorldHandler::HandleWorldActorSeqTest(std::uint32_t dwProID, std::uint32_t 
 	proto::S2C_actor_seq_ack res{};
 	res.ok = 1;
 	res.seq = req->seq;
-	res.shard = (proto::u32)std::max(0, net::ActorSystem::current_shard_index());
+	res.shard = 0;
 	res.errors = error_count;
 
 	auto h = proto::make_header((std::uint16_t)proto::S2CMsg::actor_seq_ack,
@@ -85,7 +87,7 @@ bool WorldHandler::HandleWorldActorForward(std::uint32_t dwProID, std::uint32_t 
 	proto::S2C_actor_seq_ack res{};
 	res.ok = 1;
 	res.seq = req->tag;
-	res.shard = (proto::u32)std::max(0, net::ActorSystem::current_shard_index());
+	res.shard = 0;
 	res.errors = error_count;
 
 	auto h = proto::make_header((std::uint16_t)proto::S2CMsg::actor_seq_ack,

@@ -22,7 +22,7 @@ namespace svr::dqs_payload {
 	// 주기 flush: world_code의 dirty set에서 최대 batch 개를 DB로 반영
 	struct FlushDirtyChars final
 	{
-		std::uint32_t world_code = 0;
+		std::uint32_t world_id_ = 0;
 		std::uint32_t shard_id = 0; // ✅ shard별 dirty set을 flush
 		std::uint32_t max_batch = 0;
 		FlushDirtyChars() { std::memset(this, 0, sizeof(*this)); }
@@ -37,16 +37,55 @@ namespace svr::dqs_payload {
 		FlushOneChar() { std::memset(this, 0, sizeof(*this)); }
 	};
 
+	struct WorldCharacterEnterSnapshot final
+	{
+		std::uint32_t world_id = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t trace_id = 0;
+		std::uint64_t request_id = 0;
+		std::uint64_t account_id = 0;
+		std::uint64_t char_id = 0;
+		std::uint16_t cached_state_blob_size = 0;
+		char cached_state_blob[dc::k_character_state_blob_max_len]{};
+
+		WorldCharacterEnterSnapshot() { std::memset(this, 0, sizeof(*this)); }
+	};
+
+	struct WorldAccountCharacterListRequest final
+	{
+		std::uint32_t world_id = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t trace_id = 0;
+		std::uint64_t request_id = 0;
+		std::uint64_t account_id = 0;
+		char login_session[dc::k_login_session_max_len + 1]{};
+
+		WorldAccountCharacterListRequest() { std::memset(this, 0, sizeof(*this)); }
+	};
+
 	struct AccountAuthRequest final
 	{
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+		std::uint64_t trace_id = 0;
 		std::uint64_t request_id = 0;
-		std::uint64_t selected_char_id = 0;
 		char login_id[dc::k_login_id_max_len + 1]{};
 		char password[dc::k_login_pw_max_len + 1]{};
 
 		AccountAuthRequest() { std::memset(this, 0, sizeof(*this)); }
+	};
+
+	struct AccountCharacterListRequest final
+	{
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t trace_id = 0;
+		std::uint64_t request_id = 0;
+		std::uint64_t account_id = 0;
+
+		AccountCharacterListRequest() { std::memset(this, 0, sizeof(*this)); }
 	};
 #pragma pack(pop)
 

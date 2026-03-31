@@ -1,9 +1,13 @@
-collect_sources(DC_WORDL_SERVICE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR})
+﻿collect_sources(DC_WORDL_SERVICE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(dc_world_service ${DC_WORDL_SERVICE_SOURCES})
 
 dc_target_defaults(dc_world_service)
 dc_target_src_root(dc_world_service)
+if (MSVC)
+    target_compile_options(dc_world_service PRIVATE /FS)
+endif()
+
 
 target_link_libraries(dc_world_service PUBLIC
     dc_shared

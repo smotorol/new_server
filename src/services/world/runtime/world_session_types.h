@@ -35,6 +35,7 @@ namespace svr {
 		std::uint64_t char_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+		WorldSessionCloseReason close_reason = WorldSessionCloseReason::None;
 	};
 
 	struct DelayedCloseKey
@@ -75,6 +76,7 @@ namespace svr {
 		std::uint64_t char_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+		WorldSessionCloseReason close_reason = WorldSessionCloseReason::None;
 
 		[[nodiscard]] bool removed() const noexcept
 		{
@@ -82,13 +84,34 @@ namespace svr {
 		}
 	};
 
+	struct ReconnectWorldSessionResult
+	{
+		proto::world::ReconnectWorldResultCode code =
+			proto::world::ReconnectWorldResultCode::internal_error;
+		WorldAuthedSession current_session{};
+		WorldAuthedSession previous_session{};
+		std::uint32_t zone_id = 0;
+		std::uint32_t map_id = 0;
+		std::uint32_t instance_id = 0;
+		std::int32_t x = 0;
+		std::int32_t y = 0;
+		std::string reconnect_token;
+
+		[[nodiscard]] bool ok() const noexcept
+		{
+			return code == proto::world::ReconnectWorldResultCode::success;
+		}
+	};
+
 	struct PendingEnterWorldConsumeRequest
 	{
+		std::uint64_t trace_id = 0;
 		std::uint64_t request_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+		bool use_protobuf = false;
 		std::uint64_t account_id = 0;
-		std::uint64_t char_id = 0;
+		std::uint64_t char_id = 0; // account consume success 이후 확정되는 char_id
 		std::string login_session;
 		std::string world_token;
 		std::chrono::steady_clock::time_point issued_at{};

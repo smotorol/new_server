@@ -13,6 +13,10 @@ namespace dc::account {
 			db::OdbcConnection& conn,
 			const AccountAuthRequestJob& job);
 
+		static AccountCharacterListRequestResult ExecuteCharacterList(
+			db::OdbcConnection& conn,
+			const AccountCharacterListRequestJob& job);
+
         static bool UpdateLastLoginAtUtc(
             db::OdbcConnection& conn,
             std::uint64_t account_id);

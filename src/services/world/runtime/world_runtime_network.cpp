@@ -1,12 +1,22 @@
-#include "services/world/runtime/world_runtime_private.h"
+﻿#include "services/world/runtime/world_runtime_private.h"
 #include "server_common/session/session_key.h"
 #include "server_common/config/aoi_config.h"
 #include "server_common/config/runtime_ini_schema.h"
 #include "server_common/config/runtime_ini_sanity.h"
 #include "server_common/config/runtime_ini_version.h"
+#include "server_common/config/runtime_config_path.h"
 #include "server_common/log/flow_event_codes.h"
 
 namespace svr {
+
+	void WorldRuntime::OnAccountDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { MarkAccountDisconnected_(sid, serial); }
+	void WorldRuntime::OnZoneRegisteredFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count, std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags, std::string_view server_name) { RegisterZoneRoute(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags, server_name); }
+	void WorldRuntime::OnZoneHeartbeatFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id, std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count, std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags) { OnZoneRouteHeartbeat(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags); }
+	void WorldRuntime::OnZoneDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { UnregisterZoneRoute(sid, serial); }
+	void WorldRuntime::OnZoneMapAssignResponseFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res) { OnZoneMapAssignResponse(sid, serial, res); }
+	void WorldRuntime::OnZonePlayerEnterAckFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack) { OnZonePlayerEnterAck(sid, serial, ack); }
+	void WorldRuntime::OnControlRegisteredFromHandler(std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id, std::string_view server_name, std::uint16_t listen_port) { RegisterControlLine(sid, serial, server_id, server_name, listen_port); }
+	void WorldRuntime::OnControlDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial) { UnregisterControlLine(sid, serial); }
 
 	void WorldRuntime::CloseWorldServer(std::uint32_t world_socket_index) {
 		if (!lines_.host(svr::WorldLineId::World).server()) return;
@@ -56,7 +66,13 @@ namespace svr {
 	bool WorldRuntime::LoadIniFile()
 	{
 		namespace fs = std::filesystem;
-		const fs::path ini_path = fs::current_path() / "Initialize" / "ServerSystem.ini";
+		fs::path ini_path = dc::cfg::ResolveRuntimeConfigPath(
+			"DC_WORLD_CONFIG_PATH",
+			{
+				fs::path("Initialize") / "WorldSystem.ini",
+				fs::path("docs") / "WorldSystem.ini",
+				fs::path("WorldSystem.ini"),
+			});
 
 		std::ifstream is(ini_path, std::ios::in | std::ios::binary);
 		if (!is) {
@@ -109,7 +125,7 @@ namespace svr {
 		// ini.default_section(ini.sections[""]);
 
 		// [LOGDB_INFO]
-		db_acc_ = ini.sections["DB_INFO"]["Acc"];
+		db_id_ = ini.sections["DB_INFO"]["Acc"];
 		db_pw_ = ini.sections["DB_INFO"]["PW"];
 
 		// [REDIS]
@@ -178,46 +194,21 @@ namespace svr {
 		}
 
 		// [World]
-		worldset_num_ = 0;
-		{
-			auto v = ini.sections["World"]["WorldSet_Num"];
-			if (!parse_int_field("World.WorldSet_Num", v, worldset_num_)) return false;
+		if (!ini.sections["System"]["WorldName"].empty()) {
+			name_utf8_ = ini.sections["System"]["WorldName"];
+		}
+		if (!ini.sections["System"]["GateIP"].empty()) {
+			host_ = ini.sections["System"]["GateIP"];
+		}
+		if (!ini.sections["System"]["ClientPort"].empty()) {
+			port_world_ = static_cast<std::uint16_t>(std::stoi(ini.sections["System"]["ClientPort"]));
+		}
+		account_host_ = ini.sections["System"]["AccountAddress"];
+		if (!ini.sections["System"]["AccountPort"].empty()) {
+			account_port_ = static_cast<std::uint16_t>(std::stoi(ini.sections["System"]["AccountPort"]));
 		}
 
-		worlds_.clear();
-		worlds_.reserve(std::max(0, worldset_num_));
-
-		for (int i = 0; i < worldset_num_; ++i) {
-			WorldInfo w;
-
-			auto key = [&](const char* base) {
-				return std::string(base) + std::to_string(i);
-			};
-
-			// Name은 한글 가능 → UTF-8 그대로 std::string에 보관하는 게 베스트
-			w.name_utf8 = ini.sections["World"][key("Name")];
-			w.address = ini.sections["World"][key("Address")];
-			w.dsn = ini.sections["World"][key("DSN")];
-			w.dbname = ini.sections["World"][key("DBName")];
-
-				{
-					auto port = ini.sections["World"][key("Port")];
-					int parsed_port = 0;
-					if (!parse_int_field(std::string("World.") + key("Port"), port, parsed_port)) return false;
-					w.port = parsed_port;
-				}
-
-				{
-					auto idx = ini.sections["World"][key("WorldIdx")];
-					int parsed_idx = 0;
-					if (!parse_int_field(std::string("World.") + key("WorldIdx"), idx, parsed_idx)) return false;
-					w.world_idx = parsed_idx;
-				}
-
-			worlds_.push_back(std::move(w));
-		}
-
-		// [NET_WORK]
+// [NET_WORK]
 		world_to_log_recv_buffer_size_ = 10'000'000;
 		{
 			auto v = ini.sections["NET_WORK"]["WORLD_TO_LOG_RECV_BUFFER_SIZE"];
@@ -344,8 +335,8 @@ namespace svr {
 		dc::cfg::NormalizeAoiConfig(g_aoi_ini_cfg);
 
 
-		spdlog::info("INI loaded (UTF-8): acc='{}', worldset_num={}, recv_buf={}",
-			db_acc_, worldset_num_, world_to_log_recv_buffer_size_);
+		spdlog::info("INI loaded (UTF-8): acc='{}', recv_buf={}",
+			db_id_, world_to_log_recv_buffer_size_);
 
 		spdlog::info("INI(DB_WORK): pool_per_world={}, db_shards={}", db_pool_size_per_world_, db_shard_count_);
 			spdlog::info("INI(WRITE_BEHIND): flush_interval={}s, batch_immediate={}, batch_normal={}, ttl={}s",
@@ -363,101 +354,122 @@ namespace svr {
 			g_aoi_ini_cfg.map_size.x, g_aoi_ini_cfg.map_size.y,
 			g_aoi_ini_cfg.world_sight_unit, g_aoi_ini_cfg.aoi_radius_cells);
 
-		for (const auto& w : worlds_) {
-			spdlog::info("World: name='{}' addr='{}' dsn='{}' db='{}' idx={}",
-				w.name_utf8, w.address, w.dsn, w.dbname, w.world_idx);
-		}
+		spdlog::info("World: name='{}' addr='{}'",
+			name_utf8_, host_);
+
+		LoadServerTopology_();
 
 		return true;
 	}
 
 	bool WorldRuntime::DatabaseInit()
 	{
-		world_pools_.clear();
-		if (worldset_num_ <= 0 || worlds_.empty())
-		{
-			spdlog::warn("DatabaseInit: no world settings. skip.");
-			return true;
-		}
+		if (!world_pool_)
+			world_pool_ = std::make_unique<DbPool>();
+		auto& pool = *world_pool_;
 
-		world_pools_.resize((size_t)worldset_num_);
+		pool.conns.clear();
+		pool.conns.reserve((size_t)db_pool_size_per_world_);
 
-		for (int i = 0; i < worldset_num_; ++i)
-		{
-			const auto& w = worlds_[(size_t)i];
-			if (!world_pools_[(size_t)i])
-				world_pools_[(size_t)i] = std::make_unique<DbPool>();
-			auto& pool = *world_pools_[(size_t)i];
+		// 1) 연결 문자열 조합
+		std::string dsn_conn =
+			"DSN=" + db_dns_ +
+			";UID=" + db_id_ +
+			";PWD=" + db_pw_ + ";";
 
-			pool.conns.clear();
-			pool.conns.reserve((size_t)db_pool_size_per_world_);
+		try {
+			for (int k = 0; k < db_pool_size_per_world_; ++k)
+			{
+				db::OdbcConnection conn;
+				bool connected = false;
 
-			// 1) 연결 문자열 조합
-			std::string dsn_conn =
-				"DSN=" + w.dsn +
-				";UID=" + db_acc_ +
-				";PWD=" + db_pw_ + ";";
-
-			if (!w.dbname.empty()) {
-				dsn_conn += "DATABASE=" + w.dbname + ";";
-			}
-
-			// 2) DRIVER 기반 fallback 연결 문자열
-			std::string driver_conn =
-				"DRIVER={ODBC Driver 18 for SQL Server};"
-				"SERVER=" + w.address + "," + std::to_string(w.port) + ";"
-				"UID=" + db_acc_ + ";"
-				"PWD=" + db_pw_ + ";"
-				"Encrypt=optional;";
-
-			if (!w.dbname.empty())
-				driver_conn += "DATABASE=" + w.dbname + ";";
-
-			try {
-				for (int k = 0; k < db_pool_size_per_world_; ++k)
+				// 1️ DSN 먼저 시도
+				try
 				{
-					db::OdbcConnection conn;
-					bool connected = false;
-
-					// 1️ DSN 먼저 시도
-					try
-					{
-						conn.connect(dsn_conn);
-						connected = conn.connected();
-					}
-					catch (...)
-					{
-						spdlog::warn(
-							"DSN not found. fallback to DRIVER mode (world={}, dsn={})",
-							i, w.dsn);
-					}
-
-					// 2️ DRIVER fallback
-					if (!connected)
-					{
-						conn.connect(driver_conn);
-						connected = conn.connected();
-					}
-
-					if (!connected)
-					{
-						spdlog::error("DB not connected (world={})", i);
-						return false;
-					}
-
-					pool.conns.push_back(std::move(conn));
+					conn.connect(dsn_conn);
+					connected = conn.connected();
 				}
-				spdlog::info(
-					"DB connected: world={} dsn={} db={} pool={} (dsn+driver fallback)",
-					i, w.dsn, w.dbname, db_pool_size_per_world_);
+				catch (...)
+				{
+					spdlog::warn(
+						"DSN not found. fallback to DRIVER mode (dsn={})",
+						db_dns_);
+				}
+
+				if (!connected)
+				{
+					spdlog::error("DB not connected");
+					return false;
+				}
+
+				pool.conns.push_back(std::move(conn));
 			}
-			catch (const db::OdbcError& e) {
-				spdlog::error("DB connect failed (dsn={}): {}", w.dsn, e.what());
-				return false;
-			}
+			spdlog::info(
+				"DB connected: dsn={} pool={} (dsn+driver fallback)",
+				db_dns_, db_pool_size_per_world_);
+		}
+		catch (const db::OdbcError& e) {
+			spdlog::error("DB connect failed (dns={}): {}", db_dns_, e.what());
+			return false;
 		}
 
 		return true;
+	}
+
+	bool WorldRuntime::PreloadItemTemplateRepository_()
+	{
+		ItemTemplateRepository::SetLegacyFallbackAllowed(allow_legacy_item_template_fallback_);
+
+		if (!world_pool_ || world_pool_->conns.empty()) {
+			return false;
+		}
+
+		auto result = ItemTemplateRepository::LoadCanonicalTableFromDb(world_pool_->conns.front());
+		if (result.loaded) {
+			auto status = ItemTemplateRepository::SnapshotStatus();
+			spdlog::info(
+				"Item template preload success. source={} rows={} repository_empty={} fallback_entered={} repository_ready={} miss_count={} last_error_reason={}",
+				status.source,
+				status.preload_count,
+				status.empty ? 1 : 0,
+				status.fallback_entered ? 1 : 0,
+				status.ready ? 1 : 0,
+				status.miss_count,
+				status.last_error_reason.empty() ? "none" : status.last_error_reason);
+			return true;
+		}
+
+		if (allow_legacy_item_template_fallback_) {
+			auto fallback = ItemTemplateRepository::BootstrapCanonicalTableFromLegacyCsv();
+			if (fallback.loaded) {
+				auto status = ItemTemplateRepository::SnapshotStatus();
+				spdlog::warn(
+					"Item template preload fallback. source={} rows={} repository_empty={} fallback_entered={} repository_ready={} reason={} miss_count={}",
+					status.source,
+					status.preload_count,
+					status.empty ? 1 : 0,
+					status.fallback_entered ? 1 : 0,
+					status.ready ? 1 : 0,
+					status.last_error_reason.empty() ? "empty_db" : status.last_error_reason,
+					status.miss_count);
+				return true;
+			}
+		}
+		else {
+			spdlog::warn("Item template preload fallback disabled. reason=allow_legacy_item_template_fallback_false");
+		}
+
+		auto status = ItemTemplateRepository::SnapshotStatus();
+		spdlog::warn(
+			"Item template repository ready. source={} rows={} repository_empty={} fallback_entered={} repository_ready={} miss_count={} last_error_reason={}",
+			status.source,
+			status.preload_count,
+			status.empty ? 1 : 0,
+			status.fallback_entered ? 1 : 0,
+			status.ready ? 1 : 0,
+			status.miss_count,
+			status.last_error_reason.empty() ? "none" : status.last_error_reason);
+		return false;
 	}
 
 	bool WorldRuntime::EnsureAccountHandler_()
@@ -466,17 +478,7 @@ namespace svr {
 			return true;
 		}
 
-		world_account_handler_ = std::make_shared<WorldAccountHandler>(
-			*this,
-			[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
-				std::uint16_t world_id, std::uint16_t channel_id,
-				std::uint16_t active_zone_count, std::uint16_t load_score, std::uint32_t flags,
-				std::string_view server_name, std::string_view public_host, std::uint16_t public_port) {
-			MarkAccountRegistered_(sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
-		},
-			[this](std::uint32_t sid, std::uint32_t serial) {
-			MarkAccountDisconnected_(sid, serial);
-		});
+		world_account_handler_ = std::make_shared<WorldAccountHandler>(*this);
 
 		if (!world_account_handler_) {
 			spdlog::debug("[{}] skipped: world_account_handler_ is null", dc::logevt::world::kAccountRouteHeartbeat);
@@ -505,28 +507,7 @@ namespace svr {
 		if (!dc::StartHostedLine(
 			lines_.entry(svr::WorldLineId::Zone),
 			io_,
-			std::make_shared<WorldZoneHandler>(
-				[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
-					std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id,
-					std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count,
-					std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags, std::string_view server_name) {
-			RegisterZoneRoute(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags, server_name);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial, std::uint32_t server_id,
-					std::uint16_t zone_id, std::uint16_t world_id, std::uint16_t channel_id,
-					std::uint16_t map_instance_capacity, std::uint16_t active_map_instance_count,
-					std::uint16_t active_player_count, std::uint16_t load_score, std::uint32_t flags) {
-			OnZoneRouteHeartbeat(sid, serial, server_id, zone_id, world_id, channel_id, map_instance_capacity, active_map_instance_count, active_player_count, load_score, flags);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial) {
-			UnregisterZoneRoute(sid, serial);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res) {
-			OnZoneMapAssignResponse(sid, serial, res);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack) {
-			OnZonePlayerEnterAck(sid, serial, ack);
- 		}),
+			std::make_shared<WorldZoneHandler>(*this),
 			dispatch)) {
 			return false;
 		}
@@ -534,15 +515,7 @@ namespace svr {
 		if (!dc::StartHostedLine(
 			lines_.entry(svr::WorldLineId::Control),
 			io_,
-			std::make_shared<WorldControlHandler>(
-				[this](std::uint32_t sid, std::uint32_t serial,
-					std::uint32_t server_id, std::string_view server_name,
-					std::uint16_t listen_port) {
-			RegisterControlLine(sid, serial, server_id, server_name, listen_port);
-		},
-				[this](std::uint32_t sid, std::uint32_t serial) {
-			UnregisterControlLine(sid, serial);
-		}),
+			std::make_shared<WorldControlHandler>(*this),
 			dispatch)) {
 			return false;
 		}
@@ -550,17 +523,6 @@ namespace svr {
 		if (!EnsureAccountHandler_()) {
 			return false;
 		}
-
-		world_account_handler_->SetServerIdentity(
-			10,
-			1,
-			1,
-			"world",
-			"127.0.0.1",
-			port_world_,
-			0,
-			0,
-			pt_aw::k_world_flag_accepting_players | pt_aw::k_world_flag_visible);
 
 		dc::InitOutboundLineEntry(
 			account_line_,
@@ -619,18 +581,13 @@ namespace svr {
 		}
 	}
 
-	void WorldRuntime::MarkAccountRegistered_(
+	void WorldRuntime::OnAccountRegisterAckFromHandler(
 		std::uint32_t sid,
 		std::uint32_t serial,
-		std::uint32_t server_id,
 		std::uint16_t world_id,
-		std::uint16_t channel_id,
-		std::uint16_t active_zone_count,
-		std::uint16_t load_score,
-		std::uint32_t flags,
-		std::string_view server_name,
-		std::string_view public_host,
-		std::uint16_t public_port)
+		std::string_view db_dns,
+		std::string_view db_id,
+		std::string_view db_pw)
 	{
 		account_sid_.store(sid, std::memory_order_relaxed);
 		account_serial_.store(serial, std::memory_order_relaxed);
@@ -638,9 +595,38 @@ namespace svr {
 		next_account_route_heartbeat_tp_ = std::chrono::steady_clock::now() + dc::k_next_account_route_heartbeat_tp;
 
 		spdlog::info(
-			"[{}] sid={} serial={} server_id={} world_id={} channel_id={} zones={} load_score={} flags={} server_name={} public_host={} public_port={}",
+			"[{}] sid={} serial={} world_id={} db_dns={}",
 			dc::logevt::world::kAccountRouteReady,
-			sid, serial, server_id, world_id, channel_id, active_zone_count, load_score, flags, server_name, public_host, public_port);
+			sid, serial, world_id, db_dns);
+
+		ApplyAccountAssignedConfig_(world_id, db_dns, db_id, db_pw);
+		world_account_handler_->SetServerIdentity(pt_aw::k_world_flag_accepting_players | pt_aw::k_world_flag_visible);
+		NotifyAccountReady_();
+	}
+
+	bool WorldRuntime::ApplyAccountAssignedConfig_(std::uint16_t world_id, std::string_view db_dns, std::string_view db_id, std::string_view db_pw)
+	{
+		world_id_ = world_id;
+		if (!db_dns.empty()) db_dns_.assign(db_dns.data(), db_dns.size());
+		if (!db_id.empty()) db_id_.assign(db_id.data(), db_id.size());
+		if (!db_pw.empty()) db_pw_.assign(db_pw.data(), db_pw.size());
+		if (!DatabaseInit()) {
+			spdlog::error("WorldRuntime DatabaseInit failed after account ack. world_id={} db_dns={}", world_id, db_dns_);
+			return false;
+		}
+		PreloadItemTemplateRepository_();
+		return true;
+	}
+
+	void WorldRuntime::NotifyAccountReady_()
+	{
+		if (!world_account_handler_) return;
+		const auto sid = account_sid_.load(std::memory_order_relaxed);
+		const auto serial = account_serial_.load(std::memory_order_relaxed);
+		if (!dc::IsValidSessionKey(sid, serial)) return;
+		if (!world_account_handler_->SendReadyNotify(0, sid, serial)) {
+			spdlog::warn("WorldRuntime failed to send ready notify sid={} serial={}", sid, serial);
+		}
 	}
 
 	void WorldRuntime::MarkAccountDisconnected_(
@@ -663,6 +649,7 @@ namespace svr {
 	}
 
 	bool WorldRuntime::NotifyAccountWorldEnterSuccess(
+		std::uint64_t trace_id,
 		std::uint64_t account_id,
 		std::uint64_t char_id,
 		std::string_view login_session,
@@ -690,6 +677,7 @@ namespace svr {
 			100,
 			account_sid_.load(std::memory_order_relaxed),
 			account_serial_.load(std::memory_order_relaxed),
+			trace_id,
 			account_id,
 			char_id,
 			login_session,
@@ -706,3 +694,4 @@ namespace svr {
 		return sent;
 	}
 } // namespace svr
+

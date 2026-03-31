@@ -1,0 +1,37 @@
+{
+  "world": {
+    "config_path": "config/world_server.ini"
+  },
+  "account": {
+    "config_path": "config/account_server.ini"
+  },
+  "login": {
+    "config_path": "config/login_server.ini"
+  },
+  "zone_servers": [
+    {
+      "id": 1,
+      "world_id": 1,
+      "server_name": "zone-server-1",
+      "maps": [1, 2, 3],
+      "channels": [1, 2, 3],
+      "port": 5001
+    },
+    {
+      "id": 2,
+      "world_id": 1,
+      "server_name": "zone-server-2",
+      "maps": [4, 5, 6],
+      "channels": [1, 2, 3],
+      "port": 5011
+    },
+    {
+      "id": 3,
+      "world_id": 1,
+      "server_name": "zone-server-3",
+      "maps": [7, 8, 9],
+      "channels": [1, 2, 3],
+      "port": 5021
+    }
+  ]
+}

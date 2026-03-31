@@ -1,4 +1,4 @@
-collect_sources(DC_LOGIN_SERVICE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR})
+﻿collect_sources(DC_LOGIN_SERVICE_SOURCES ${CMAKE_CURRENT_SOURCE_DIR})
 
 add_library(dc_login_service ${DC_LOGIN_SERVICE_SOURCES})
 
@@ -9,8 +9,9 @@ target_link_libraries(dc_login_service PUBLIC
     dc_shared
     dc_core
     dc_net
+    dc_proto
     dc_service_runtime
+    inipp
 )
 
 group_sources(${CMAKE_CURRENT_SOURCE_DIR} "" "${DC_LOGIN_SERVICE_SOURCES}")
-

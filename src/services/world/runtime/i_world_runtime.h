@@ -21,6 +21,7 @@ namespace svr {
 		std::uint64_t char_id = 0;
 		std::uint32_t sid = 0;
 		std::uint32_t serial = 0;
+		std::string reconnect_token;
 	};
 
 	enum class WorldEnterStage
@@ -85,6 +86,16 @@ namespace svr {
 		DuplicateBoth,
 		DuplicateDeduplicatedSameSession,
 		Other,
+	};
+
+	enum class WorldSessionCloseReason
+	{
+		None = 0,
+		NetworkDisconnect,
+		ExplicitSoftLogout,
+		ExplicitHardLogout,
+		DuplicateKick,
+		ServerShutdown,
 	};
 
 	struct BindAuthedWorldSessionResult
@@ -189,110 +200,7 @@ namespace svr {
 			return kind == ConsumePendingWorldAuthTicketResultKind::Ok;
 		}
 	};
-
-	class IWorldRuntime {
-	public:
-		virtual ~IWorldRuntime() = default;
-
-		virtual void PostActor(std::uint64_t actor_id, std::function<void()> fn) = 0;
-		virtual void Post(std::function<void()> fn) = 0;
-		virtual void PostDqsResult(svr::dqs_result::Result r) = 0;
-
-		virtual PlayerActor& GetOrCreatePlayerActor(std::uint64_t char_id) = 0;
-		virtual WorldActor& GetOrCreateWorldActor() = 0;
-		virtual ZoneActor& GetOrCreateZoneActor(std::uint32_t zone_id) = 0;
-		virtual void EraseActor(std::uint64_t actor_id) = 0;
-
-		virtual std::uint64_t FindCharIdBySession(std::uint32_t sid) const = 0;
-
-		virtual bool RequestConsumeWorldAuthTicket(
-			std::uint32_t sid,
-			std::uint32_t serial,
-			std::uint64_t account_id,
-			std::uint64_t char_id,
-			std::string_view login_session,
-			std::string_view token) = 0;
-
-		virtual BeginEnterWorldSessionResult TryBeginEnterWorldSession(
-			std::uint32_t sid,
-			std::uint32_t serial,
-			std::uint64_t account_id,
-			std::uint64_t char_id) = 0;
-
-		virtual void CancelPendingEnterWorldSession(
-			std::uint32_t sid,
-			std::uint32_t serial,
-			std::uint64_t char_id) = 0;
-
-		virtual bool IsEnterWorldSessionPending(
-			std::uint32_t sid,
-			std::uint32_t serial,
-			std::uint64_t char_id) const = 0;
-
-		virtual bool PromoteEnterWorldSessionToInWorld(
-			std::uint32_t sid,
-			std::uint32_t serial,
-			std::uint64_t char_id) = 0;
-
-		virtual void MarkEnterWorldSessionClosing(
-			std::uint32_t sid,
-			std::uint32_t serial) = 0;
-
-		virtual void OnWorldAuthTicketConsumeResponse(
-			std::uint64_t request_id,
-			svr::ConsumePendingWorldAuthTicketResultKind result_kind,
-			std::uint64_t account_id,
-			std::uint64_t char_id,
-			std::string_view login_session,
-			std::string_view world_token) = 0;
-
-		virtual bool NotifyAccountWorldEnterSuccess(
-			std::uint64_t account_id,
-			std::uint64_t char_id,
-			std::string_view login_session,
-			std::string_view world_token) = 0;
-
-		virtual std::uint32_t GetActiveWorldSessionCount() const = 0;
-		virtual std::uint16_t GetActiveZoneCount() const = 0;
-
-		virtual AssignMapInstanceResult AssignMapInstance(
-			std::uint32_t map_template_id,
-			std::uint32_t instance_id,
-			bool create_if_missing,
-			bool dungeon_instance) = 0;
-
-		virtual BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
-			std::uint64_t account_id,
-			std::uint64_t char_id,
-			std::uint32_t sid,
-			std::uint32_t serial,
-			std::uint16_t kick_reason) = 0;
-
-		virtual UnbindAuthedWorldSessionResult UnbindAuthenticatedWorldSessionBySid(
-			std::uint32_t sid,
-			std::uint32_t serial) = 0;
-
-		virtual void CancelDelayedWorldClose(
-			std::uint32_t sid,
-			std::uint32_t serial) = 0;
-
-		virtual void HandleWorldSessionClosed(
-			std::uint32_t sid,
-			std::uint32_t serial) = 0;
-
-		virtual bool PushDQSData(std::uint8_t process_code, std::uint8_t qry_case, const char* data, int size) = 0;
-
-		virtual void CacheCharacterState(std::uint32_t world_code, std::uint64_t char_id, const std::string& blob) = 0;
-		virtual std::optional<std::string> TryLoadCharacterState(std::uint32_t world_code, std::uint64_t char_id) = 0;
-		virtual void RequestFlushCharacter(std::uint32_t world_code, std::uint64_t char_id) = 0;
-
-		virtual void RequestBenchReset() noexcept = 0;
-		virtual void RequestBenchMeasure(int seconds) noexcept = 0;
-
-		virtual void OnMapAssignRequest(
-			std::uint32_t sid,
-			std::uint32_t serial,
-			const pt_wz::WorldZoneMapAssignRequest& req) = 0;
-	};
+	// 기존 IWorldRuntime 인터페이스는 제거했다.
+	// 핸들러는 이제 WorldRuntime 구체 타입의 브리지 함수를 직접 호출한다.
 
 } // namespace svr

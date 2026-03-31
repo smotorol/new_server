@@ -1,0 +1,175 @@
+syntax = "proto3";
+package dc.proto.client.world;
+
+import "common.proto";
+
+message EnterWorldWithTokenRequest {
+  uint64 account_id = 1;
+  string login_session = 2;
+  string world_token = 3;
+}
+
+message EnterWorldResult {
+  bool ok = 1;
+  uint32 reason = 2;
+  uint64 account_id = 3;
+  uint64 char_id = 4;
+  string reconnect_token = 5;
+}
+
+enum LogoutType {
+  LOGOUT_TYPE_UNSPECIFIED = 0;
+  LOGOUT_TYPE_SOFT = 1;
+  LOGOUT_TYPE_HARD = 2;
+}
+
+enum LogoutResultCode {
+  LOGOUT_RESULT_SUCCESS = 0;
+  LOGOUT_RESULT_NOT_IN_WORLD = 1;
+  LOGOUT_RESULT_INTERNAL_ERROR = 2;
+}
+
+enum ReconnectWorldResultCode {
+  RECONNECT_WORLD_RESULT_SUCCESS = 0;
+  RECONNECT_WORLD_RESULT_TOKEN_NOT_FOUND = 1;
+  RECONNECT_WORLD_RESULT_ACCOUNT_MISMATCH = 2;
+  RECONNECT_WORLD_RESULT_CHAR_MISMATCH = 3;
+  RECONNECT_WORLD_RESULT_SESSION_EXPIRED = 4;
+  RECONNECT_WORLD_RESULT_INTERNAL_ERROR = 5;
+}
+
+message LogoutWorldRequest {
+  LogoutType type = 1;
+}
+
+message LogoutWorldResult {
+  bool ok = 1;
+  LogoutType type = 2;
+  uint32 reason = 3;
+  uint64 account_id = 4;
+  uint64 char_id = 5;
+}
+
+message ReconnectWorldRequest {
+  uint64 account_id = 1;
+  uint64 char_id = 2;
+  string reconnect_token = 3;
+}
+
+message ReconnectWorldResult {
+  bool ok = 1;
+  uint32 reason = 2;
+  uint64 account_id = 3;
+  uint64 char_id = 4;
+  string reconnect_token = 5;
+  uint32 zone_id = 6;
+  uint32 map_id = 7;
+  sint32 x = 8;
+  sint32 y = 9;
+}
+
+message GetStatsRequest {}
+
+message StatsResponse {
+  uint64 char_id = 1;
+  uint32 hp = 2;
+  uint32 max_hp = 3;
+  uint32 atk = 4;
+  uint32 def = 5;
+  uint32 gold = 6;
+}
+
+message MoveRequest {
+  sint32 x = 1;
+  sint32 y = 2;
+}
+
+message AddGoldRequest {
+  uint32 add = 1;
+}
+
+message AddGoldResult {
+  bool ok = 1;
+  uint32 gold = 2;
+}
+
+message HealSelfRequest {
+  uint32 amount = 1;
+}
+
+message SpawnMonsterRequest {
+  uint32 template_id = 1;
+}
+
+message SpawnMonsterResult {
+  uint64 monster_id = 1;
+  uint32 hp = 2;
+  uint32 atk = 3;
+  uint32 def = 4;
+}
+
+message AttackMonsterRequest {
+  uint64 monster_id = 1;
+}
+
+message AttackPlayerRequest {
+  uint64 target_char_id = 1;
+}
+
+message AttackResult {
+  uint64 attacker_id = 1;
+  uint64 target_id = 2;
+  uint32 damage = 3;
+  uint32 target_hp = 4;
+  bool killed = 5;
+  uint32 drop_item_id = 6;
+  uint32 drop_count = 7;
+  uint32 attacker_gold = 8;
+}
+
+message PlayerSnapshot {
+  uint64 char_id = 1;
+  sint32 x = 2;
+  sint32 y = 3;
+}
+
+message PlayerSpawn {
+  uint64 char_id = 1;
+  sint32 x = 2;
+  sint32 y = 3;
+}
+
+message PlayerDespawn {
+  uint64 char_id = 1;
+}
+
+message PlayerMove {
+  uint64 char_id = 1;
+  sint32 x = 2;
+  sint32 y = 3;
+}
+
+message PlayerSpawnBatch {
+  repeated PlayerSnapshot items = 1;
+}
+
+message PlayerDespawnBatch {
+  repeated uint64 char_ids = 1;
+}
+
+message PlayerMoveBatch {
+  repeated PlayerSnapshot items = 1;
+}
+
+message ZoneMapState {
+  uint64 char_id = 1;
+  uint32 zone_id = 2;
+  uint32 map_id = 3;
+  sint32 x = 4;
+  sint32 y = 5;
+  dc.proto.common.ZoneMapStateReason reason = 6;
+  uint32 channel_id = 7;
+  uint32 zone_server_id = 8;
+}
+
+

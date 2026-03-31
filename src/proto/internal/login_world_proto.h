@@ -8,7 +8,7 @@
 
 namespace proto::internal::login_world {
 
-    enum class LoginWorldMsg : std::uint16_t
+    enum class Msg : std::uint16_t
     {
         login_server_hello = 3001,
         login_server_register_ack = 3002,

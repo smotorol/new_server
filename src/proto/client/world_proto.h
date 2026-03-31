@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #include <cstdint>
 #include "shared/constants.h"
@@ -8,12 +8,16 @@ namespace proto::world {
     enum class WorldC2SMsg : std::uint16_t
     {
         enter_world_with_token = 2001,
+        logout_world = 2002,
+        reconnect_world = 2003,
     };
 
     enum class WorldS2CMsg : std::uint16_t
     {
         enter_world_result = 2101,
         kick_notify = 2102,
+        logout_world_result = 2103,
+        reconnect_world_result = 2104,
     };
 
     enum class WorldKickReason : std::uint16_t
@@ -52,21 +56,80 @@ namespace proto::world {
         session_closing = 23,
     };
 
+    enum class LogoutType : std::uint16_t
+    {
+        unspecified = 0,
+        soft = 1,
+        hard = 2,
+    };
+
+    enum class LogoutWorldResultCode : std::uint16_t
+    {
+        success = 0,
+        not_in_world = 1,
+        internal_error = 2,
+    };
+
+    enum class ReconnectWorldResultCode : std::uint16_t
+    {
+        success = 0,
+        token_not_found = 1,
+        account_mismatch = 2,
+        char_mismatch = 3,
+        session_expired = 4,
+        internal_error = 5,
+    };
+
 #pragma pack(push, 1)
     struct C2S_enter_world_with_token
     {
         std::uint64_t account_id = 0;
-        std::uint64_t char_id = 0;
+        std::uint64_t char_id = 0; // deprecated: server ignores client-provided char_id
         char login_session[dc::k_login_session_max_len + 1]{};
         char world_token[dc::k_world_token_max_len + 1]{};
     };
 
     struct S2C_enter_world_result
-	{
-		std::uint8_t ok = 0;
-		std::uint16_t reason = static_cast<std::uint16_t>(EnterWorldResultCode::success);
-		std::uint64_t account_id = 0;
-		std::uint64_t char_id = 0;
+    {
+        std::uint8_t ok = 0;
+        std::uint16_t reason = static_cast<std::uint16_t>(EnterWorldResultCode::success);
+        std::uint64_t account_id = 0;
+        std::uint64_t char_id = 0;
+        char reconnect_token[dc::k_reconnect_token_max_len + 1]{};
+    };
+
+    struct C2S_logout_world
+    {
+        std::uint16_t type = static_cast<std::uint16_t>(LogoutType::soft);
+    };
+
+    struct S2C_logout_world_result
+    {
+        std::uint8_t ok = 0;
+        std::uint16_t type = static_cast<std::uint16_t>(LogoutType::soft);
+        std::uint16_t reason = static_cast<std::uint16_t>(LogoutWorldResultCode::success);
+        std::uint64_t account_id = 0;
+        std::uint64_t char_id = 0;
+    };
+
+    struct C2S_reconnect_world
+    {
+        std::uint64_t account_id = 0;
+        std::uint64_t char_id = 0;
+        char reconnect_token[dc::k_reconnect_token_max_len + 1]{};
+    };
+
+    struct S2C_reconnect_world_result
+    {
+        std::uint8_t ok = 0;
+        std::uint16_t reason = static_cast<std::uint16_t>(ReconnectWorldResultCode::success);
+        std::uint64_t account_id = 0;
+        std::uint64_t char_id = 0;
+        std::uint32_t zone_id = 0;
+        std::uint32_t map_id = 0;
+        std::int32_t x = 0;
+        std::int32_t y = 0;
+        char reconnect_token[dc::k_reconnect_token_max_len + 1]{};
     };
 
     struct S2C_kick_notify

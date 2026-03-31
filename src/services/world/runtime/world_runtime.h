@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <array>
 #include <cstdint>
 #include <string>
@@ -41,19 +41,11 @@
 #include "services/world/runtime/world_runtime_types.h"
 #include "services/world/handler/world_account_handler.h"
 #include "services/world/handler/world_zone_handler.h"
+#include "server_common/config/server_topology.h"
+#include "services/world/common/character_core_state.h"
 
 #include "proto/client/world_proto.h"
 #include "proto/common/packet_util.h"
-
-// World 세팅
-struct WorldInfo {
-	std::string name_utf8;
-	std::string address;
-	std::string dsn;
-	std::string dbname;
-	int port;
-	int world_idx = 0;
-};
 
 // 월드별 DB Pool(라운드로빈)
 struct DbPool
@@ -87,8 +79,9 @@ namespace svr {
 	using MapAssignmentEntry = svr::MapAssignmentEntry;
 	using PendingZoneAssignRequest = svr::PendingZoneAssignRequest;
 	using PendingEnterWorldFinalize = svr::PendingEnterWorldFinalize;
+	using PendingCharacterEnterSnapshotRequest = svr::PendingCharacterEnterSnapshotRequest;
 
-	class WorldRuntime final : public dc::ServerRuntimeBase, public IWorldRuntime {
+	class WorldRuntime final : public dc::ServerRuntimeBase {
 	public:
 		WorldRuntime();
 		~WorldRuntime();
@@ -118,6 +111,7 @@ namespace svr {
 
 		// account가 검증한 world ticket consume 결과를 받아 world 세션 바인딩을 확정한다.
 		void OnWorldAuthTicketConsumeResponse(
+			std::uint64_t trace_id,
 			std::uint64_t request_id,
 			ConsumePendingWorldAuthTicketResultKind result_kind,
 			std::uint64_t account_id,
@@ -128,75 +122,181 @@ namespace svr {
 		bool RequestConsumeWorldAuthTicket(
 			std::uint32_t sid,
 			std::uint32_t serial,
+			bool use_protobuf,
+			std::uint64_t trace_id,
 			std::uint64_t account_id,
-			std::uint64_t char_id,
 			std::string_view login_session,
-			std::string_view token) override;
+			std::string_view token);
 
 		BeginEnterWorldSessionResult TryBeginEnterWorldSession(
 			std::uint32_t sid,
 			std::uint32_t serial,
 			std::uint64_t account_id,
-			std::uint64_t char_id) override;
+			std::uint64_t char_id);
 
 		void CancelPendingEnterWorldSession(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint64_t char_id) override;
+			std::uint64_t char_id);
 
 		bool IsEnterWorldSessionPending(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint64_t char_id) const override;
+			std::uint64_t char_id) const;
 
 		bool PromoteEnterWorldSessionToInWorld(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint64_t char_id) override;
+			std::uint64_t char_id);
 
 		void MarkEnterWorldSessionClosing(
 			std::uint32_t sid,
-			std::uint32_t serial) override;
+			std::uint32_t serial);
 
 		// world가 최종 enter success를 account에 relay 한다. login pending session 정리는 account/login이 담당한다.
 		bool NotifyAccountWorldEnterSuccess(
+			std::uint64_t trace_id,
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::string_view login_session,
-			std::string_view world_token) override;
+			std::string_view world_token);
 
-		std::uint32_t GetActiveWorldSessionCount() const override;
-		std::uint16_t GetActiveZoneCount() const override;
+		void OnAccountCharacterListRequest(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t trace_id,
+			std::uint64_t request_id,
+			std::uint64_t account_id,
+			std::uint16_t world_id,
+			std::string_view login_session);
+
+		// handler -> runtime bridge
+		void OnAccountRegisterAckFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint16_t world_id,
+			std::string_view db_dns,
+			std::string_view db_id,
+			std::string_view db_pw);
+
+		void OnAccountDisconnectedFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial);
+
+		void OnZoneRegisteredFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::uint16_t zone_id,
+			std::uint16_t world_id,
+			std::uint16_t channel_id,
+			std::uint16_t map_instance_capacity,
+			std::uint16_t active_map_instance_count,
+			std::uint16_t active_player_count,
+			std::uint16_t load_score,
+			std::uint32_t flags,
+			std::string_view server_name);
+
+		void OnZoneHeartbeatFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::uint16_t zone_id,
+			std::uint16_t world_id,
+			std::uint16_t channel_id,
+			std::uint16_t map_instance_capacity,
+			std::uint16_t active_map_instance_count,
+			std::uint16_t active_player_count,
+			std::uint16_t load_score,
+			std::uint32_t flags);
+
+		void OnZoneDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
+		void OnZoneMapAssignResponseFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res);
+		void OnZonePlayerEnterAckFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack);
+
+		void OnControlRegisteredFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint32_t server_id,
+			std::string_view server_name,
+			std::uint16_t listen_port);
+
+		void OnControlDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
+
+		std::string_view GetWorldName() { return name_utf8_; };
+		std::uint32_t GetActiveWorldSessionCount() const;
+		std::uint16_t GetActiveZoneCount() const;
+		std::string_view GetGateIP() const { return host_; };
+		std::uint16_t GetGatePort() const { return port_world_; };
+		std::uint16_t GetWorldID() const { return world_id_; };
 
 		AssignMapInstanceResult AssignMapInstance(
 			std::uint32_t map_template_id,
 			std::uint32_t instance_id,
 			bool create_if_missing,
-			bool dungeon_instance) override;
+			bool dungeon_instance,
+			std::uint64_t trace_id = 0);
+
+
+		std::optional<MapAssignmentEntry> TryGetMapAssignment(
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id) const;
+		bool BeginPortalTransfer(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id,
+			std::uint16_t source_zone_id,
+			std::uint32_t source_map_template_id,
+			std::uint32_t source_instance_id,
+			std::int32_t source_x,
+			std::int32_t source_y,
+			std::uint32_t target_map_template_id,
+			std::uint32_t target_instance_id,
+			std::int32_t target_x,
+			std::int32_t target_y,
+			std::uint64_t trace_id = 0);
 
 		void OnMapAssignRequest(
 			std::uint32_t sid,
 			std::uint32_t serial,
-			const pt_wz::WorldZoneMapAssignRequest& req) override;
+			const pt_wz::WorldZoneMapAssignRequest& req);
 
 		BindAuthedWorldSessionResult BindAuthenticatedWorldSessionForLogin(
 			std::uint64_t account_id,
 			std::uint64_t char_id,
 			std::uint32_t sid,
 			std::uint32_t serial,
-			std::uint16_t kick_reason) override;
+			std::uint16_t kick_reason);
 
 		UnbindAuthedWorldSessionResult UnbindAuthenticatedWorldSessionBySid(
 			std::uint32_t sid,
-			std::uint32_t serial) override;
+			std::uint32_t serial);
 
 		void CancelDelayedWorldClose(
 			std::uint32_t sid,
-			std::uint32_t serial) override;
+			std::uint32_t serial);
+
+		void MarkWorldSessionCloseReason(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			WorldSessionCloseReason reason);
 
 		void HandleWorldSessionClosed(
 			std::uint32_t sid,
-			std::uint32_t serial) override;
+			std::uint32_t serial);
+
+		std::optional<WorldAuthedSession> TryGetAuthenticatedWorldSession(
+			std::uint32_t sid,
+			std::uint32_t serial) const;
+		std::string GetOrCreateReconnectTokenForSession(
+			std::uint32_t sid,
+			std::uint32_t serial);
+		ReconnectWorldSessionResult TryReconnectWorldSession(
+			std::uint64_t account_id,
+			std::uint64_t char_id,
+			std::string_view reconnect_token,
+			std::uint32_t sid,
+			std::uint32_t serial);
 
 	private:
 		bool OnRuntimeInit() override;
@@ -208,6 +308,7 @@ namespace svr {
 		bool LoadIniFile();
 		bool DatabaseInit();
 		bool NetworkInit();
+		bool PreloadItemTemplateRepository_();
 		bool EnsureAccountHandler_();
 		void InitHostedLineDescriptors_() noexcept;
 
@@ -272,9 +373,31 @@ namespace svr {
 			std::uint16_t assigned_zone_id,
 			std::uint32_t map_template_id,
 			std::uint32_t instance_id,
-			std::string_view cached_state_blob);
+			const CharacterCoreState& core_state);
 		void CompleteEnterWorldSuccessAfterZoneAck_(
 			const PendingZonePlayerEnterRequest& pending_enter);
+		bool RequestCharacterEnterSnapshotLoad_(
+			const PendingEnterWorldConsumeRequest& pending);
+		bool RequestAccountCharacterListLoad_(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t trace_id,
+			std::uint64_t request_id,
+			std::uint64_t account_id,
+			std::uint16_t world_id,
+			std::string_view login_session);
+		void OnCharacterEnterSnapshotResult_(
+			const svr::dqs_result::WorldCharacterEnterSnapshotResult& rr);
+		void OnAccountCharacterListResult_(
+			const svr::dqs_result::WorldAccountCharacterListResult& rr);
+		static void ApplyCharacterCoreStateToActor_(
+			PlayerActor& actor,
+			const CharacterCoreState& core_state,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint16_t assigned_zone_id,
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id);
 
 		static ClosedAuthedSessionContext MakeClosedAuthedSessionContext_(
 			const UnbindAuthedWorldSessionResult& unbind_result,
@@ -346,18 +469,8 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial) noexcept;
 
-		void MarkAccountRegistered_(
-			std::uint32_t sid,
-			std::uint32_t serial,
-			std::uint32_t server_id,
-			std::uint16_t world_id,
-			std::uint16_t channel_id,
-			std::uint16_t active_zone_count,
-			std::uint16_t load_score,
-			std::uint32_t flags,
-			std::string_view server_name,
-			std::string_view public_host,
-			std::uint16_t public_port);
+		bool ApplyAccountAssignedConfig_(std::uint16_t world_id, std::string_view db_dns, std::string_view db_id, std::string_view db_pw);
+		void NotifyAccountReady_();
 
 		void MarkAccountDisconnected_(
 			std::uint32_t sid,
@@ -372,9 +485,24 @@ namespace svr {
 		void OnZoneMapAssignResponse(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res);
 		void OnZonePlayerEnterAck(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack);
 		std::optional<ZoneRouteInfo> TrySelectZoneRoute_(bool dungeon_instance) const;
+		std::optional<ZoneRouteInfo> TrySelectZoneRouteForMap_(std::uint32_t map_template_id, bool dungeon_instance) const;
 		std::optional<ZoneRouteInfo> FindZoneRouteByZoneId_(std::uint16_t zone_id) const;
-		bool SendZonePlayerEnter_(std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
+		std::optional<ZoneRouteInfo> FindZoneRouteByServerChannel_(std::uint32_t zone_server_id, std::uint16_t channel_id) const;
+		std::uint32_t ResolvePortalTargetInstanceId_(std::uint32_t map_template_id, std::uint32_t requested_instance_id);
+		static bool IsDungeonMapTemplate_(std::uint32_t map_template_id) noexcept;
+		void CompletePortalTransfer_(
+			const PendingPortalTransfer& pending,
+			std::uint16_t assigned_zone_id,
+			std::uint16_t assigned_channel_id,
+			std::uint32_t assigned_zone_server_id,
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id);
+		void FailPendingPortalTransfer_(
+			const PendingPortalTransfer& pending,
+			std::string_view reason);
+		bool SendZonePlayerEnter_(std::uint64_t trace_id, std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		bool SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
+		void LoadServerTopology_();
 		void RemoveMapAssignmentsByZoneSid_(std::uint32_t sid);
 		void FailPendingZoneAssignRequestsByZoneSid_(
 			std::uint32_t sid,
@@ -397,6 +525,9 @@ namespace svr {
 			std::uint32_t sid,
 			std::uint32_t serial);
 		void ErasePendingEnterWorldFinalizeBySession_(
+			std::uint32_t sid,
+			std::uint32_t serial);
+		void ErasePendingCharacterEnterSnapshotRequestsBySession_(
 			std::uint32_t sid,
 			std::uint32_t serial);
 		void ErasePendingZonePlayerEnterRequestsBySession_(
@@ -474,14 +605,18 @@ namespace svr {
 		mutable std::mutex service_line_mtx_;
 		RemoteServiceLineState control_line_state_{};
 		std::unordered_map<std::uint32_t, ZoneRouteState> zone_routes_by_sid_{};
+		std::optional<dc::cfg::ServerTopology> server_topology_{};
 
 		std::atomic<std::uint64_t> next_world_auth_consume_request_id_{ 1 };
 		mutable std::mutex pending_enter_world_consume_mtx_;
 		std::unordered_map<std::uint64_t, PendingEnterWorldConsumeRequest> pending_enter_world_consume_;
 		std::unordered_map<std::uint64_t, MapAssignmentEntry> map_assignments_;
 		std::unordered_map<std::uint64_t, PendingZoneAssignRequest> pending_zone_assign_requests_;
+		std::unordered_map<std::uint32_t, std::uint32_t> next_dynamic_instance_id_by_map_;
 		std::unordered_map<std::uint64_t, std::uint64_t> pending_zone_assign_request_id_by_map_key_;
+		std::unordered_map<std::uint64_t, PendingCharacterEnterSnapshotRequest> pending_character_enter_snapshot_requests_;
 		std::unordered_map<std::uint64_t, std::vector<PendingEnterWorldFinalize>> pending_enter_world_finalize_by_assign_request_;
+		std::unordered_map<std::uint64_t, PendingPortalTransfer> pending_portal_transfer_by_assign_request_;
 		std::unordered_map<std::uint64_t, PendingZonePlayerEnterRequest> pending_zone_player_enter_requests_;
 		std::uint64_t next_zone_assign_request_id_ = 1;
 		std::uint64_t next_zone_player_enter_request_id_ = 1;
@@ -492,8 +627,10 @@ namespace svr {
 		std::unordered_map<std::uint32_t, WorldAuthedSession> authed_sessions_by_sid_;
 		std::unordered_map<std::uint64_t, std::uint64_t> authed_session_key_by_char_id_;
 		std::unordered_map<std::uint64_t, std::uint64_t> authed_session_key_by_account_id_;
-		std::unordered_map<std::uint32_t, WorldEnterStage> world_enter_stage_by_sid_;
-		std::unordered_map<std::uint64_t, std::uint32_t> pending_enter_sid_by_char_id_;
+		std::unordered_map<std::string, std::uint64_t> reconnect_session_key_by_token_;
+		std::unordered_map<std::uint64_t, WorldSessionCloseReason> session_close_reason_by_session_key_;
+		std::unordered_map<std::uint64_t, WorldEnterStage> world_enter_stage_by_session_key_;
+		std::unordered_map<std::uint64_t, std::uint64_t> pending_enter_session_key_by_char_id_;
 
 
 		std::mutex delayed_world_close_mtx_;
@@ -565,13 +702,6 @@ namespace svr {
 		std::uint64_t bench_last_rss_bytes_ = 0;
 		procmetrics::ProcSnapshot bench_proc_prev_{};
 
-		std::uint16_t port_world_ = PORT_WORLD;
-		std::uint16_t port_zone_ = PORT_ZONE;
-		std::uint16_t port_control_ = PORT_CONTROL;
-
-		std::string db_acc_;
-		std::string db_pw_;
-
 		std::string redis_host_ = "127.0.0.1";
 		int redis_port_ = 6379;
 		int redis_db_ = 0;
@@ -587,13 +717,11 @@ namespace svr {
 		std::uint32_t flush_batch_normal_ = 200;
 		int char_ttl_sec_ = 60 * 60 * 24 * 7;
 		int reconnect_grace_close_delay_ms_ = 5000;
-
-		int worldset_num_ = 0;
-		std::vector<WorldInfo> worlds_;
+		bool allow_legacy_item_template_fallback_ = true;
 
 		std::uint32_t world_to_log_recv_buffer_size_ = 10'000'000;
 
-		std::vector<std::unique_ptr<DbPool>> world_pools_;
+		std::unique_ptr<DbPool> world_pool_;
 		int db_pool_size_per_world_ = 2;
 
 		dc::OutboundLineEntry account_line_{};
@@ -604,8 +732,19 @@ namespace svr {
 		std::atomic<std::uint32_t> account_serial_{ 0 };
 		std::chrono::steady_clock::time_point next_account_route_heartbeat_tp_{};
 
+		std::string name_utf8_ = "world";
+		std::string host_ = "127.0.0.1";
 		std::string account_host_ = "127.0.0.1";
 		std::uint16_t account_port_ = 27781;
+		std::uint16_t port_world_ = PORT_WORLD;
+		std::uint16_t port_zone_ = PORT_ZONE;
+		std::uint16_t port_control_ = PORT_CONTROL;
+
+		std::string db_dns_;
+		std::string db_id_;
+		std::string db_pw_;
+
+		uint16_t world_id_ = 0;
 	};
 
 	extern WorldRuntime g_Main;
@@ -613,3 +752,8 @@ namespace svr {
 	void ServerProgramExit(const char* call_site, bool save);
 
 } // namespace svr
+
+
+
+
+

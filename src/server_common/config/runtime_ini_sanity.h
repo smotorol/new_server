@@ -93,6 +93,11 @@ namespace dc::cfg {
 		return detail::TryParseUnsignedImpl<std::uint32_t>(s, out);
 	}
 
+	inline bool TryParseU16(const std::string& s, std::uint16_t& out) noexcept
+	{
+		return detail::TryParseUnsignedImpl<std::uint16_t>(s, out);
+	}
+
 	inline bool ParseIntOrKeep(
 		const char* key,
 		const std::string& raw,
@@ -125,6 +130,24 @@ namespace dc::cfg {
 			inout_value,
 			fail_fast,
 			[](const std::string& text, std::uint32_t& value) { return TryParseU32(text, value); },
+			out_error,
+			out_warn);
+	}
+
+	inline bool ParseU16OrKeep(
+		const char* key,
+		const std::string& raw,
+		std::uint16_t& inout_value,
+		bool fail_fast,
+		std::string* out_error = nullptr,
+		std::string* out_warn = nullptr)
+	{
+		return detail::ParseOrKeepNumericImpl(
+			key,
+			raw,
+			inout_value,
+			fail_fast,
+			[](const std::string& text, std::uint16_t& value) { return TryParseU16(text, value); },
 			out_error,
 			out_warn);
 	}
