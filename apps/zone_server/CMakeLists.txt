@@ -9,3 +9,7 @@ target_link_libraries(zone_server PRIVATE
     dc_core
     dc_zone_service
 )
+
+if (MSVC)
+    target_compile_options(zone_server PRIVATE /FS)
+endif()

@@ -1,4 +1,4 @@
-﻿#include "services/world/runtime/world_runtime_private.h"
+#include "services/world/runtime/world_runtime_private.h"
 
 #include <algorithm>
 #include <cstring>
@@ -7,6 +7,7 @@
 
 #include "server_common/config/server_topology.h"
 #include "server_common/log/enter_flow_log.h"
+#include "server_common/session/session_key.h"
 #include "services/world/handler/world_handler.h"
 #include "services/world/common/aoi_broadcast_sanitize.h"
 
@@ -40,8 +41,8 @@ namespace svr {
 			return current;
 		}
 
-		static bool RouteServesMap_(const ZoneRouteState& route, std::uint32_t map_template_id) noexcept
-		{
+	static bool RouteServesMap_(const ZoneRouteState& route, std::uint32_t map_template_id) noexcept
+	{
 			if (route.served_map_ids.empty()) {
 				return true;
 			}
@@ -142,6 +143,25 @@ namespace svr {
 			}
 			auto header = proto::make_header(static_cast<std::uint16_t>(proto::S2CMsg::player_spawn_batch), static_cast<std::uint16_t>(body_size));
 			handler.Send(dwProID, sid, serial, header, body.data());
+		}
+
+		static std::optional<MapAssignmentEntry> TryGetRouteAssignment_(
+			const std::unordered_map<std::uint32_t, ZoneRouteState>& routes,
+			std::uint32_t sid,
+			std::uint32_t serial)
+		{
+			const auto it = routes.find(sid);
+			if (it == routes.end() || it->second.serial != serial || !it->second.registered) {
+				return std::nullopt;
+			}
+
+			return MapAssignmentEntry{
+				it->second.server_id,
+				it->second.zone_id,
+				it->second.channel_id,
+				0,
+				0
+			};
 		}
 	}
 
@@ -605,6 +625,275 @@ namespace svr {
 		CompleteEnterWorldSuccessAfterZoneAck_(pending_enter);
 	}
 
+	void WorldRuntime::OnZoneAoiSnapshotFromHandler(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		const pt_wz::ZoneWorldAoiSnapshot& snapshot,
+		const proto::S2C_player_spawn_item* items,
+		std::size_t count)
+	{
+		auto* handler = lines_.host(WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			spdlog::warn("OnZoneAoiSnapshotFromHandler handler missing. zone_sid={} zone_serial={} char_id={}", sid, serial, snapshot.char_id);
+			return;
+		}
+
+		{
+			std::lock_guard lk(pending_zone_aoi_snapshot_mtx_);
+			pending_zone_aoi_snapshot_by_session_key_.erase(dc::PackSessionKey(snapshot.sid, snapshot.serial));
+		}
+
+		std::uint32_t zone_server_id = 0;
+		{
+			std::lock_guard lk(service_line_mtx_);
+			if (const auto route = TryGetRouteAssignment_(zone_routes_by_sid_, sid, serial); route.has_value()) {
+				zone_server_id = route->zone_server_id;
+			}
+		}
+
+		handler->SendZoneMapState(
+			0,
+			snapshot.sid,
+			snapshot.serial,
+			snapshot.char_id,
+			snapshot.zone_id,
+			snapshot.map_template_id,
+			snapshot.self_x,
+			snapshot.self_y,
+			proto::ZoneMapStateReason::position_update,
+			snapshot.channel_id,
+			zone_server_id);
+
+		if (count > 0 && items != nullptr) {
+			std::vector<proto::S2C_player_spawn_item> spawn_items(items, items + count);
+			handler->SendPlayerSpawnBatchRelay(0, snapshot.sid, snapshot.serial, spawn_items);
+		}
+
+		spdlog::info("WorldRuntime relayed zone AOI snapshot. zone_sid={} zone_serial={} client_sid={} client_serial={} char_id={} map={} channel={} instance={} zone_server_id={} count={}",
+			sid, serial, snapshot.sid, snapshot.serial, snapshot.char_id, snapshot.map_template_id, snapshot.channel_id, snapshot.instance_id, zone_server_id, count);
+	}
+
+	bool WorldRuntime::RequestZoneInitialSnapshot(
+		std::uint64_t trace_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id,
+		std::uint16_t zone_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		std::int32_t x,
+		std::int32_t y,
+		ZoneSnapshotReason reason)
+	{
+		if (!enable_zone_aoi_snapshot_) {
+			return false;
+		}
+		const auto route = ResolveZoneRouteForMapInstance_(zone_id, map_template_id, instance_id);
+		if (!route.has_value()) {
+			spdlog::warn(
+				"RequestZoneInitialSnapshot route missing. sid={} serial={} char_id={} zone_id={} map={} instance={} reason={}",
+				sid,
+				serial,
+				char_id,
+				zone_id,
+				map_template_id,
+				instance_id,
+				static_cast<int>(reason));
+			return false;
+		}
+
+		auto* handler = lines_.host(WorldLineId::Zone).handler_as<WorldZoneHandler>();
+		if (!handler) {
+			return false;
+		}
+
+		if (!handler->SendPlayerMoveInternal(
+			0,
+			route->sid,
+			route->serial,
+			trace_id,
+			static_cast<std::uint64_t>(reason),
+			char_id,
+			sid,
+			serial,
+			map_template_id,
+			instance_id,
+			zone_id,
+			route->channel_id,
+			x,
+			y)) {
+			return false;
+		}
+
+		PendingZoneAoiSnapshotRequest pending{};
+		pending.trace_id = trace_id;
+		pending.sid = sid;
+		pending.serial = serial;
+		pending.char_id = char_id;
+		pending.zone_id = zone_id;
+		pending.channel_id = route->channel_id;
+		pending.zone_server_id = route->zone_server_id;
+		pending.map_template_id = map_template_id;
+		pending.instance_id = instance_id;
+		pending.x = x;
+		pending.y = y;
+		pending.reason = reason;
+		pending.issued_at = std::chrono::steady_clock::now();
+		{
+			std::lock_guard lk(pending_zone_aoi_snapshot_mtx_);
+			pending_zone_aoi_snapshot_by_session_key_[dc::PackSessionKey(sid, serial)] = pending;
+		}
+
+		spdlog::info(
+			"Zone initial snapshot requested. sid={} serial={} char_id={} zone_server={} zone_id={} map={} channel={} instance={} pos=({}, {}) reason={}",
+			sid,
+			serial,
+			char_id,
+			route->zone_server_id,
+			zone_id,
+			map_template_id,
+			route->channel_id,
+			instance_id,
+			x,
+			y,
+			static_cast<int>(reason));
+		return true;
+	}
+
+	bool WorldRuntime::MirrorPlayerMoveToZone(
+		std::uint64_t trace_id,
+		std::uint64_t request_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id,
+		std::uint16_t zone_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		std::int32_t x,
+		std::int32_t y)
+	{
+		if (!enable_zone_aoi_snapshot_ && !enable_zone_aoi_move_diff_) {
+			return false;
+		}
+		const auto route = ResolveZoneRouteForMapInstance_(zone_id, map_template_id, instance_id);
+		if (!route.has_value()) {
+			return false;
+		}
+		auto* handler = lines_.host(WorldLineId::Zone).handler_as<WorldZoneHandler>();
+		if (!handler) {
+			return false;
+		}
+		return handler->SendPlayerMoveInternal(
+			0,
+			route->sid,
+			route->serial,
+			trace_id,
+			request_id,
+			char_id,
+			sid,
+			serial,
+			map_template_id,
+			instance_id,
+			zone_id,
+			route->channel_id,
+			x,
+			y);
+	}
+
+	void WorldRuntime::OnZoneAoiSpawnBatchFromHandler(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		const pt_wz::ZoneWorldAoiSpawnBatch& batch,
+		const proto::S2C_player_spawn_item* items,
+		std::size_t count)
+	{
+		auto* handler = lines_.host(WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			spdlog::warn("OnZoneAoiSpawnBatchFromHandler handler missing. zone_sid={} zone_serial={} char_id={}", sid, serial, batch.char_id);
+			return;
+		}
+		if (count > 0 && items != nullptr) {
+			std::vector<proto::S2C_player_spawn_item> spawn_items(items, items + count);
+			handler->SendPlayerSpawnBatchRelay(0, batch.sid, batch.serial, spawn_items);
+		}
+		spdlog::info("WorldRuntime relayed zone AOI spawn batch. zone_sid={} zone_serial={} client_sid={} client_serial={} char_id={} map={} channel={} instance={} count={}",
+			sid, serial, batch.sid, batch.serial, batch.char_id, batch.map_template_id, batch.channel_id, batch.instance_id, count);
+	}
+
+	void WorldRuntime::OnZoneAoiDespawnBatchFromHandler(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		const pt_wz::ZoneWorldAoiDespawnBatch& batch,
+		const proto::S2C_player_despawn_item* items,
+		std::size_t count)
+	{
+		auto* handler = lines_.host(WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			spdlog::warn("OnZoneAoiDespawnBatchFromHandler handler missing. zone_sid={} zone_serial={} char_id={}", sid, serial, batch.char_id);
+			return;
+		}
+		if (count > 0 && items != nullptr) {
+			std::vector<proto::S2C_player_despawn_item> despawn_items(items, items + count);
+			handler->SendPlayerDespawnBatchRelay(0, batch.sid, batch.serial, despawn_items);
+		}
+		spdlog::info("WorldRuntime relayed zone AOI despawn batch. zone_sid={} zone_serial={} client_sid={} client_serial={} char_id={} map={} channel={} instance={} count={}",
+			sid, serial, batch.sid, batch.serial, batch.char_id, batch.map_template_id, batch.channel_id, batch.instance_id, count);
+	}
+
+	void WorldRuntime::OnZoneAoiMoveBatchFromHandler(
+		std::uint32_t sid,
+		std::uint32_t serial,
+		const pt_wz::ZoneWorldAoiMoveBatch& batch,
+		const proto::S2C_player_move_item* items,
+		std::size_t count)
+	{
+		auto* handler = lines_.host(WorldLineId::World).handler_as<WorldHandler>();
+		if (!handler) {
+			spdlog::warn("OnZoneAoiMoveBatchFromHandler handler missing. zone_sid={} zone_serial={} char_id={}", sid, serial, batch.char_id);
+			return;
+		}
+		if (count > 0 && items != nullptr) {
+			std::vector<proto::S2C_player_move_item> move_items(items, items + count);
+			handler->SendPlayerMoveBatchRelay(0, batch.sid, batch.serial, move_items);
+		}
+		spdlog::info("WorldRuntime relayed zone AOI move batch. zone_sid={} zone_serial={} client_sid={} client_serial={} char_id={} map={} channel={} instance={} count={}",
+			sid, serial, batch.sid, batch.serial, batch.char_id, batch.map_template_id, batch.channel_id, batch.instance_id, count);
+	}
+
+	void WorldRuntime::SendWorldFallbackZoneSnapshot_(const PendingZoneAoiSnapshotRequest& pending)
+	{
+		spdlog::warn(
+			"WorldRuntime fallback world snapshot suppressed (zone-only mode). sid={} serial={} char_id={} zone_id={} map={} channel={} instance={} reason={}",
+			pending.sid,
+			pending.serial,
+			pending.char_id,
+			pending.zone_id,
+			pending.map_template_id,
+			pending.channel_id,
+			pending.instance_id,
+			static_cast<int>(pending.reason));
+	}
+
+	void WorldRuntime::ExpirePendingZoneAoiSnapshots_(std::chrono::steady_clock::time_point now)
+	{
+		std::vector<PendingZoneAoiSnapshotRequest> expired;
+		{
+			std::lock_guard lk(pending_zone_aoi_snapshot_mtx_);
+			for (auto it = pending_zone_aoi_snapshot_by_session_key_.begin(); it != pending_zone_aoi_snapshot_by_session_key_.end();) {
+				if ((now - it->second.issued_at) < kZoneSnapshotFallbackDelay_) {
+					++it;
+					continue;
+				}
+				expired.push_back(it->second);
+				it = pending_zone_aoi_snapshot_by_session_key_.erase(it);
+			}
+		}
+
+		for (const auto& pending : expired) {
+			SendWorldFallbackZoneSnapshot_(pending);
+		}
+	}
+
 	void WorldRuntime::FailPendingPortalTransfer_(
 		const PendingPortalTransfer& pending,
 		std::string_view reason)
@@ -699,14 +988,11 @@ namespace svr {
 				}
 
 				old_zone.Leave(char_id);
-				for (const auto& [receiver_sid, receiver_serial] : receivers) {
-					SendPortalDespawnPacket_(*handler, 0, receiver_sid, receiver_serial, char_id);
-				}
 			});
 
 		PostActor(
 			svr::MakeZoneActorId(assigned_zone_id),
-			[this, char_id, sid, serial, assigned_zone_id, target_x, target_y, handler]() {
+			[this, pending, char_id, sid, serial, assigned_zone_id, assigned_channel_id, assigned_zone_server_id, map_template_id, instance_id, target_x, target_y, handler]() {
 				auto& new_zone = GetOrCreateZoneActor(assigned_zone_id);
 				new_zone.JoinOrUpdate(char_id, { target_x, target_y }, sid, serial);
 
@@ -735,13 +1021,45 @@ namespace svr {
 					}
 				}
 
-				if (!initial_spawn_items.empty()) {
-					SendPortalSpawnBatchPacket_(*handler, 0, sid, serial, initial_spawn_items);
+				const bool zone_snapshot_requested = RequestZoneInitialSnapshot(
+					pending.trace_id,
+					sid,
+					serial,
+					char_id,
+					assigned_zone_id,
+					map_template_id,
+					instance_id,
+					target_x,
+					target_y,
+					ZoneSnapshotReason::portal);
+
+				if (!zone_snapshot_requested) {
+					spdlog::warn(
+						"portal initial snapshot fallback disabled. sid={} serial={} char_id={} zone_server={} zone_id={} map={} channel={} instance={} would_have_spawn_batch_count={}",
+						sid,
+						serial,
+						char_id,
+						assigned_zone_server_id,
+						assigned_zone_id,
+						map_template_id,
+						assigned_channel_id,
+						instance_id,
+						initial_spawn_items.size());
 				}
 
-				for (const auto& [receiver_sid, receiver_serial] : remote_receivers) {
-					SendPortalSpawnPacket_(*handler, 0, receiver_sid, receiver_serial, char_id, target_x, target_y);
-				}
+				spdlog::info(
+					"portal initial snapshot prepared. sid={} serial={} char_id={} zone_server={} zone_id={} map={} channel={} instance={} spawn_batch_count={} remote_spawn_notify_count={} zone_snapshot_requested={}",
+					sid,
+					serial,
+					char_id,
+					assigned_zone_server_id,
+					assigned_zone_id,
+					map_template_id,
+					assigned_channel_id,
+					instance_id,
+					initial_spawn_items.size(),
+					remote_receivers.size(),
+					zone_snapshot_requested ? 1 : 0);
 			});
 
 		handler->SendZoneMapState(
@@ -796,21 +1114,23 @@ namespace svr {
 			}
 
 			auto current = MakeZoneRouteInfo_(route);
+			const auto current_pressure = ComputeEffectiveRoutePressure_(current);
 
 			if (!best.has_value()) {
 				best = current;
 				continue;
 			}
-			if (current.load_score < best->load_score) {
+			const auto best_pressure = ComputeEffectiveRoutePressure_(*best);
+			if (current_pressure < best_pressure) {
 				best = current;
 				continue;
 			}
-			if (current.load_score == best->load_score && dungeon_instance &&
+			if (current_pressure == best_pressure && dungeon_instance &&
 				current.active_map_instance_count < best->active_map_instance_count) {
 				best = current;
 				continue;
 			}
-			if (current.load_score == best->load_score &&
+			if (current_pressure == best_pressure &&
 				current.active_player_count < best->active_player_count) {
 				best = current;
 			}
@@ -832,28 +1152,43 @@ namespace svr {
 			}
 
 			auto current = MakeZoneRouteInfo_(route);
-			candidates.push_back(fmt::format("sid={} server_id={} zone_id={} channel_id={} load={} players={} maps={}", current.sid, current.zone_server_id, current.zone_id, current.channel_id, current.load_score, current.active_player_count, current.active_map_instance_count));
+			const auto pending_assign = CountPendingZoneAssignRequestsBySid_(current.sid, current.serial);
+			const auto pending_enter = CountPendingZonePlayerEnterRequestsBySid_(current.sid, current.serial);
+			const auto current_pressure = ComputeEffectiveRoutePressure_(current);
+			candidates.push_back(fmt::format(
+				"sid={} server_id={} zone_id={} channel_id={} load={} pending_assign={} pending_enter={} pressure={} players={} maps={}",
+				current.sid,
+				current.zone_server_id,
+				current.zone_id,
+				current.channel_id,
+				current.load_score,
+				pending_assign,
+				pending_enter,
+				current_pressure,
+				current.active_player_count,
+				current.active_map_instance_count));
 			if (!best.has_value()) {
 				best = current;
 				continue;
 			}
-			if (current.load_score < best->load_score) {
+			const auto best_pressure = ComputeEffectiveRoutePressure_(*best);
+			if (current_pressure < best_pressure) {
 				best = current;
 				continue;
 			}
-			if (current.load_score == best->load_score &&
+			if (current_pressure == best_pressure &&
 				current.active_player_count < best->active_player_count) {
 				best = current;
 				continue;
 			}
-			if (current.load_score == best->load_score &&
+			if (current_pressure == best_pressure &&
 				current.active_player_count == best->active_player_count &&
 				dungeon_instance &&
 				current.active_map_instance_count < best->active_map_instance_count) {
 				best = current;
 				continue;
 			}
-			if (current.load_score == best->load_score &&
+			if (current_pressure == best_pressure &&
 				current.active_player_count == best->active_player_count &&
 				current.active_map_instance_count == best->active_map_instance_count &&
 				current.channel_id < best->channel_id) {
@@ -870,7 +1205,7 @@ namespace svr {
 					best->zone_server_id,
 					best->zone_id,
 					best->channel_id,
-					best->load_score,
+					ComputeEffectiveRoutePressure_(*best),
 					best->active_player_count,
 					best->active_map_instance_count);
 			}
@@ -879,6 +1214,35 @@ namespace svr {
 			spdlog::warn("route select for map failed. map_id={} dungeon_instance={} reason=no_candidates", map_template_id, dungeon_instance ? 1 : 0);
 		}
 		return best;
+	}
+
+	std::uint32_t WorldRuntime::CountPendingZoneAssignRequestsBySid_(std::uint32_t sid, std::uint32_t serial) const
+	{
+		std::uint32_t count = 0;
+		for (const auto& [_, pending] : pending_zone_assign_requests_) {
+			if (pending.target_sid == sid && pending.target_serial == serial) {
+				++count;
+			}
+		}
+		return count;
+	}
+
+	std::uint32_t WorldRuntime::CountPendingZonePlayerEnterRequestsBySid_(std::uint32_t sid, std::uint32_t serial) const
+	{
+		std::uint32_t count = 0;
+		for (const auto& [_, pending] : pending_zone_player_enter_requests_) {
+			if (pending.target_sid == sid && pending.target_serial == serial) {
+				++count;
+			}
+		}
+		return count;
+	}
+
+	std::uint32_t WorldRuntime::ComputeEffectiveRoutePressure_(const ZoneRouteInfo& route) const
+	{
+		return static_cast<std::uint32_t>(route.load_score) +
+			CountPendingZoneAssignRequestsBySid_(route.sid, route.serial) +
+			CountPendingZonePlayerEnterRequestsBySid_(route.sid, route.serial);
 	}
 
 
@@ -911,15 +1275,22 @@ namespace svr {
 		return std::nullopt;
 	}
 
+	std::optional<ZoneRouteInfo> WorldRuntime::ResolveZoneRouteForMapInstance_(
+		std::uint16_t zone_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id) const
+	{
+		if (const auto it = map_assignments_.find(MakeMapAssignmentKey_(map_template_id, instance_id)); it != map_assignments_.end()) {
+			if (auto route = FindZoneRouteByServerChannel_(it->second.zone_server_id, it->second.channel_id); route.has_value()) {
+				return route;
+			}
+		}
+		return FindZoneRouteByZoneId_(zone_id);
+	}
+
 	bool WorldRuntime::SendZonePlayerEnter_(std::uint64_t trace_id, std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
 	{
-		std::optional<ZoneRouteInfo> route;
-		if (const auto it = map_assignments_.find(MakeMapAssignmentKey_(map_template_id, instance_id)); it != map_assignments_.end()) {
-			route = FindZoneRouteByServerChannel_(it->second.zone_server_id, it->second.channel_id);
-		}
-		if (!route.has_value()) {
-			route = FindZoneRouteByZoneId_(zone_id);
-		}
+		auto route = ResolveZoneRouteForMapInstance_(zone_id, map_template_id, instance_id);
 		if (!route.has_value()) {
 			return false;
 		}
@@ -932,13 +1303,7 @@ namespace svr {
 
 	bool WorldRuntime::SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id)
 	{
-		std::optional<ZoneRouteInfo> route;
-		if (const auto it = map_assignments_.find(MakeMapAssignmentKey_(map_template_id, instance_id)); it != map_assignments_.end()) {
-			route = FindZoneRouteByServerChannel_(it->second.zone_server_id, it->second.channel_id);
-		}
-		if (!route.has_value()) {
-			route = FindZoneRouteByZoneId_(zone_id);
-		}
+		auto route = ResolveZoneRouteForMapInstance_(zone_id, map_template_id, instance_id);
 		if (!route.has_value()) {
 			return false;
 		}
@@ -977,7 +1342,7 @@ namespace svr {
 		}
 
 		auto zone = TrySelectZoneRouteForMap_(map_template_id, dungeon_instance);
-		if (!zone.has_value()) {
+		if (!zone.has_value() && !server_topology_.has_value()) {
 			zone = TrySelectZoneRoute_(dungeon_instance);
 		}
 		if (!zone.has_value()) {
@@ -1356,6 +1721,7 @@ namespace svr {
 	}
 
 } // namespace svr
+
 
 
 

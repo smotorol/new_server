@@ -46,6 +46,21 @@ public:
 		std::uint32_t map_template_id,
 		std::uint32_t instance_id,
 		std::uint16_t zone_id);
+	bool SendPlayerMoveInternal(
+		std::uint32_t dwProID,
+		std::uint32_t dwIndex,
+		std::uint32_t dwSerial,
+		std::uint64_t trace_id,
+		std::uint64_t request_id,
+		std::uint64_t char_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		std::uint16_t zone_id,
+		std::uint16_t channel_id,
+		std::int32_t x,
+		std::int32_t y);
 
 protected:
 	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg) override;

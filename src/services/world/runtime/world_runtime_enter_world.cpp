@@ -341,11 +341,11 @@ namespace svr {
 		const auto core_state = pending_enter.core_state;
 		const Vec2i start_pos{ core_state.hot.position.x, core_state.hot.position.y };
 
-		PostActor(char_id, [this, char_id, sid = pending.sid, serial = pending.serial, assigned_zone_id, map_template_id, instance_id, core_state, start_pos]() {
+		PostActor(char_id, [this, trace_id = pending.trace_id, char_id, sid = pending.sid, serial = pending.serial, assigned_zone_id, map_template_id, instance_id, core_state, start_pos]() {
 			auto& a = GetOrCreatePlayerActor(char_id);
 			ApplyCharacterCoreStateToActor_(a, core_state, sid, serial, assigned_zone_id, map_template_id, instance_id);
 
-			PostActor(svr::MakeZoneActorId(a.GetZoneId()), [this, char_id, sid, serial, assigned_zone_id, start_pos]() {
+			PostActor(svr::MakeZoneActorId(a.GetZoneId()), [this, trace_id, char_id, sid, serial, assigned_zone_id, map_template_id, instance_id, start_pos]() {
 				auto& z = GetOrCreateZoneActor(assigned_zone_id);
 				z.JoinOrUpdate(char_id, start_pos, sid, serial);
 
@@ -379,34 +379,37 @@ namespace svr {
 					}
 				}
 
-				if (!initial_spawn_items.empty()) {
-					SendEnterPlayerSpawnBatch_(
-						*handler,
-						0,
+				const bool zone_snapshot_requested = RequestZoneInitialSnapshot(
+					trace_id,
+					sid,
+					serial,
+					char_id,
+					assigned_zone_id,
+					map_template_id,
+					instance_id,
+					start_pos.x,
+					start_pos.y,
+					ZoneSnapshotReason::enter);
+
+				if (!zone_snapshot_requested) {
+					spdlog::warn(
+						"enter initial snapshot fallback disabled. char_id={} sid={} serial={} zone_id={} would_have_spawn_batch_count={}",
+						char_id,
 						sid,
 						serial,
-						initial_spawn_items);
-				}
-
-				for (const auto& [other_sid, other_serial] : remote_receivers) {
-					SendEnterPlayerSpawn_(
-						*handler,
-						0,
-						other_sid,
-						other_serial,
-						char_id,
-						start_pos.x,
-						start_pos.y);
+						assigned_zone_id,
+						initial_spawn_items.size());
 				}
 
 				spdlog::info(
-					"enter initial aoi sync sent. char_id={} sid={} serial={} zone_id={} spawn_batch_count={} remote_spawn_notify_count={}",
+					"enter initial aoi sync prepared. char_id={} sid={} serial={} zone_id={} spawn_batch_count={} remote_spawn_notify_count={} zone_snapshot_requested={}",
 					char_id,
 					sid,
 					serial,
 					assigned_zone_id,
 					initial_spawn_items.size(),
-					remote_receivers.size());
+					remote_receivers.size(),
+					zone_snapshot_requested ? 1 : 0);
 			});
 		});
 

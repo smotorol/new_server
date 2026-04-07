@@ -1,12 +1,12 @@
-﻿<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
+<Project ToolsVersion="15.0" xmlns="http://schemas.microsoft.com/developer/msbuild/2003">
   <Import Project="$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props" Condition="Exists('$(MSBuildExtensionsPath)\$(MSBuildToolsVersion)\Microsoft.Common.props')" />
   <PropertyGroup>
     <Configuration Condition=" '$(Configuration)' == '' ">Debug</Configuration>
     <Platform Condition=" '$(Platform)' == '' ">AnyCPU</Platform>
-    <ProjectGuid>{B093DB4C-40DE-4A43-99FA-76C650E56D24}</ProjectGuid>
-    <OutputType>WinExe</OutputType>
-    <RootNamespace>DummyClientWinForms</RootNamespace>
-    <AssemblyName>DummyClientWinForms</AssemblyName>
+    <ProjectGuid>{BB94C81D-5B5D-457D-9AE9-5D6FD50D8C17}</ProjectGuid>
+    <OutputType>Exe</OutputType>
+    <RootNamespace>BenchDummyClient</RootNamespace>
+    <AssemblyName>BenchDummyClient</AssemblyName>
     <TargetFrameworkVersion>v4.8</TargetFrameworkVersion>
     <FileAlignment>512</FileAlignment>
     <AutoGenerateBindingRedirects>true</AutoGenerateBindingRedirects>
@@ -34,7 +34,8 @@
     <Reference Include="System" />
     <Reference Include="System.Core" />
     <Reference Include="System.Drawing" />
-    <Reference Include="System.Windows.Forms" />
+    <Reference Include="System.Web.Extensions" />
+    <Reference Include="Microsoft.VisualBasic" />
     <Reference Include="Google.Protobuf">
       <HintPath>C:\Users\smotorol\.nuget\packages\google.protobuf\3.21.9\lib\net45\Google.Protobuf.dll</HintPath>
       <Private>true</Private>
@@ -50,45 +51,55 @@
   </ItemGroup>
   <ItemGroup>
     <Compile Include="Program.cs" />
-    <Compile Include="MainForm.Automation.cs">
-      <SubType>Form</SubType>
+    <Compile Include="BenchOptions.cs" />
+    <Compile Include="BenchAccountCsv.cs" />
+    <Compile Include="BenchResultModels.cs" />
+    <Compile Include="BenchResultSink.cs" />
+    <Compile Include="BenchSession.cs" />
+    <Compile Include="BenchSession.Schedule.cs" />
+    <Compile Include="BenchRunner.cs" />
+    <Compile Include="..\DummyClientWinForms\Network\TcpClientEx.cs">
+      <Link>Shared\TcpClientEx.cs</Link>
     </Compile>
-    <Compile Include="MainForm.Automation.Results.cs">
-      <SubType>Form</SubType>
+    <Compile Include="..\DummyClientWinForms\Network\PacketHeader.cs">
+      <Link>Shared\PacketHeader.cs</Link>
     </Compile>
-    <Compile Include="MainForm.cs">
-      <SubType>Form</SubType>
+    <Compile Include="..\DummyClientWinForms\Network\PacketReader.cs">
+      <Link>Shared\PacketReader.cs</Link>
     </Compile>
-    <Compile Include="MainForm.Designer.cs">
-      <DependentUpon>MainForm.cs</DependentUpon>
+    <Compile Include="..\DummyClientWinForms\Network\PacketWriter.cs">
+      <Link>Shared\PacketWriter.cs</Link>
     </Compile>
-    <Compile Include="Network\TcpClientEx.cs" />
-    <Compile Include="Network\PacketHeader.cs" />
-    <Compile Include="Network\PacketReader.cs" />
-    <Compile Include="Network\PacketWriter.cs" />
-    <Compile Include="Network\ClientProtocol.cs" />
-    <Compile Include="Models\CharacterSummary.cs" />
-    <Compile Include="Models\WorldSummary.cs" />
-    <Compile Include="Models\WorldObject.cs" />
-    <Compile Include="Models\PlayerObject.cs" />
-    <Compile Include="Models\MonsterObject.cs" />
-    <Compile Include="Models\NpcObject.cs" />
-    <Compile Include="Models\PortalObject.cs" />
-    <Compile Include="Models\SafeZoneObject.cs" />
-    <Compile Include="Scenes\LoginPanel.cs">
-      <SubType>UserControl</SubType>
+    <Compile Include="..\DummyClientWinForms\Network\ClientProtocol.cs">
+      <Link>Shared\ClientProtocol.cs</Link>
     </Compile>
-    <Compile Include="Scenes\CharacterPanel.cs">
-      <SubType>UserControl</SubType>
+    <Compile Include="..\DummyClientWinForms\Models\CharacterSummary.cs">
+      <Link>Shared\CharacterSummary.cs</Link>
     </Compile>
-    <Compile Include="Scenes\WorldPanel.cs">
-      <SubType>UserControl</SubType>
+    <Compile Include="..\DummyClientWinForms\Models\WorldSummary.cs">
+      <Link>Shared\WorldSummary.cs</Link>
     </Compile>
-    <Compile Include="Services\DummyClientState.cs" />
-    <Compile Include="Services\WorldRenderService.cs" />
-    <Compile Include="Services\WmGeometryLoader.cs" />
-    <Compile Include="Services\MapGeometryOverlayService.cs" />
-    <Compile Include="Services\GameDataService.cs" />
+    <Compile Include="..\DummyClientWinForms\Models\WorldObject.cs">
+      <Link>Shared\WorldObject.cs</Link>
+    </Compile>
+    <Compile Include="..\DummyClientWinForms\Models\PlayerObject.cs">
+      <Link>Shared\PlayerObject.cs</Link>
+    </Compile>
+    <Compile Include="..\DummyClientWinForms\Models\PortalObject.cs">
+      <Link>Shared\PortalObject.cs</Link>
+    </Compile>
+    <Compile Include="..\DummyClientWinForms\Models\MonsterObject.cs">
+      <Link>Shared\MonsterObject.cs</Link>
+    </Compile>
+    <Compile Include="..\DummyClientWinForms\Models\NpcObject.cs">
+      <Link>Shared\NpcObject.cs</Link>
+    </Compile>
+    <Compile Include="..\DummyClientWinForms\Models\SafeZoneObject.cs">
+      <Link>Shared\SafeZoneObject.cs</Link>
+    </Compile>
+    <Compile Include="..\DummyClientWinForms\Services\GameDataService.cs">
+      <Link>Shared\GameDataService.cs</Link>
+    </Compile>
     <Compile Include="..\proto_generated\csharp\Common.cs">
       <Link>ProtoGenerated\Common.cs</Link>
     </Compile>
@@ -99,14 +110,6 @@
       <Link>ProtoGenerated\ClientWorld.cs</Link>
     </Compile>
   </ItemGroup>
-  <ItemGroup>
-    <EmbeddedResource Include="MainForm.resx">
-      <DependentUpon>MainForm.cs</DependentUpon>
-    </EmbeddedResource>
-  </ItemGroup>
   <Import Project="$(MSBuildToolsPath)\Microsoft.CSharp.targets" />
-  <PropertyGroup>
-    <PreBuildEvent>
-    </PreBuildEvent>
-  </PropertyGroup>
 </Project>
+

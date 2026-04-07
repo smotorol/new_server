@@ -17,3 +17,7 @@ target_link_libraries(world_server PRIVATE
     dc_server_common
     dc_world_service
 )
+
+if (MSVC)
+    target_compile_options(world_server PRIVATE /FS)
+endif()

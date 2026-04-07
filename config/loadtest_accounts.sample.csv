@@ -1,0 +1,6 @@
+LoginId,Password,WorldIndex,CharacterIndex,PortalRoute,ClientTag
+load00001,pw1,0,0,"1,2,3,4",group-a-001
+load00002,pw1,0,0,"1,2,3,4",group-a-002
+load00003,pw1,0,0,"1,2,3,4",group-a-003
+load00004,pw1,0,0,"1,2,3,4",group-a-004
+

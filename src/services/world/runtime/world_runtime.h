@@ -48,11 +48,48 @@
 #include "proto/common/packet_util.h"
 
 // 월드별 DB Pool(라운드로빈)
+struct DbPoolEntry
+{
+	db::OdbcConnection conn;
+	std::mutex mtx;
+};
+
+struct DbConnLease
+{
+	DbPoolEntry* entry = nullptr;
+	std::unique_lock<std::mutex> lock{};
+
+	DbConnLease() = default;
+	DbConnLease(DbPoolEntry* e, std::unique_lock<std::mutex> lk)
+		: entry(e), lock(std::move(lk)) {
+	}
+
+	DbConnLease(const DbConnLease&) = delete;
+	DbConnLease& operator=(const DbConnLease&) = delete;
+	DbConnLease(DbConnLease&&) noexcept = default;
+	DbConnLease& operator=(DbConnLease&&) noexcept = default;
+
+	db::OdbcConnection& conn() const { return entry->conn; }
+	explicit operator bool() const noexcept { return entry != nullptr; }
+};
+
 struct DbPool
 {
-	std::vector<db::OdbcConnection> conns;
+	std::vector<std::unique_ptr<DbPoolEntry>> conns;
 	std::atomic<std::uint32_t> rr{ 0 };
-	db::OdbcConnection& next() { return conns[rr++ % conns.size()]; }
+
+	DbConnLease acquire()
+	{
+		if (conns.empty()) {
+			return {};
+		}
+
+		const auto index = rr.fetch_add(1, std::memory_order_relaxed) % static_cast<std::uint32_t>(conns.size());
+		auto* entry = conns[index].get();
+		return DbConnLease(entry, std::unique_lock<std::mutex>(entry->mtx));
+	}
+
+	db::OdbcConnection& front_conn() { return conns.front()->conn; }
 };
 
 namespace svr {
@@ -80,6 +117,8 @@ namespace svr {
 	using PendingZoneAssignRequest = svr::PendingZoneAssignRequest;
 	using PendingEnterWorldFinalize = svr::PendingEnterWorldFinalize;
 	using PendingCharacterEnterSnapshotRequest = svr::PendingCharacterEnterSnapshotRequest;
+	using PendingZoneAoiSnapshotRequest = svr::PendingZoneAoiSnapshotRequest;
+	using ZoneSnapshotReason = svr::ZoneSnapshotReason;
 
 	class WorldRuntime final : public dc::ServerRuntimeBase {
 	public:
@@ -213,6 +252,54 @@ namespace svr {
 		void OnZoneDisconnectedFromHandler(std::uint32_t sid, std::uint32_t serial);
 		void OnZoneMapAssignResponseFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldMapAssignResponse& res);
 		void OnZonePlayerEnterAckFromHandler(std::uint32_t sid, std::uint32_t serial, const pt_wz::ZoneWorldPlayerEnterAck& ack);
+		void OnZoneAoiSnapshotFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			const pt_wz::ZoneWorldAoiSnapshot& snapshot,
+			const proto::S2C_player_spawn_item* items,
+			std::size_t count);
+		void OnZoneAoiSpawnBatchFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			const pt_wz::ZoneWorldAoiSpawnBatch& batch,
+			const proto::S2C_player_spawn_item* items,
+			std::size_t count);
+		void OnZoneAoiDespawnBatchFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			const pt_wz::ZoneWorldAoiDespawnBatch& batch,
+			const proto::S2C_player_despawn_item* items,
+			std::size_t count);
+		void OnZoneAoiMoveBatchFromHandler(
+			std::uint32_t sid,
+			std::uint32_t serial,
+			const pt_wz::ZoneWorldAoiMoveBatch& batch,
+			const proto::S2C_player_move_item* items,
+			std::size_t count);
+		bool RequestZoneInitialSnapshot(
+			std::uint64_t trace_id,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id,
+			std::uint16_t zone_id,
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id,
+			std::int32_t x,
+			std::int32_t y,
+			ZoneSnapshotReason reason);
+		bool MirrorPlayerMoveToZone(
+			std::uint64_t trace_id,
+			std::uint64_t request_id,
+			std::uint32_t sid,
+			std::uint32_t serial,
+			std::uint64_t char_id,
+			std::uint16_t zone_id,
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id,
+			std::int32_t x,
+			std::int32_t y);
+		bool IsZoneAoiMoveDiffEnabled() const noexcept { return enable_zone_aoi_move_diff_; }
+		bool IsWorldAoiMoveDiffFallbackEnabled() const noexcept { return false; }
 
 		void OnControlRegisteredFromHandler(
 			std::uint32_t sid,
@@ -488,6 +575,9 @@ namespace svr {
 		std::optional<ZoneRouteInfo> TrySelectZoneRouteForMap_(std::uint32_t map_template_id, bool dungeon_instance) const;
 		std::optional<ZoneRouteInfo> FindZoneRouteByZoneId_(std::uint16_t zone_id) const;
 		std::optional<ZoneRouteInfo> FindZoneRouteByServerChannel_(std::uint32_t zone_server_id, std::uint16_t channel_id) const;
+		std::uint32_t CountPendingZoneAssignRequestsBySid_(std::uint32_t sid, std::uint32_t serial) const;
+		std::uint32_t CountPendingZonePlayerEnterRequestsBySid_(std::uint32_t sid, std::uint32_t serial) const;
+		std::uint32_t ComputeEffectiveRoutePressure_(const ZoneRouteInfo& route) const;
 		std::uint32_t ResolvePortalTargetInstanceId_(std::uint32_t map_template_id, std::uint32_t requested_instance_id);
 		static bool IsDungeonMapTemplate_(std::uint32_t map_template_id) noexcept;
 		void CompletePortalTransfer_(
@@ -500,6 +590,12 @@ namespace svr {
 		void FailPendingPortalTransfer_(
 			const PendingPortalTransfer& pending,
 			std::string_view reason);
+		void ExpirePendingZoneAoiSnapshots_(std::chrono::steady_clock::time_point now);
+		void SendWorldFallbackZoneSnapshot_(const PendingZoneAoiSnapshotRequest& pending);
+		std::optional<ZoneRouteInfo> ResolveZoneRouteForMapInstance_(
+			std::uint16_t zone_id,
+			std::uint32_t map_template_id,
+			std::uint32_t instance_id) const;
 		bool SendZonePlayerEnter_(std::uint64_t trace_id, std::uint16_t zone_id, std::uint64_t request_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		bool SendZonePlayerLeave_(std::uint16_t zone_id, std::uint64_t char_id, std::uint32_t map_template_id, std::uint32_t instance_id);
 		void LoadServerTopology_();
@@ -618,6 +714,8 @@ namespace svr {
 		std::unordered_map<std::uint64_t, std::vector<PendingEnterWorldFinalize>> pending_enter_world_finalize_by_assign_request_;
 		std::unordered_map<std::uint64_t, PendingPortalTransfer> pending_portal_transfer_by_assign_request_;
 		std::unordered_map<std::uint64_t, PendingZonePlayerEnterRequest> pending_zone_player_enter_requests_;
+		std::unordered_map<std::uint64_t, PendingZoneAoiSnapshotRequest> pending_zone_aoi_snapshot_by_session_key_;
+		mutable std::mutex pending_zone_aoi_snapshot_mtx_;
 		std::uint64_t next_zone_assign_request_id_ = 1;
 		std::uint64_t next_zone_player_enter_request_id_ = 1;
 
@@ -640,6 +738,7 @@ namespace svr {
 			DelayedCloseKeyHash> delayed_world_close_entries_;
 
 		static constexpr std::chrono::milliseconds kDuplicateKickCloseDelay_{ 150 };
+		static constexpr std::chrono::milliseconds kZoneSnapshotFallbackDelay_{ 250 };
 		std::atomic<std::uint64_t> duplicate_login_trace_seq_{ 1 };
 		mutable std::mutex expected_char_ver_mtx_;
 		std::unordered_map<std::uint64_t, std::uint32_t> expected_char_version_by_key_;
@@ -679,6 +778,9 @@ namespace svr {
 		std::uint64_t last_dup_login_dedup_same_session_ = 0;
 		std::uint64_t last_flush_dirty_conflicts_total_ = 0;
 		std::uint64_t last_flush_dirty_conflicted_batches_ = 0;
+		bool enable_zone_aoi_snapshot_ = true;
+		bool enable_zone_aoi_move_diff_ = true;
+		bool enable_world_aoi_move_diff_fallback_ = false;
 
 		std::uint64_t bench_base_c2s_move_rx_ = 0;
 		std::uint64_t bench_base_s2c_ack_tx_ = 0;

@@ -556,6 +556,8 @@ bool WorldHandler::HandleReconnectWorld(std::uint32_t dwProID, std::uint32_t sid
 		 sid,
 		 serial,
 		 char_id = reconnect.current_session.char_id,
+		 map_id = reconnect.map_id,
+		 instance_id = reconnect.instance_id,
 		 pos_x = reconnect.x,
 		 pos_y = reconnect.y,
 		 zone_id = static_cast<std::uint16_t>(reconnect.zone_id)]() {
@@ -573,9 +575,38 @@ bool WorldHandler::HandleReconnectWorld(std::uint32_t dwProID, std::uint32_t sid
 				item.y = info.pos.y;
 				spawn_items.push_back(item);
 			}
-			if (!spawn_items.empty()) {
-				SendReconnectPlayerSpawnBatch_(static_cast<WorldHandler&>(*this), dwProID, sid, serial, spawn_items);
+			const bool zone_snapshot_requested = runtime().RequestZoneInitialSnapshot(
+				0,
+				sid,
+				serial,
+				char_id,
+				zone_id,
+				static_cast<std::uint32_t>(map_id),
+				instance_id,
+				pos_x,
+				pos_y,
+				svr::ZoneSnapshotReason::reconnect);
+			if (!zone_snapshot_requested) {
+				spdlog::warn(
+					"reconnect initial snapshot fallback disabled. sid={} serial={} char_id={} zone_id={} map_id={} instance_id={} would_have_spawn_batch_count={}",
+					sid,
+					serial,
+					char_id,
+					zone_id,
+					map_id,
+					instance_id,
+					spawn_items.size());
 			}
+			spdlog::info(
+				"reconnect initial snapshot prepared. sid={} serial={} char_id={} zone_id={} map_id={} instance_id={} spawn_batch_count={} zone_snapshot_requested={}",
+				sid,
+				serial,
+				char_id,
+				zone_id,
+				map_id,
+				instance_id,
+				spawn_items.size(),
+				zone_snapshot_requested ? 1 : 0);
 		});
 
 	return true;

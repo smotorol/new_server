@@ -215,6 +215,78 @@ namespace {
 	}
 }
 
+void WorldHandler::SendPlayerSpawnBatchRelay(
+	std::uint32_t dwProID,
+	std::uint32_t sid,
+	std::uint32_t serial,
+	const std::vector<proto::S2C_player_spawn_item>& spawn_items)
+{
+	if (spawn_items.empty()) {
+		return;
+	}
+	SendPlayerSpawnBatch_(*this, dwProID, sid, serial, spawn_items);
+}
+
+void WorldHandler::SendPlayerDespawnBatchRelay(
+	std::uint32_t dwProID,
+	std::uint32_t sid,
+	std::uint32_t serial,
+	const std::vector<proto::S2C_player_despawn_item>& despawn_items)
+{
+	if (despawn_items.empty()) {
+		return;
+	}
+
+	std::vector<std::uint64_t> char_ids;
+	char_ids.reserve(despawn_items.size());
+	for (const auto& item : despawn_items) {
+		char_ids.push_back(item.char_id);
+	}
+	SendPlayerDespawnBatch_(*this, dwProID, sid, serial, char_ids);
+}
+
+void WorldHandler::SendPlayerMoveBatchRelay(
+	std::uint32_t dwProID,
+	std::uint32_t sid,
+	std::uint32_t serial,
+	const std::vector<proto::S2C_player_move_item>& move_items)
+{
+	if (move_items.empty()) {
+		return;
+	}
+
+#if DC_WORLD_CLIENT_PROTOBUF
+	if (IsSessionProtoMode(sid, serial)) {
+		dc::proto::client::world::PlayerMoveBatch msg;
+		for (const auto& item : move_items) {
+			auto* out = msg.add_items();
+			out->set_char_id(item.char_id);
+			out->set_x(item.x);
+			out->set_y(item.y);
+		}
+		std::vector<char> framed;
+		if (dc::proto::BuildFramedMessage((std::uint16_t)proto::S2CMsg::player_move_batch, msg, framed)) {
+			_MSG_HEADER header{};
+			std::memcpy(&header, framed.data(), MSG_HEADER_SIZE);
+			Send(dwProID, sid, serial, header, framed.data() + MSG_HEADER_SIZE);
+			return;
+		}
+	}
+#endif
+
+	const auto count = svr::aoi::ClampBatchEntityCount(move_items.size());
+	const std::size_t body_size = sizeof(proto::S2C_player_move_batch)
+		+ (count > 0 ? (count - 1) * sizeof(proto::S2C_player_move_item) : 0);
+	std::vector<char> body(body_size);
+	auto* pkt = reinterpret_cast<proto::S2C_player_move_batch*>(body.data());
+	pkt->count = count;
+	for (std::size_t i = 0; i < count; ++i) {
+		pkt->items[i] = move_items[i];
+	}
+	auto h = proto::make_header((std::uint16_t)proto::S2CMsg::player_move_batch, (std::uint16_t)body_size);
+	Send(dwProID, sid, serial, h, body.data());
+}
+
 void WorldHandler::SendZoneMapState(
     std::uint32_t dwProID,
     std::uint32_t sid,
@@ -450,10 +522,22 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
     }
 
     SendZoneMapState(dwProID, sid, serial, char_id, after.zone_id, after.map_id, after.x, after.y, proto::ZoneMapStateReason::position_update);
+    runtime().MirrorPlayerMoveToZone(
+        0,
+        0,
+        sid,
+        serial,
+        char_id,
+        static_cast<std::uint16_t>(after.zone_id),
+        after.map_id,
+        after.instance_id,
+        after.x,
+        after.y);
+    const bool allow_world_aoi_send = runtime().IsWorldAoiMoveDiffFallbackEnabled();
     auto self = shared_from_this();
     const std::uint32_t zone_id = after.zone_id;
 
-    runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, self, dwProID, sid, serial, zone_id, char_id, nx = after.x, ny = after.y]() {
+    runtime().PostActor(svr::MakeZoneActorId(zone_id), [this, self, dwProID, sid, serial, zone_id, char_id, allow_world_aoi_send, nx = after.x, ny = after.y]() {
         auto& z = runtime().GetOrCreateZoneActor(zone_id);
         auto diff = z.Move(char_id, { nx, ny }, sid, serial);
 
@@ -480,7 +564,7 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
         if (entered.size() > sanitized_entered.size()) {
             svr::metrics::g_aoi_sanitize_removed_entered.fetch_add(static_cast<std::uint64_t>(entered.size() - sanitized_entered.size()), std::memory_order_relaxed);
         }
-        if (!sanitized_entered.empty()) {
+        if (allow_world_aoi_send && !sanitized_entered.empty()) {
             std::vector<proto::S2C_player_spawn_item> spawn_items;
             spawn_items.reserve(sanitized_entered.size());
             for (auto oid : sanitized_entered) {
@@ -507,7 +591,7 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
             svr::metrics::g_aoi_sanitize_removed_exited.fetch_add(static_cast<std::uint64_t>(exited.size() - sanitized_exited.size()), std::memory_order_relaxed);
         }
 
-        if (!sanitized_exited.empty()) {
+        if (allow_world_aoi_send && !sanitized_exited.empty()) {
             const auto count = svr::aoi::ClampBatchEntityCount(sanitized_exited.size());
             sanitized_exited.resize(count);
             SendPlayerDespawnBatch_(static_cast<WorldHandler&>(*self), dwProID, sid, serial, sanitized_exited);
@@ -518,38 +602,40 @@ bool WorldHandler::HandleWorldMove(std::uint32_t dwProID, std::uint32_t sid, con
             svr::metrics::g_aoi_sanitize_removed_new_vis.fetch_add(static_cast<std::uint64_t>(diff.new_vis.size() - sanitized_new_vis.size()), std::memory_order_relaxed);
         }
 
-        for (auto rid : sanitized_entered) {
-            auto it = z.players.find(rid);
-            if (it == z.players.end()) continue;
-            if (it->second.sid == 0 || it->second.serial == 0) continue;
-            SendOrQueuePlayerSnapshot_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, (std::uint16_t)proto::S2CMsg::player_spawn, char_id, nx, ny);
-        }
-        for (auto rid : sanitized_exited) {
-            auto it = z.players.find(rid);
-            if (it == z.players.end()) continue;
-            if (it->second.sid == 0 || it->second.serial == 0) continue;
-            SendOrQueuePlayerDespawn_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, char_id);
-        }
+        if (allow_world_aoi_send) {
+            for (auto rid : sanitized_entered) {
+                auto it = z.players.find(rid);
+                if (it == z.players.end()) continue;
+                if (it->second.sid == 0 || it->second.serial == 0) continue;
+                SendOrQueuePlayerSnapshot_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, (std::uint16_t)proto::S2CMsg::player_spawn, char_id, nx, ny);
+            }
+            for (auto rid : sanitized_exited) {
+                auto it = z.players.find(rid);
+                if (it == z.players.end()) continue;
+                if (it->second.sid == 0 || it->second.serial == 0) continue;
+                SendOrQueuePlayerDespawn_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, char_id);
+            }
 
-        for (auto rid : sanitized_new_vis) {
-            auto it = z.players.find(rid);
-            if (it == z.players.end()) continue;
-            if (it->second.sid == 0 || it->second.serial == 0) continue;
-            SendOrQueuePlayerSnapshot_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, (std::uint16_t)proto::S2CMsg::player_move, char_id, nx, ny, char_id);
-        }
+            for (auto rid : sanitized_new_vis) {
+                auto it = z.players.find(rid);
+                if (it == z.players.end()) continue;
+                if (it->second.sid == 0 || it->second.serial == 0) continue;
+                SendOrQueuePlayerSnapshot_(static_cast<WorldHandler&>(*self), z, it->second.sid, it->second.serial, (std::uint16_t)proto::S2CMsg::player_move, char_id, nx, ny, char_id);
+            }
 
-        z.FlushPendingSends_(static_cast<WorldHandler&>(*self), dwProID);
+            z.FlushPendingSends_(static_cast<WorldHandler&>(*self), dwProID);
 
-        if (z.HasPendingNet_()) {
-            auto flusher = std::make_shared<std::function<void(int)>>();
-            *flusher = [this, self, dwProID, zone_id, flusher](int depth) {
-                auto& zf = runtime().GetOrCreateZoneActor(zone_id);
-                zf.FlushPendingSends_(static_cast<WorldHandler&>(*self), dwProID, 1500, 1 * 1024 * 1024);
-                if (depth < 16 && zf.HasPendingNet_()) {
-                    runtime().PostActor(svr::MakeZoneActorId(zone_id), [flusher, depth]() { (*flusher)(depth + 1); });
-                }
-            };
-            runtime().PostActor(svr::MakeZoneActorId(zone_id), [flusher]() { (*flusher)(0); });
+            if (z.HasPendingNet_()) {
+                auto flusher = std::make_shared<std::function<void(int)>>();
+                *flusher = [this, self, dwProID, zone_id, flusher](int depth) {
+                    auto& zf = runtime().GetOrCreateZoneActor(zone_id);
+                    zf.FlushPendingSends_(static_cast<WorldHandler&>(*self), dwProID, 1500, 1 * 1024 * 1024);
+                    if (depth < 16 && zf.HasPendingNet_()) {
+                        runtime().PostActor(svr::MakeZoneActorId(zone_id), [flusher, depth]() { (*flusher)(depth + 1); });
+                    }
+                };
+                runtime().PostActor(svr::MakeZoneActorId(zone_id), [flusher]() { (*flusher)(0); });
+            }
         }
     });
     return true;

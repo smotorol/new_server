@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <string>
+#include <vector>
 
 #include "server_common/handler/service_line_handler_base.h"
 #include "proto/internal/world_zone_proto.h"
@@ -45,6 +46,60 @@ public:
 		std::uint64_t char_id,
 		std::uint32_t map_template_id,
 		std::uint32_t instance_id);
+	bool SendAoiSnapshot(
+		std::uint32_t dwProID,
+		std::uint32_t dwIndex,
+		std::uint32_t dwSerial,
+		std::uint64_t trace_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		std::uint16_t zone_id,
+		std::uint16_t channel_id,
+		std::int32_t self_x,
+		std::int32_t self_y,
+		const std::vector<proto::S2C_player_spawn_item>& items);
+	bool SendAoiSpawnBatch(
+		std::uint32_t dwProID,
+		std::uint32_t dwIndex,
+		std::uint32_t dwSerial,
+		std::uint64_t trace_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		std::uint16_t zone_id,
+		std::uint16_t channel_id,
+		const std::vector<proto::S2C_player_spawn_item>& items);
+	bool SendAoiDespawnBatch(
+		std::uint32_t dwProID,
+		std::uint32_t dwIndex,
+		std::uint32_t dwSerial,
+		std::uint64_t trace_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		std::uint16_t zone_id,
+		std::uint16_t channel_id,
+		const std::vector<proto::S2C_player_despawn_item>& items);
+	bool SendAoiMoveBatch(
+		std::uint32_t dwProID,
+		std::uint32_t dwIndex,
+		std::uint32_t dwSerial,
+		std::uint64_t trace_id,
+		std::uint32_t sid,
+		std::uint32_t serial,
+		std::uint64_t char_id,
+		std::uint32_t map_template_id,
+		std::uint32_t instance_id,
+		std::uint16_t zone_id,
+		std::uint16_t channel_id,
+		const std::vector<proto::S2C_player_move_item>& items);
 protected:
 	bool DataAnalysis(std::uint32_t dwProID, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg) override;
 	void OnLineAccepted(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial) override;

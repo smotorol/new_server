@@ -1,5 +1,7 @@
 #include "endpoint_app.h"
 
+#include <spdlog/spdlog.h>
+
 namespace dc {
 
 	EndpointApp::EndpointApp(EndpointConfig cfg, HandlerPtr handler)
@@ -48,7 +50,27 @@ namespace dc {
 		const std::uint32_t n = (cfg_.net_threads == 0) ? 1 : cfg_.net_threads;
 		net_threads_.reserve(n);
 		for (std::uint32_t i = 0; i < n; ++i) {
-			net_threads_.emplace_back([this] { io_.run(); });
+			net_threads_.emplace_back([this, i] {
+				while (running_) {
+					try {
+						io_.run();
+						break;
+					}
+					catch (const std::exception& e) {
+						spdlog::error(
+							"EndpointApp io thread exception. role={} index={} what={}",
+							cfg_.role == EndpointRole::Server ? "server" : "client",
+							i,
+							e.what());
+					}
+					catch (...) {
+						spdlog::error(
+							"EndpointApp io thread unknown exception. role={} index={}",
+							cfg_.role == EndpointRole::Server ? "server" : "client",
+							i);
+					}
+				}
+			});
 
 		}
 
@@ -106,7 +128,24 @@ namespace dc {
 				local.swap(q_);
 			}
 			for (auto& fn : local) {
-				if (fn) fn();
+				if (!fn) {
+					continue;
+				}
+
+				try {
+					fn();
+				}
+				catch (const std::exception& e) {
+					spdlog::error(
+						"EndpointApp logic thread exception. role={} what={}",
+						cfg_.role == EndpointRole::Server ? "server" : "client",
+						e.what());
+				}
+				catch (...) {
+					spdlog::error(
+						"EndpointApp logic thread unknown exception. role={}",
+						cfg_.role == EndpointRole::Server ? "server" : "client");
+				}
 
 			}
 
