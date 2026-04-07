@@ -1,6 +1,7 @@
 #include "services/zone/handler/zone_world_handler.h"
 
 #include <algorithm>
+#include <cstring>
 #include <cstdio>
 
 #include <spdlog/spdlog.h>
@@ -63,6 +64,104 @@ bool ZoneWorldHandler::SendPlayerEnterAck(std::uint32_t dwProID, std::uint32_t d
 	return Send(dwProID, dwIndex, dwSerial, h, reinterpret_cast<const char*>(&pkt));
 }
 
+bool ZoneWorldHandler::SendAoiSnapshot(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial,
+	std::uint64_t trace_id, std::uint32_t sid, std::uint32_t serial, std::uint64_t char_id,
+	std::uint32_t map_template_id, std::uint32_t instance_id, std::uint16_t zone_id, std::uint16_t channel_id,
+	std::int32_t self_x, std::int32_t self_y, const std::vector<proto::S2C_player_spawn_item>& items)
+{
+	const auto body_size = pt_wz::AoiSnapshotBodySize(items.size());
+	std::vector<char> body(body_size);
+	auto* pkt = reinterpret_cast<pt_wz::ZoneWorldAoiSnapshot*>(body.data());
+	pkt->trace_id = trace_id;
+	pkt->sid = sid;
+	pkt->serial = serial;
+	pkt->char_id = char_id;
+	pkt->map_template_id = map_template_id;
+	pkt->instance_id = instance_id;
+	pkt->zone_id = zone_id;
+	pkt->channel_id = channel_id;
+	pkt->self_x = self_x;
+	pkt->self_y = self_y;
+	pkt->count = static_cast<std::uint16_t>(items.size());
+	if (!items.empty()) {
+		std::memcpy(pkt->items, items.data(), items.size() * sizeof(proto::S2C_player_spawn_item));
+	}
+	const auto h = proto::make_header((std::uint16_t)pt_wz::Msg::zone_world_aoi_snapshot, (std::uint16_t)body_size);
+	return Send(dwProID, dwIndex, dwSerial, h, body.data());
+}
+
+bool ZoneWorldHandler::SendAoiSpawnBatch(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial,
+	std::uint64_t trace_id, std::uint32_t sid, std::uint32_t serial, std::uint64_t char_id,
+	std::uint32_t map_template_id, std::uint32_t instance_id, std::uint16_t zone_id, std::uint16_t channel_id,
+	const std::vector<proto::S2C_player_spawn_item>& items)
+{
+	const auto body_size = pt_wz::AoiSpawnBatchBodySize(items.size());
+	std::vector<char> body(body_size);
+	auto* pkt = reinterpret_cast<pt_wz::ZoneWorldAoiSpawnBatch*>(body.data());
+	pkt->trace_id = trace_id;
+	pkt->sid = sid;
+	pkt->serial = serial;
+	pkt->char_id = char_id;
+	pkt->map_template_id = map_template_id;
+	pkt->instance_id = instance_id;
+	pkt->zone_id = zone_id;
+	pkt->channel_id = channel_id;
+	pkt->count = static_cast<std::uint16_t>(items.size());
+	if (!items.empty()) {
+		std::memcpy(pkt->items, items.data(), items.size() * sizeof(proto::S2C_player_spawn_item));
+	}
+	const auto h = proto::make_header((std::uint16_t)pt_wz::Msg::zone_world_aoi_spawn_batch, (std::uint16_t)body_size);
+	return TrySendLossy(dwProID, dwIndex, dwSerial, h, body.data());
+}
+
+bool ZoneWorldHandler::SendAoiDespawnBatch(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial,
+	std::uint64_t trace_id, std::uint32_t sid, std::uint32_t serial, std::uint64_t char_id,
+	std::uint32_t map_template_id, std::uint32_t instance_id, std::uint16_t zone_id, std::uint16_t channel_id,
+	const std::vector<proto::S2C_player_despawn_item>& items)
+{
+	const auto body_size = pt_wz::AoiDespawnBatchBodySize(items.size());
+	std::vector<char> body(body_size);
+	auto* pkt = reinterpret_cast<pt_wz::ZoneWorldAoiDespawnBatch*>(body.data());
+	pkt->trace_id = trace_id;
+	pkt->sid = sid;
+	pkt->serial = serial;
+	pkt->char_id = char_id;
+	pkt->map_template_id = map_template_id;
+	pkt->instance_id = instance_id;
+	pkt->zone_id = zone_id;
+	pkt->channel_id = channel_id;
+	pkt->count = static_cast<std::uint16_t>(items.size());
+	if (!items.empty()) {
+		std::memcpy(pkt->items, items.data(), items.size() * sizeof(proto::S2C_player_despawn_item));
+	}
+	const auto h = proto::make_header((std::uint16_t)pt_wz::Msg::zone_world_aoi_despawn_batch, (std::uint16_t)body_size);
+	return TrySendLossy(dwProID, dwIndex, dwSerial, h, body.data());
+}
+
+bool ZoneWorldHandler::SendAoiMoveBatch(std::uint32_t dwProID, std::uint32_t dwIndex, std::uint32_t dwSerial,
+	std::uint64_t trace_id, std::uint32_t sid, std::uint32_t serial, std::uint64_t char_id,
+	std::uint32_t map_template_id, std::uint32_t instance_id, std::uint16_t zone_id, std::uint16_t channel_id,
+	const std::vector<proto::S2C_player_move_item>& items)
+{
+	const auto body_size = pt_wz::AoiMoveBatchBodySize(items.size());
+	std::vector<char> body(body_size);
+	auto* pkt = reinterpret_cast<pt_wz::ZoneWorldAoiMoveBatch*>(body.data());
+	pkt->trace_id = trace_id;
+	pkt->sid = sid;
+	pkt->serial = serial;
+	pkt->char_id = char_id;
+	pkt->map_template_id = map_template_id;
+	pkt->instance_id = instance_id;
+	pkt->zone_id = zone_id;
+	pkt->channel_id = channel_id;
+	pkt->count = static_cast<std::uint16_t>(items.size());
+	if (!items.empty()) {
+		std::memcpy(pkt->items, items.data(), items.size() * sizeof(proto::S2C_player_move_item));
+	}
+	const auto h = proto::make_header((std::uint16_t)pt_wz::Msg::zone_world_aoi_move_batch, (std::uint16_t)body_size);
+	return TrySendLossy(dwProID, dwIndex, dwSerial, h, body.data());
+}
+
 bool ZoneWorldHandler::DataAnalysis(std::uint32_t, std::uint32_t n, _MSG_HEADER* pMsgHeader, char* pMsg)
 {
 	if (!pMsgHeader) return false;
@@ -82,6 +181,9 @@ bool ZoneWorldHandler::DataAnalysis(std::uint32_t, std::uint32_t n, _MSG_HEADER*
 	case pt_wz::Msg::world_zone_player_leave: {
 		const auto* req = proto::as<pt_wz::WorldZonePlayerLeave>(pMsg, body_len); if (!req) return false;
 		runtime_.OnPlayerLeaveRequestFromHandler(n, GetLatestSerial(n), *req); return true; }
+	case pt_wz::Msg::world_zone_player_move_internal: {
+		const auto* req = proto::as<pt_wz::WorldZonePlayerMoveInternal>(pMsg, body_len); if (!req) return false;
+		runtime_.OnPlayerMoveInternalRequestFromHandler(n, GetLatestSerial(n), *req); return true; }
 	default: spdlog::warn("ZoneWorldHandler unknown msg_type={} sid={}", msg_type, n); return false;
 	}
 }

@@ -268,6 +268,33 @@ namespace svr {
 			auto v = ini.sections["AOI"]["AOI_RADIUS_CELLS"];
 			if (!parse_int_field("AOI.AOI_RADIUS_CELLS", v, g_aoi_ini_cfg.aoi_radius_cells)) return false;
 		}
+		{
+			auto v = ini.sections["AOI_TRANSFER"]["ENABLE_ZONE_AOI_SNAPSHOT"];
+			if (!v.empty()) {
+				int parsed = enable_zone_aoi_snapshot_ ? 1 : 0;
+				if (!parse_int_field("AOI_TRANSFER.ENABLE_ZONE_AOI_SNAPSHOT", v, parsed)) return false;
+				enable_zone_aoi_snapshot_ = (parsed != 0);
+			}
+		}
+		{
+			auto v = ini.sections["AOI_TRANSFER"]["ENABLE_ZONE_AOI_MOVE_DIFF"];
+			if (!v.empty()) {
+				int parsed = enable_zone_aoi_move_diff_ ? 1 : 0;
+				if (!parse_int_field("AOI_TRANSFER.ENABLE_ZONE_AOI_MOVE_DIFF", v, parsed)) return false;
+				enable_zone_aoi_move_diff_ = (parsed != 0);
+			}
+		}
+		{
+			auto v = ini.sections["AOI_TRANSFER"]["ENABLE_WORLD_AOI_MOVE_DIFF_FALLBACK"];
+			if (!v.empty()) {
+				int parsed = 0;
+				if (!parse_int_field("AOI_TRANSFER.ENABLE_WORLD_AOI_MOVE_DIFF_FALLBACK", v, parsed)) return false;
+				if (parsed != 0) {
+					spdlog::warn("AOI_TRANSFER.ENABLE_WORLD_AOI_MOVE_DIFF_FALLBACK is ignored in zone-only AOI mode.");
+				}
+				enable_world_aoi_move_diff_fallback_ = false;
+			}
+		}
 
 		// ============================================================
 		// ✅ normalize / default rules (최종 확정값 계산)
@@ -353,6 +380,10 @@ namespace svr {
 		spdlog::info("INI(AOI): map={}x{}, unit={}, aoi_r_cells={}",
 			g_aoi_ini_cfg.map_size.x, g_aoi_ini_cfg.map_size.y,
 			g_aoi_ini_cfg.world_sight_unit, g_aoi_ini_cfg.aoi_radius_cells);
+		spdlog::info("INI(AOI_TRANSFER): zone_snapshot={} zone_move_diff={} world_move_diff_fallback={}",
+			enable_zone_aoi_snapshot_ ? 1 : 0,
+			enable_zone_aoi_move_diff_ ? 1 : 0,
+			enable_world_aoi_move_diff_fallback_ ? 1 : 0);
 
 		spdlog::info("World: name='{}' addr='{}'",
 			name_utf8_, host_);
@@ -402,7 +433,9 @@ namespace svr {
 					return false;
 				}
 
-				pool.conns.push_back(std::move(conn));
+				auto entry = std::make_unique<DbPoolEntry>();
+				entry->conn = std::move(conn);
+				pool.conns.push_back(std::move(entry));
 			}
 			spdlog::info(
 				"DB connected: dsn={} pool={} (dsn+driver fallback)",
@@ -424,7 +457,7 @@ namespace svr {
 			return false;
 		}
 
-		auto result = ItemTemplateRepository::LoadCanonicalTableFromDb(world_pool_->conns.front());
+		auto result = ItemTemplateRepository::LoadCanonicalTableFromDb(world_pool_->front_conn());
 		if (result.loaded) {
 			auto status = ItemTemplateRepository::SnapshotStatus();
 			spdlog::info(

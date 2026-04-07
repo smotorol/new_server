@@ -122,6 +122,30 @@ namespace svr {
 		std::chrono::steady_clock::time_point issued_at{};
 	};
 
+	enum class ZoneSnapshotReason : std::uint8_t
+	{
+		enter = 1,
+		portal = 2,
+		reconnect = 3,
+	};
+
+	struct PendingZoneAoiSnapshotRequest
+	{
+		std::uint64_t trace_id = 0;
+		std::uint32_t sid = 0;
+		std::uint32_t serial = 0;
+		std::uint64_t char_id = 0;
+		std::uint16_t zone_id = 0;
+		std::uint16_t channel_id = 0;
+		std::uint32_t zone_server_id = 0;
+		std::uint32_t map_template_id = 0;
+		std::uint32_t instance_id = 0;
+		std::int32_t x = 0;
+		std::int32_t y = 0;
+		ZoneSnapshotReason reason = ZoneSnapshotReason::enter;
+		std::chrono::steady_clock::time_point issued_at{};
+	};
+
 	struct PendingCharacterEnterSnapshotRequest
 	{
 		std::uint64_t trace_id = 0;

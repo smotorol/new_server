@@ -42,6 +42,21 @@ public:
         proto::ZoneMapStateReason reason,
         std::uint16_t channel_id = 0,
         std::uint32_t zone_server_id = 0);
+    void SendPlayerSpawnBatchRelay(
+        std::uint32_t dwProID,
+        std::uint32_t sid,
+        std::uint32_t serial,
+        const std::vector<proto::S2C_player_spawn_item>& spawn_items);
+    void SendPlayerDespawnBatchRelay(
+        std::uint32_t dwProID,
+        std::uint32_t sid,
+        std::uint32_t serial,
+        const std::vector<proto::S2C_player_despawn_item>& despawn_items);
+    void SendPlayerMoveBatchRelay(
+        std::uint32_t dwProID,
+        std::uint32_t sid,
+        std::uint32_t serial,
+        const std::vector<proto::S2C_player_move_item>& move_items);
     void SendEnterWorldResult(
         std::uint32_t dwProID,
         std::uint32_t sid,

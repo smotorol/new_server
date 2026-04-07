@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Linq;
@@ -21,6 +21,7 @@ namespace DummyClientWinForms
         private readonly WorldRenderService _renderService = new WorldRenderService();
         private readonly GameDataService _gameDataService = new GameDataService();
         private readonly MapGeometryOverlayService _geometryOverlayService = new MapGeometryOverlayService();
+        private readonly AutoClientOptions _automationOptions;
         private IReadOnlyList<GeometryCellSample> _geometryOverlaySamples = Array.Empty<GeometryCellSample>();
         private MiniMapSnapshot _miniMapSnapshot;
         private readonly HashSet<Keys> _pressedMovementKeys = new HashSet<Keys>();
@@ -28,8 +29,9 @@ namespace DummyClientWinForms
         private string _selectedObjectId = string.Empty;
         private ulong _lastMonsterId;
 
-        public MainForm()
+        public MainForm(AutoClientOptions automationOptions = null)
         {
+            _automationOptions = automationOptions ?? new AutoClientOptions();
             InitializeComponent();
             KeyPreview = true;
             WireEvents();
@@ -43,6 +45,7 @@ namespace DummyClientWinForms
             _worldPanel.MiniMapLegendCheckBox.Checked = true;
             LoadZoneOverlay(1, false);
             RefreshUi();
+            InitializeAutomation();
         }
 
         private void WireEvents()
@@ -150,6 +153,16 @@ namespace DummyClientWinForms
                 AppendLog("world endpoint not ready; select world and character first");
                 return;
             }
+            if (_state.SelectedCharId == 0)
+            {
+                AppendLog("character selection not ready; enter world deferred");
+                return;
+            }
+            if (string.IsNullOrWhiteSpace(_state.WorldToken))
+            {
+                AppendLog("world token not ready; enter world deferred");
+                return;
+            }
             if (!_worldClient.IsConnected)
             {
                 await _worldClient.ConnectAsync(_state.WorldHost, _state.WorldPort);
@@ -158,7 +171,6 @@ namespace DummyClientWinForms
             _state.CurrentStage = ClientStage.EnterWorldPending;
             await SendWorldPacketAsync(ClientProtocol.EnterWorldWithToken, ClientProtocol.BuildEnterWorldRequest(_state.AccountId, _state.LoginSession, _state.WorldToken));
         }
-
         private async Task ReconnectWorldAsync()
         {
             if (string.IsNullOrWhiteSpace(_state.WorldHost) || _state.WorldPort <= 0 || string.IsNullOrWhiteSpace(_state.ReconnectToken))
@@ -664,6 +676,7 @@ namespace DummyClientWinForms
             _state.LastDisconnectReason = mapped;
             _state.LastDisconnectDetail = reason ?? string.Empty;
             AppendLog($"{(isWorld ? "world" : "login")} closed reason={mapped} expected={(expected ? 1 : 0)} raw={reason} reconnect_target={_state.LastReconnectTarget}");
+            AutomationMarkDisconnected(isWorld, mapped, reason, expected);
 
             if (_state.PendingDisconnectReason != DisconnectReason.None)
             {
@@ -730,6 +743,7 @@ namespace DummyClientWinForms
                     _characterPanel.WorldListBox.DataSource = null;
                     _characterPanel.CharacterListBox.DataSource = null;
                     AppendLog($"login_result ok={login.Ok} account_id={login.AccountId} world_entries={login.WorldEntries} fail_reason={login.FailReason} waiting_world_select=1");
+                    AutomationMarkLoginResult(login.Ok, login.FailReason);
                     if (login.Ok)
                     {
                         _ = SendLoginPacketAsync(ClientProtocol.WorldListRequest, ClientProtocol.BuildWorldListRequest());
@@ -769,6 +783,7 @@ namespace DummyClientWinForms
                         _state.LastStableStage = ClientStage.WorldSelected;
                     }
                     AppendLog($"world_select ok={worldSelect.Ok} world={worldSelect.WorldId} server_code={worldSelect.ServerCode} fail_reason={worldSelect.FailReason}");
+                    AutomationMarkWorldSelected(worldSelect.Ok, (int)worldSelect.WorldId, worldSelect.FailReason);
                     if (worldSelect.Ok && _state.ReconnectRequested && _state.ReconnectResumeStage >= ClientStage.CharacterSelected)
                     {
                         _ = SendLoginPacketAsync(ClientProtocol.CharacterListRequest, ClientProtocol.BuildCharacterListRequest());
@@ -783,6 +798,7 @@ namespace DummyClientWinForms
                     _characterPanel.CharacterListBox.DataSource = null;
                     _characterPanel.CharacterListBox.DataSource = _state.Characters.ToList();
                     AppendLog($"character_list ok={ok} count={list.Count} reason={reason}");
+                    AutomationMarkCharacterList(ok, list.Count, reason);
                     if (_state.ReconnectRequested && _state.ReconnectResumeStage >= ClientStage.CharacterSelected && _state.SelectedCharId != 0)
                     {
                         var selected = _state.Characters.FirstOrDefault(x => x.CharId == _state.SelectedCharId);
@@ -806,6 +822,7 @@ namespace DummyClientWinForms
                         _state.LastStableStage = ClientStage.CharacterSelected;
                     }
                     AppendLog($"character_select ok={select.Ok} char_id={select.CharId} fail_reason={select.FailReason}");
+                    AutomationMarkCharacterSelected(select.Ok, select.CharId, select.FailReason);
                     if (select.Ok && _state.ReconnectRequested && _state.ReconnectResumeStage >= ClientStage.InWorld)
                     {
                         _ = EnterWorldAsync();
@@ -840,6 +857,7 @@ namespace DummyClientWinForms
                     if (enter.CharId != 0) _state.SelectedCharId = enter.CharId;
                     EnsureSelfVisible();
                     AppendLog($"enter_world ok={enter.Ok} reason={enter.Reason} char_id={enter.CharId} reconnect_token_len={(_state.ReconnectToken?.Length ?? 0)}");
+                    AutomationMarkEnterWorldResult(enter.Ok, enter.Reason.ToString(), enter.CharId);
                     if (_state.ReconnectRequested && enter.Ok)
                     {
                         AppendLog("reconnect resume completed");
@@ -868,6 +886,7 @@ namespace DummyClientWinForms
                 case ClientProtocol.ReconnectWorldResult:
                     var reconnect = ClientProtocol.ParseReconnectWorldResult(body);
                     AppendLog($"reconnect_world_result ok={reconnect.Ok} reason={reconnect.Reason} char_id={reconnect.CharId} zone={reconnect.ZoneId} map={reconnect.MapId} pos=({reconnect.X},{reconnect.Y})");
+                    AutomationMarkReconnectResult(reconnect.Ok, reconnect.Reason.ToString(), reconnect.CharId);
                     if (reconnect.Ok)
                     {
                         _state.InWorld = true;
@@ -1239,6 +1258,10 @@ namespace DummyClientWinForms
         }
     }
 }
+
+
+
+
 
 
 

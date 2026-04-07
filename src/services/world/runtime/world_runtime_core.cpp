@@ -199,6 +199,10 @@ namespace svr {
 		pending_character_enter_snapshot_requests_.clear();
 		pending_enter_world_finalize_by_assign_request_.clear();
 		pending_zone_player_enter_requests_.clear();
+		{
+			std::lock_guard lk(pending_zone_aoi_snapshot_mtx_);
+			pending_zone_aoi_snapshot_by_session_key_.clear();
+		}
 
 		{
 			std::lock_guard lk(delayed_world_close_mtx_);
@@ -289,6 +293,7 @@ namespace svr {
 		}
 
 		ExpireStaleZoneRoutes_(now);
+		ExpirePendingZoneAoiSnapshots_(now);
 
 		if (now >= next_stat_tp_) {
 			next_stat_tp_ = now + dc::k_next_stat_tp_;
@@ -436,6 +441,3 @@ namespace svr {
 		}
 
 } // namespace svr
-
-
-

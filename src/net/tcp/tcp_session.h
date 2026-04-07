@@ -17,6 +17,8 @@
 
 #include <stdexcept>
 
+#include <spdlog/spdlog.h>
+
 #include "net/handler/net_handler.h"
 
 namespace net {
@@ -31,8 +33,8 @@ namespace net {
 			std::uint32_t session_serial,
 			HandlerPtr handler,
 			std::uint32_t max_packet_bytes = 64 * 1024,
-			std::size_t max_send_queue_msgs = 4096,
-			std::size_t max_send_queue_bytes = 8 * 1024 * 1024)
+			std::size_t max_send_queue_msgs = 65536,
+			std::size_t max_send_queue_bytes = 128 * 1024 * 1024)
 			: socket_(std::move(socket))
 			, strand_(asio::make_strand(socket_.get_executor()))
 			, session_index_(session_index)
@@ -163,6 +165,8 @@ namespace net {
 			const std::size_t msg_bytes = msg.bytes.size();
 
 			if (send_q_.size() + 1 > max_send_queue_msgs_ || (send_q_bytes_ + msg_bytes) > max_send_queue_bytes_) {
+				spdlog::warn("TcpSession reliable send queue overflow. session_index={} serial={} remote={} queued_msgs={} queued_bytes={} msg_bytes={} max_msgs={} max_bytes={}",
+					session_index_, session_serial_, GetRemoteEndpointString_(), send_q_.size(), send_q_bytes_, msg_bytes, max_send_queue_msgs_, max_send_queue_bytes_);
 				boost::system::error_code ec;
 				socket_.close(ec);
 				return;
@@ -226,7 +230,15 @@ namespace net {
 					send_q_bytes_atomic_.store(send_q_bytes_, std::memory_order_relaxed);
 				}
 			}
+			catch (const std::exception& e) {
+				spdlog::warn("TcpSession write loop exception. session_index={} serial={} remote={} what={} queued_msgs={} queued_bytes={}",
+					session_index_, session_serial_, GetRemoteEndpointString_(), e.what(), send_q_.size(), send_q_bytes_);
+				boost::system::error_code ec;
+				socket_.close(ec);
+			}
 			catch (...) {
+				spdlog::warn("TcpSession write loop unknown exception. session_index={} serial={} remote={} queued_msgs={} queued_bytes={}",
+					session_index_, session_serial_, GetRemoteEndpointString_(), send_q_.size(), send_q_bytes_);
 				boost::system::error_code ec;
 				socket_.close(ec);
 			}

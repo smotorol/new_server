@@ -34,3 +34,7 @@
 /tools/DummyClientUnity/Library
 /tools/DummyClientUnity/Logs
 /tools/DummyClientUnity/UserSettings
+/tools/BenchDummyClient/bin
+/tools/BenchDummyClient/obj
+/tools/DummyClientWinForms/*.user
+/tools/BenchDummyClient/.vs

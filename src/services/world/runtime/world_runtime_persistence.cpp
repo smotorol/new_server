@@ -382,8 +382,8 @@ namespace svr {
 							const std::uint32_t world_code = payload.world_code;
 							if (world_code == world_id_ && world_pool_ && !world_pool_->conns.empty())
 							{
-								auto& conn = world_pool_->next();
-								ok = conn.execute_scalar_int("SELECT 1");
+								auto lease = world_pool_->acquire();
+								ok = lease.conn().execute_scalar_int("SELECT 1");
 							}
 							else
 							{
@@ -435,7 +435,8 @@ namespace svr {
 								break;
 							}
 
-							auto& conn = world_pool_->next();
+							auto lease = world_pool_->acquire();
+							auto& conn = lease.conn();
 
 							auto ids = redis_cache_->take_dirty_batch(world_code, shard_id, max_batch);
 							pulled = (std::uint32_t)ids.size();
@@ -568,14 +569,14 @@ namespace svr {
 
 							try
 							{
-								auto& conn = world_pool_->next();
+								auto lease = world_pool_->acquire();
 								svr::demo::DemoCharState loaded_demo{};
 								CharacterRuntimeHotState hot_state{};
 								if (svr::demo::TryDeserializeDemo(*blob, loaded_demo) && loaded_demo.char_id == char_id) {
 									hot_state.resources.gold = loaded_demo.gold;
 									hot_state.version = loaded_demo.version;
 								}
-								WorldCharacterRepository::FlushCharacterHotState(conn, world_code, char_id, hot_state, *blob);
+								WorldCharacterRepository::FlushCharacterHotState(lease.conn(), world_code, char_id, hot_state, *blob);
 								redis_cache_->remove_dirty(world_code, char_id);
 								saved = true;
 							}
@@ -635,9 +636,9 @@ namespace svr {
 
 							try
 							{
-								auto& conn = world_pool_->next();
+								auto lease = world_pool_->acquire();
 								auto loaded = WorldCharacterRepository::LoadCharacterEnterSnapshot(
-									conn,
+									lease.conn(),
 									payload.account_id,
 									payload.char_id,
 									cached_blob);
@@ -695,8 +696,8 @@ namespace svr {
 
 							try
 							{
-								auto& conn = world_pool_->next();
-								auto rows = WorldCharacterRepository::LoadCharacterSelectListByAccount(conn, payload.account_id);
+								auto lease = world_pool_->acquire();
+								auto rows = WorldCharacterRepository::LoadCharacterSelectListByAccount(lease.conn(), payload.account_id);
 								r.ok = 1;
 								r.count = static_cast<std::uint16_t>(std::min<std::size_t>(rows.size(), dc::k_character_list_max_count));
 								for (std::size_t i = 0; i < r.count; ++i) {
